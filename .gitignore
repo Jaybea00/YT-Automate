@@ -32,6 +32,14 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# media & local storage
+/storage
+!/storage/**/.gitkeep
+
+# local Kokoro FastAPI engine
+/Kokoro-FastAPI
 
 # vercel
 .vercel
