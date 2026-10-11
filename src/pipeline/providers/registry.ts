@@ -221,29 +221,54 @@ export async function resolveForStage<T extends AnyProvider = AnyProvider>(
     );
   }
 
-  const provider = getProvider<T>(kind, config.provider);
+  let provider = getProvider<T>(kind, config.provider);
+  if (!provider) {
+    const mod = await import('./index');
+    mod.registerDefaultProviders();
+    provider = getProvider<T>(kind, config.provider);
+  }
+
   if (!provider) {
     throw new ConfigurationError(
       `No registered provider adapter for "${kind}:${config.provider}"`,
     );
   }
 
-  // Validate API key requirement
-  if (provider.requiresApiKey && !config.secret_id) {
-    throw new ConfigurationError(
-      `Provider "${provider.id}" for stage "${stage}" requires an API key, but no secret_id is configured.`,
-    );
-  }
-
-  // Resolve API key from Vault if secret_id is present
+  // Resolve API key: first try Vault if secret_id is present, then fall back to environment variables
   let apiKey = '';
   if (config.secret_id) {
-    apiKey = await resolveVaultSecret(supabase, config.secret_id);
+    try {
+      apiKey = await resolveVaultSecret(supabase, config.secret_id);
+    } catch {
+      // If Vault resolution fails, attempt fallback to environment variables
+    }
+  }
+
+  if (!apiKey) {
+    const envKeyMap: Record<string, string[]> = {
+      gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
+      openai: ['OPENAI_API_KEY'],
+      anthropic: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
+      claude: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
+      elevenlabs: ['ELEVENLABS_API_KEY', 'XI_API_KEY'],
+      pexels: ['PEXELS_API_KEY'],
+      nasa: ['NASA_API_KEY'],
+      pixabay: ['PIXABAY_API_KEY'],
+      fal: ['FAL_KEY'],
+    };
+
+    const candidateEnvVars = envKeyMap[provider.id] || [`${provider.id.toUpperCase().replace(/-/g, '_')}_API_KEY`];
+    for (const envVar of candidateEnvVars) {
+      if (process.env[envVar]) {
+        apiKey = process.env[envVar]!;
+        break;
+      }
+    }
   }
 
   if (provider.requiresApiKey && !apiKey) {
     throw new ConfigurationError(
-      `Provider "${provider.id}" for stage "${stage}" requires an API key, but resolved secret is empty.`,
+      `Provider "${provider.id}" for stage "${stage}" requires an API key, but neither a valid Vault secret nor environment variable (${provider.id.toUpperCase()}_API_KEY) was found.`,
     );
   }
 

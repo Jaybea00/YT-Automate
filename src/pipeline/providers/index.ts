@@ -26,18 +26,22 @@ export { googleVeoVideo, GoogleVeoVideoProvider } from './video/google-veo';
 export { pixabayStock, PixabayStockProvider } from './stock/pixabay';
 
 // Default registration of standard built-in providers
-registerProvider('llm', 'openai', openAiLlm);
-registerProvider('llm', 'openai-compatible', openAiCompatLlm);
-registerProvider('llm', 'gemini', geminiLlm);
-registerProvider('llm', 'anthropic', anthropicLlm);
-registerProvider('llm', 'claude', anthropicLlm);
-registerProvider('tts', 'elevenlabs', elevenLabsTts);
-registerProvider('tts', 'openai-compatible', openAiCompatTts);
-registerProvider('tts', 'openai', openAiTts);
-registerProvider('image', 'openai', openAiImage);
-registerProvider('image', 'openai-compatible', openAiCompatImage);
-registerProvider('image', 'pollinations', pollinationsImage);
-registerProvider('video', 'fal', falVideo);
-registerProvider('video', 'google_veo', googleVeoVideo);
-registerProvider('stock', 'pixabay', pixabayStock);
+export function registerDefaultProviders(): void {
+  registerProvider('llm', 'openai', openAiLlm);
+  registerProvider('llm', 'openai-compatible', openAiCompatLlm);
+  registerProvider('llm', 'gemini', geminiLlm);
+  registerProvider('llm', 'anthropic', anthropicLlm);
+  registerProvider('llm', 'claude', anthropicLlm);
+  registerProvider('tts', 'elevenlabs', elevenLabsTts);
+  registerProvider('tts', 'openai-compatible', openAiCompatTts);
+  registerProvider('tts', 'openai', openAiTts);
+  registerProvider('image', 'openai', openAiImage);
+  registerProvider('image', 'openai-compatible', openAiCompatImage);
+  registerProvider('image', 'pollinations', pollinationsImage);
+  registerProvider('video', 'fal', falVideo);
+  registerProvider('video', 'google_veo', googleVeoVideo);
+  registerProvider('stock', 'pixabay', pixabayStock);
+}
+
+registerDefaultProviders();
 
