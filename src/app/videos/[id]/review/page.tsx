@@ -446,18 +446,39 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   // Visual badge renderer
   const renderVisualBadge = (type: ScriptBeat['visual_type']) => {
     switch (type) {
-      case 'screen_recording':
+      case 'newspaper':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            Screen Recording
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            📰 Newspaper
+          </span>
+        );
+      case 'geo_map':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 border border-blue-500/20 text-blue-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            🗺️ Map
+          </span>
+        );
+      case 'archive':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/10 border border-orange-500/20 text-orange-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+            🏛️ Archive
           </span>
         );
       case 'chart':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Data / Chart
+            📊 Chart
+          </span>
+        );
+      case 'screen_recording':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+            💻 Screen
           </span>
         );
       case 'stock':
@@ -465,7 +486,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 border border-purple-500/20 text-purple-400">
             <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            Stock B-Roll
+            🎬 Stock
           </span>
         );
     }
@@ -893,13 +914,31 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                       key={idx}
                       className="p-5 rounded-xl bg-zinc-950/80 border border-zinc-800 hover:border-zinc-700/80 transition space-y-3"
                     >
-                      {/* Beat Header: Index, Badges, Duration & Reorder Controls */}
+                      {/* Beat Header: Index, Interactive Type Selector, Duration & Reorder Controls */}
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-900 pb-2">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2.5">
                           <span className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-200 font-mono text-xs font-bold">
                             #{idx + 1}
                           </span>
-                          {renderVisualBadge(beat.visual_type)}
+                          <select
+                            value={beat.visual_type || 'stock'}
+                            onChange={(e) => {
+                              const val = e.target.value as ScriptBeat['visual_type'];
+                              setEditableBeats((prev) =>
+                                prev.map((b) => (b.index === beat.index ? { ...b, visual_type: val } : b)),
+                              );
+                              setHasUnsavedEdits(true);
+                            }}
+                            className="text-xs font-semibold rounded-lg px-2.5 py-1 bg-zinc-900 border border-zinc-700 text-zinc-200 hover:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-red-500 cursor-pointer transition"
+                            title="Change visual style/type for this beat"
+                          >
+                            <option value="stock">🎬 Stock B-Roll</option>
+                            <option value="newspaper">📰 Newspaper / Headline</option>
+                            <option value="geo_map">🗺️ Route Map</option>
+                            <option value="chart">📊 Data Chart</option>
+                            <option value="archive">🏛️ Historical Archive</option>
+                            <option value="screen_recording">💻 Screen Recording</option>
+                          </select>
                           <span className="text-[11px] text-zinc-400 font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
                             {words} words • ~{spokenEst}s spoken
                           </span>
