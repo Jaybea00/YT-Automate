@@ -274,7 +274,7 @@ CRITICAL RULES:
 1. Preserve the user's spoken words faithfully. Do NOT rewrite or remove content.
 2. Group sentences logically so each beat represents a single coherent scene.
 3. For each beat, suggest an accurate "visual_query" describing b-roll footage or visual assets to display.
-4. Set "visual_type" to 'stock', 'chart' (if discussing numerical figures), or 'screen_recording' (if referencing software/websites).
+4. Set "visual_type" to 'newspaper' (if citing news/press/articles), 'geo_map' (if discussing travel/routes/places), 'chart' (if discussing numbers/statistics), 'archive' (if historical archival), 'screen_recording' (if referencing software/websites), or 'stock'.
 5. Estimate duration_estimate_seconds based on ~2.3 words per second.
 6. Provide 3 compelling YouTube title options matching the script.`;
 
@@ -321,14 +321,14 @@ export async function enrichBeatsWithAiVisualHints(
     visual_hints: z.array(
       z.object({
         index: z.number(),
-        visual_type: z.enum(['screen_recording', 'stock', 'chart']),
+        visual_type: z.enum(['screen_recording', 'stock', 'chart', 'geo_map', 'archive', 'newspaper']),
         visual_query: z.string(),
       }),
     ),
   });
 
   const prompt = `Topic: "${topic || 'Video'}"
-For each of the following narration beats, generate a rich visual_query hint describing relevant footage, and choose visual_type ('stock', 'chart', or 'screen_recording'):
+For each of the following narration beats, generate a rich visual_query hint describing relevant footage, and choose visual_type ('stock', 'chart', 'newspaper', 'geo_map', 'archive', or 'screen_recording'):
 ${JSON.stringify(
   beats.map((b) => ({ index: b.index, text: b.text })),
   null,
