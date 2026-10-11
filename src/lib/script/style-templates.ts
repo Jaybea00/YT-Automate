@@ -34,24 +34,26 @@ Shape:
     {
       "index": number,
       "text": string,              // the narration line(s) for this beat
-      "visual_type": "screen_recording" | "stock" | "chart",
+      "visual_type": "screen_recording" | "stock" | "chart" | "geo_map" | "archive" | "newspaper",
       "visual_query": string,      // what to search/record for this beat
-                                    // e.g. "GitHub repo page for X" for screen_recording,
-                                    // "aerial shot of city traffic" for stock,
-                                    // "bar chart: revenue by quarter" for chart
+                                    // e.g. "headline from Wall Street Journal on crash" for newspaper,
+                                    // "flight route from London to New York" for geo_map,
+                                    // "bar chart: revenue by quarter" for chart,
+                                    // "historical archival photos of 1920s" for archive,
+                                    // "GitHub repo page for X" for screen_recording,
+                                    // "aerial shot of city traffic" for stock
       "duration_estimate_seconds": number
     }
   ]
 }
 
 Classify every beat's visual_type honestly:
-- "screen_recording" only when the beat references a specific real, named
-  site/tool/product that should be shown live.
-- "chart" only when the beat states a specific statistic or comparison
-  worth visualizing as data.
-- "stock" for everything else (general b-roll concepts).
-Do not invent a "screen_recording" beat for something generic — that
-route is reserved for named, real sources only.
+- "newspaper" when citing news reports, press releases, articles, declarations, or headlines.
+- "geo_map" when discussing travel, geographic routes, locations, territory, or distances.
+- "chart" when stating specific statistics, numbers, percentages, or data comparisons.
+- "archive" for historical footage, century-old photos, public domain documents, or NASA space missions.
+- "screen_recording" only when referencing a specific real, named website/tool/product shown live.
+- "stock" for general cinematic b-roll and abstract concepts.
 
 Duration discipline: the sum of every beat's duration_estimate_seconds must
 not exceed the requested target runtime by more than 5%. Before finalizing,

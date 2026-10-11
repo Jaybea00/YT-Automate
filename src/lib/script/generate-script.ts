@@ -8,7 +8,7 @@ import { STYLE_TEMPLATES, VideoStyle } from './style-templates';
 export interface ScriptBeat {
   index: number;
   text: string;
-  visual_type: 'screen_recording' | 'stock' | 'chart';
+  visual_type: 'screen_recording' | 'stock' | 'chart' | 'geo_map' | 'archive' | 'newspaper';
   visual_query: string;
   duration_estimate_seconds: number;
 }
@@ -21,7 +21,7 @@ export interface GeneratedScript {
 export const ScriptBeatSchema = z.object({
   index: z.number(),
   text: z.string(),
-  visual_type: z.enum(['screen_recording', 'stock', 'chart']),
+  visual_type: z.enum(['screen_recording', 'stock', 'chart', 'geo_map', 'archive', 'newspaper']),
   visual_query: z.string(),
   duration_estimate_seconds: z.number(),
 });
