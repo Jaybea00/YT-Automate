@@ -4,6 +4,7 @@ export type VisualIntent =
   | 'geo_map'
   | 'chart'
   | 'screen_recording'
+  | 'newspaper'
   | 'stock';
 
 export interface ClassifiedIntent {
@@ -85,6 +86,22 @@ const GEO_KEYWORDS = [
   'map of',
 ];
 
+const NEWSPAPER_KEYWORDS = [
+  'newspaper',
+  'headline',
+  'front page',
+  'press release',
+  'article',
+  'wall street journal',
+  'washington post',
+  'new york times',
+  'financial times',
+  'reuters reported',
+  'bloomberg reported',
+  'broadsheet',
+  'daily chronicle',
+];
+
 /**
  * Classifies semantic visual intent and extracts distilled search keywords.
  */
@@ -99,8 +116,22 @@ export function classifyVisualIntent(
   if (explicitType === 'screen_recording') {
     return { intent: 'screen_recording', keywords: visualQuery || text, confidence: 1.0 };
   }
+  if (explicitType === 'newspaper') {
+    return { intent: 'newspaper', keywords: visualQuery || text, confidence: 1.0 };
+  }
 
   const combined = `${visualQuery || ''} ${text}`.toLowerCase();
+
+  // Check Newspaper / Press Headline
+  for (const kw of NEWSPAPER_KEYWORDS) {
+    if (combined.includes(kw)) {
+      return {
+        intent: 'newspaper',
+        keywords: distillKeywords(visualQuery || text, kw),
+        confidence: 0.9,
+      };
+    }
+  }
 
   // Check Space / NASA
   for (const kw of SPACE_KEYWORDS) {

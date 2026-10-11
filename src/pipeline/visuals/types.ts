@@ -24,7 +24,21 @@ export const UrlResolutionSchema = z.object({
 
 export type UrlResolution = z.infer<typeof UrlResolutionSchema>;
 
-export type FinalVisualType = 'stock' | 'chart' | 'screen_recording' | 'uploaded' | 'archive' | 'geo_map';
+export const NewspaperSpecSchema = z.object({
+  outlet: z.string().default('THE CHRONICLE'),
+  date: z.string().optional(),
+  edition: z.string().optional(),
+  headline: z.string(),
+  subheadline: z.string().optional(),
+  snippet: z.string(),
+  highlightText: z.string().optional(),
+  highlightColor: z.enum(['yellow', 'cyan', 'green', 'rose']).default('yellow').optional(),
+  style: z.enum(['vintage', 'modern', 'dark']).default('vintage').optional(),
+});
+
+export type NewspaperSpec = z.infer<typeof NewspaperSpecSchema>;
+
+export type FinalVisualType = 'stock' | 'chart' | 'screen_recording' | 'uploaded' | 'archive' | 'geo_map' | 'newspaper';
 
 export interface MediaCandidate {
   id: string | number;

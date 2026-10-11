@@ -11,11 +11,12 @@ import { upsertVideoAssetProvenance } from './provenance';
 import { findExistingBeatUpload, normalizeLicenseType } from '../utils/media-upload';
 import { aggregateMediaCandidates, downloadCandidateAsset } from './media-aggregator';
 import { executeGeoMapStep } from './geo-map-step';
+import { executeNewspaperStep } from './newspaper-step';
 
 export interface BeatSourceInput {
   index: number;
   text: string;
-  visual_type?: 'screen_recording' | 'stock' | 'chart' | 'archive' | 'geo_map';
+  visual_type?: 'screen_recording' | 'stock' | 'chart' | 'archive' | 'geo_map' | 'newspaper';
   visual_query?: string;
   duration_estimate_seconds?: number;
 }
@@ -208,6 +209,40 @@ export async function sourceVisualBeat(
       fallbackReason = mapResult.error || 'Geo map generation failed';
       console.warn(
         `[Visuals] Beat ${beatIndex}: Geo-map failed (${fallbackReason}). Falling back to stock sourcing.`,
+      );
+    }
+  }
+
+  // -------------------------------------------------------------
+  // PATHWAY 2.6: ANIMATED NEWSPAPER HEADLINE
+  // -------------------------------------------------------------
+  if (requestedType === 'newspaper') {
+    const newsMp4Path = path.join(outputDir, `visuals_beat_${beatIndex}.mp4`);
+    const tempNewsDir = path.join(outputDir, `temp_news_${beatIndex}`);
+
+    const newsResult = await executeNewspaperStep({
+      text: beat.text,
+      visualQuery: beat.visual_query,
+      durationSeconds: targetDurationSeconds,
+      outputMp4Path: newsMp4Path,
+      tempDir: tempNewsDir,
+      llmProvider,
+      llmCtx,
+      browser,
+      asVideo: true,
+    });
+
+    if (newsResult.success && newsResult.outputPath) {
+      finalVisualType = 'newspaper';
+      finalOutputPath = newsResult.outputPath;
+      licenseType = 'public_domain';
+      licenseSource = 'generated';
+      attributionText = `Archival Broadside: ${newsResult.spec?.outlet || 'Press Archive'}`;
+    } else {
+      fallbackOccurred = true;
+      fallbackReason = newsResult.error || 'Newspaper generation failed';
+      console.warn(
+        `[Visuals] Beat ${beatIndex}: Newspaper visual failed (${fallbackReason}). Falling back to stock sourcing.`,
       );
     }
   }
