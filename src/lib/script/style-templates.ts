@@ -1,6 +1,5 @@
 /**
- * One entry per value in the `video_style` Postgres enum (see
- * supabase/migrations/0001_init_schema.sql + 0002_expand_video_styles.sql).
+ * One entry per supported value of videos.style (stored as text, so new styles need no migration).
  * Each template controls tone, pacing, and structure — the script
  * generator swaps only this prompt; everything downstream (TTS, assembly)
  * stays the same regardless of style.
@@ -14,7 +13,8 @@ export type VideoStyle =
   | 'story_driven'
   | 'comparison'
   | 'eli5'
-  | 'true_crime_pov';
+  | 'true_crime_pov'
+  | 'vox_explainer';
 
 export interface StyleTemplate {
   name: string;
@@ -24,42 +24,56 @@ export interface StyleTemplate {
   systemPrompt: string;
 }
 
+/**
+ * Visual-type rules shared by every path that assigns visuals to beats:
+ * fresh scripts, AI-segmented uploads, and visual-hint enrichment.
+ */
+export const VISUAL_TYPE_RULES = `
+VISUAL TYPES — choose per beat, following these rules strictly:
+- "chart": ONLY when the beat states at least two specific numbers that compare or change over time. visual_query must restate them with units, e.g. "line chart: Dow Jones 1921 = 64, Sep 1929 = 381".
+- "geo_map": ONLY when the point of the beat is where things are or how something moves between named places at city, country, or continent scale (routes, spread, borders). Never street- or building-level. visual_query lists the places in order, e.g. "map: New York -> London -> Vienna -> Berlin".
+- "newspaper": ONLY when the narration explicitly cites a specific publication's headline or article (names the outlet and what it said). visual_query: "outlet | date | exact headline". A person's quote to "the press" is NOT a newspaper beat.
+- "archive": real historical photos or film likely held in public archives (events before ~1970, government or NASA footage). visual_query: concrete searchable nouns plus year, e.g. "1929 crowd outside New York Stock Exchange".
+- "screen_recording": ONLY when the narration names a specific real website or app viewers should see live. visual_query: the product name or URL.
+- "stock": everything else. visual_query: 3-6 concrete, filmable nouns (no abstract concepts), e.g. "closed bank doors, line of people, rain".
+- Variety keeps viewers watching: never use the same visual_type for more than 3 beats in a row.
+`.trim();
+
+/** Writing rules shared by full-script generation and single-beat editing. */
+export const RETENTION_CRAFT = `
+RETENTION CRAFT (applies to every style):
+- Beat 0 is the hook: open on the most surprising concrete moment, stake, or question, in 20 words or fewer. No greetings, no "in this video", no channel intro.
+- Open a loop early (a question the video promises to answer) and pay it off near the end.
+- Roughly every 45-60 seconds of narration, re-hook with a turn, a reveal, or a new question.
+- One idea per beat, 12-35 words. Write for the ear: short spoken sentences, varied rhythm.
+- Prefer concrete specifics (names, numbers, dates, places) over generalities.
+- Close on a memorable line that resolves the opening loop. No "like and subscribe".
+- Never invent quotes, statistics, or events. If a figure is uncertain, attribute or hedge it.
+`.trim();
+
 const BEAT_STRUCTURE_INSTRUCTIONS = `
+${RETENTION_CRAFT}
+
+LENGTH: the user message gives a word budget for the narration. The total words across all beat "text" fields must land inside it. Hitting the budget matters as much as quality — add substance (specific details, examples, consequences), never filler.
+
+${VISUAL_TYPE_RULES}
+
 Return the script as JSON only — no prose before or after, no markdown fences.
 
 Shape:
 {
-  "title_options": string[],       // 3 candidate titles
+  "title_options": string[],       // 3 candidate titles, under 60 characters, curiosity-driven but accurate
   "beats": [
     {
-      "index": number,
-      "text": string,              // the narration line(s) for this beat
+      "index": number,             // 0, 1, 2, ...
+      "text": string,              // the narration for this beat
       "visual_type": "screen_recording" | "stock" | "chart" | "geo_map" | "archive" | "newspaper",
-      "visual_query": string,      // what to search/record for this beat
-                                    // e.g. "headline from Wall Street Journal on crash" for newspaper,
-                                    // "flight route from London to New York" for geo_map,
-                                    // "bar chart: revenue by quarter" for chart,
-                                    // "historical archival photos of 1920s" for archive,
-                                    // "GitHub repo page for X" for screen_recording,
-                                    // "aerial shot of city traffic" for stock
-      "duration_estimate_seconds": number
+      "visual_query": string,      // follows the rules above for the chosen visual_type
+      "duration_estimate_seconds": number,
+      "fact_ids": string[]         // research fact ids this beat uses, when a dossier is provided
     }
   ]
 }
-
-Classify every beat's visual_type honestly:
-- "newspaper" when citing news reports, press releases, articles, declarations, or headlines.
-- "geo_map" when discussing travel, geographic routes, locations, territory, or distances.
-- "chart" when stating specific statistics, numbers, percentages, or data comparisons.
-- "archive" for historical footage, century-old photos, public domain documents, or NASA space missions.
-- "screen_recording" only when referencing a specific real, named website/tool/product shown live.
-- "stock" for general cinematic b-roll and abstract concepts.
-
-Duration discipline: the sum of every beat's duration_estimate_seconds must
-not exceed the requested target runtime by more than 5%. Before finalizing,
-add up your own duration estimates and trim beats (shorten lines, merge
-beats, or cut a lower-priority one) if the total runs over. Err on the side
-of slightly under the target rather than over.
 `.trim();
 
 export const STYLE_TEMPLATES: Record<VideoStyle, StyleTemplate> = {
@@ -139,7 +153,7 @@ ${BEAT_STRUCTURE_INSTRUCTIONS}`,
 Use concrete analogies for abstract concepts, define any term before using
 it, build understanding incrementally (simple idea first, then add
 complexity), and keep sentences short. Warmth and patience in tone, never
-descending. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
+condescending. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
   },
 
   true_crime_pov: {
@@ -154,4 +168,29 @@ Stick strictly to verifiable facts where the topic concerns real events —
 flag clearly in the text if any detail is disputed or unconfirmed rather
 than dramatizing it as fact. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
   },
+
+  vox_explainer: {
+    name: 'Vox Explainer',
+    label: 'Vox-style visual explainer',
+    description: 'One clear question, answered with evidence: charts, maps, archival proof, and a "here\'s why it matters" payoff.',
+    systemPrompt: `You write visual explainer scripts in the style of Vox and Johnny Harris.
+Open with a concrete, slightly puzzling observation and turn it into one clear
+question the whole video answers. Answer it like a reporter building a case:
+each beat adds one piece of evidence (a number, a map, a document, a quote, a
+historical moment) and says why it matters. Narrate *to* the visuals: refer to
+what the viewer is looking at ("look at this line", "this is London in 1931")
+so charts, maps, and documents carry the argument. Conversational, curious,
+plain-spoken, never academic; short sentences with an occasional longer one
+for rhythm. Zoom out near the end to the bigger pattern, then land on a payoff
+that answers the opening question. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
+  },
 };
+
+/**
+ * A style's voice without the full-script output format, for prompts that edit
+ * part of a script (beat rewrites, hooks, reviews) and return their own JSON.
+ */
+export function styleVoice(style: VideoStyle): string {
+  const template = STYLE_TEMPLATES[style] ?? STYLE_TEMPLATES.story_driven;
+  return template.systemPrompt.replace(BEAT_STRUCTURE_INSTRUCTIONS, '').trim();
+}

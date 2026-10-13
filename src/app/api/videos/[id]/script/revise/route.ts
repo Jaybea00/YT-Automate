@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript } from '@/lib/script/generate-script';
+import { planShots } from '@/lib/script/shot-planner';
 
 export async function POST(
   req: Request,
@@ -49,7 +50,7 @@ export async function POST(
     }
 
     // 2. Call generateScript again with revisionOf
-    const revisedScript = await generateScript(supabase, {
+    const rewritten = await generateScript(supabase, {
       topic: video.topic,
       style: video.style,
       targetMinutes: video.target_minutes,
@@ -57,13 +58,16 @@ export async function POST(
         previousScript: video.script_json,
         feedback: feedback.trim(),
       },
+      // Revisions keep writing from the same researched facts
+      research: video.script_json.research ?? null,
     });
+    const revisedScript = await planShots(supabase, rewritten, video.topic);
 
-    // 3. Update script_json with new result; status stays 'script_review'
+    // 3. Update script_json with new result (keeping stored render settings); status stays 'script_review'
     const { data: updatedVideo, error: updateError } = await supabase
       .from('videos')
       .update({
-        script_json: revisedScript,
+        script_json: { ...video.script_json, ...revisedScript },
       })
       .eq('id', id)
       .select()

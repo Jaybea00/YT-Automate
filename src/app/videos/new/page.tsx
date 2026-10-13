@@ -408,6 +408,7 @@ export default function NewVideoPage() {
                             {key === 'comparison' && '⚖️'}
                             {key === 'eli5' && '💡'}
                             {key === 'true_crime_pov' && '🔍'}
+                            {key === 'vox_explainer' && '🧭'}
                           </span>
                           <span>{tmpl.name || tmpl.label}</span>
                         </span>

@@ -1,11 +1,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateScript, GeneratedScript } from '../../src/lib/script/generate-script.ts';
+import { z } from 'zod';
+import {
+  generateScript,
+  GeneratedScript,
+  GeneratedScriptSchema,
+  withWritingModel,
+} from '../../src/lib/script/generate-script.ts';
 import { registerProvider } from '../../src/pipeline/providers/registry.ts';
 import { ProviderError } from '../../src/pipeline/providers/errors.ts';
 import type { LLMProvider, ProviderCallContext } from '../../src/pipeline/providers/types.ts';
 import { createMockSupabase } from '../helpers/mock-supabase.ts';
-import { GeminiLlmProvider } from '../../src/pipeline/providers/llm/gemini.ts';
+import {
+  GeminiLlmProvider,
+  modelFallbackOrder,
+  toGeminiResponseSchema,
+} from '../../src/pipeline/providers/llm/gemini.ts';
 import { AnthropicLlmProvider } from '../../src/pipeline/providers/llm/anthropic.ts';
 
 describe('Part B: Script Generation via Registry & LLM Adapters', () => {
@@ -68,14 +78,93 @@ describe('Part B: Script Generation via Registry & LLM Adapters', () => {
       ],
     });
 
-    const result = await generateScript(supabase, {
-      topic: 'Quantum Computing',
-      style: 'tech',
-      targetMinutes: 1,
-    });
+    const result = await generateScript(
+      supabase,
+      { topic: 'Quantum Computing', style: 'tech', targetMinutes: 1 },
+      { maxLengthPasses: 0 },
+    );
 
     assert.equal(callCount, 1);
-    assert.deepEqual(result, dummyScript);
+    assert.deepEqual(result.title_options, dummyScript.title_options);
+    // Normalized: 0-based indexes, word-count durations, chart without numbers downgraded to stock
+    assert.deepEqual(
+      result.beats.map((b) => [b.index, b.visual_type, b.duration_estimate_seconds]),
+      [
+        [0, 'screen_recording', 3.5],
+        [1, 'stock', 3.5],
+      ],
+    );
+  });
+
+  it('runs a length-correction pass when a fresh script misses its word budget', async () => {
+    const longBeat = (i: number) => ({
+      index: i,
+      text: Array.from({ length: 23 }, (_, w) => `word${w}`).join(' '),
+      visual_type: 'stock' as const,
+      visual_query: 'city skyline',
+      duration_estimate_seconds: 10,
+    });
+    // 1 minute = 138 words; 6 beats x 23 words = 138
+    const inBudgetScript: GeneratedScript = {
+      title_options: ['A', 'B', 'C'],
+      beats: Array.from({ length: 6 }, (_, i) => longBeat(i)),
+    };
+
+    const prompts: string[] = [];
+    const lengthLlm: LLMProvider = {
+      kind: 'llm',
+      id: 'mock-length-llm',
+      generateText: async () => ({ text: '', usage: {} }),
+      generateJson: async (req) => {
+        prompts.push(req.prompt);
+        return { data: prompts.length === 1 ? dummyScript : inBudgetScript, usage: {} } as any;
+      },
+    };
+    registerProvider('llm', 'mock-length-llm', lengthLlm);
+
+    const { supabase } = createMockSupabase({
+      yt_provider_configs: [
+        { id: 'cfg-llm-length', kind: 'llm', provider: 'mock-length-llm', label: 'Length', is_active: true },
+      ],
+      yt_stage_bindings: [{ stage: 'script', provider_config_id: 'cfg-llm-length', max_retries: 0 }],
+    });
+
+    const result = await generateScript(supabase, { topic: 'Quantum', style: 'tech', targetMinutes: 1 });
+
+    assert.equal(prompts.length, 2, 'Short first draft should trigger exactly one correction pass');
+    assert.match(prompts[0], /Word budget for the narration: 127-149 words/);
+    assert.match(prompts[1], /too short/);
+    assert.equal(result.beats.length, 6);
+  });
+
+  it('does not length-correct revisions, so feedback like "make it shorter" is respected', async () => {
+    let calls = 0;
+    const reviseLlm: LLMProvider = {
+      kind: 'llm',
+      id: 'mock-revise-llm',
+      generateText: async () => ({ text: '', usage: {} }),
+      generateJson: async () => {
+        calls++;
+        return { data: dummyScript, usage: {} } as any;
+      },
+    };
+    registerProvider('llm', 'mock-revise-llm', reviseLlm);
+
+    const { supabase } = createMockSupabase({
+      yt_provider_configs: [
+        { id: 'cfg-llm-revise', kind: 'llm', provider: 'mock-revise-llm', label: 'Revise', is_active: true },
+      ],
+      yt_stage_bindings: [{ stage: 'script', provider_config_id: 'cfg-llm-revise', max_retries: 0 }],
+    });
+
+    await generateScript(supabase, {
+      topic: 'Quantum',
+      style: 'tech',
+      targetMinutes: 5,
+      revisionOf: { previousScript: dummyScript, feedback: 'make it much shorter' },
+    });
+
+    assert.equal(calls, 1);
   });
 
   it('generateScript retries on transient errors (503/429) up to max_retries', async () => {
@@ -115,14 +204,14 @@ describe('Part B: Script Generation via Registry & LLM Adapters', () => {
       ],
     });
 
-    const result = await generateScript(supabase, {
-      topic: 'Quantum Computing',
-      style: 'tech',
-      targetMinutes: 1,
-    });
+    const result = await generateScript(
+      supabase,
+      { topic: 'Quantum Computing', style: 'tech', targetMinutes: 1 },
+      { maxLengthPasses: 0 },
+    );
 
     assert.equal(callAttempts, 2, 'Should have succeeded on the second attempt after 1 retry');
-    assert.deepEqual(result, dummyScript);
+    assert.equal(result.beats.length, dummyScript.beats.length);
   });
 
   it('fails fast on non-retryable errors without retrying', async () => {
@@ -183,6 +272,33 @@ describe('Part B: Script Generation via Registry & LLM Adapters', () => {
     assert.equal(gemini.requiresApiKey, true);
     assert.equal(typeof gemini.generateText, 'function');
     assert.equal(typeof gemini.generateJson, 'function');
+  });
+
+  it('converts the script schema into a Gemini response schema for constrained JSON output', () => {
+    const schema = toGeminiResponseSchema(GeneratedScriptSchema) as any;
+    assert.equal(schema.type, 'object');
+    assert.deepEqual(schema.required, ['title_options', 'beats']);
+    const beat = schema.properties.beats.items;
+    assert.equal(beat.properties.visual_type.format, 'enum');
+    assert.ok(beat.properties.visual_type.enum.includes('newspaper'));
+    assert.equal(beat.properties.duration_estimate_seconds.type, 'number');
+  });
+
+  it('falls back within the same model tier before crossing between lite and full models', () => {
+    const order = modelFallbackOrder('gemini-3.8-flash');
+    assert.equal(order[0], 'gemini-3.8-flash');
+    assert.ok(order.indexOf('gemini-3.7-flash') < order.indexOf('gemini-3.5-flash-lite'));
+    assert.equal(modelFallbackOrder('gemini-3.5-flash-lite')[1], 'gemini-flash-lite-latest');
+  });
+
+  it('uses the binding option writingModel for full-script writing only', () => {
+    const ctx = { apiKey: 'k', model: 'gemini-3.5-flash-lite' };
+    assert.equal(withWritingModel(ctx, { writingModel: 'gemini-3.8-flash' }).model, 'gemini-3.8-flash');
+    assert.equal(withWritingModel(ctx, {}).model, 'gemini-3.5-flash-lite');
+  });
+
+  it('skips constrained output for schemas outside Gemini\'s supported subset', () => {
+    assert.equal(toGeminiResponseSchema(z.object({ data: z.record(z.string(), z.number()) })), null);
   });
 
   it('Anthropic adapter exposes LLMProvider interface with kind=llm', () => {
