@@ -7,6 +7,8 @@ export type ProviderErrorCode =
   | 'content_policy'
   | 'invalid_request'
   | 'invalid_response'
+  /** A daily or plan quota is used up: retrying minutes later can't succeed. */
+  | 'quota_exhausted'
   | 'unknown';
 
 export interface ProviderErrorOptions {
@@ -76,6 +78,7 @@ export function getRetryDecision(
       case 'content_policy':
       case 'invalid_request':
       case 'invalid_response':
+      case 'quota_exhausted':
       case 'unknown':
       default:
         return { retry: false, delayMs: 0, reason: error.code };

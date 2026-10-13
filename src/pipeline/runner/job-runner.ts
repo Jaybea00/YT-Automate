@@ -7,13 +7,7 @@ import { runJobUnit } from './unit-runner';
 import { assembleVideo, getAudioDurationMs } from '../utils/ffmpeg';
 import { computeInputHash, computeScriptFingerprint } from '../utils/hash';
 import { chromium, type Browser } from 'playwright';
-import type {
-  ImageProvider,
-  LLMProvider,
-  PipelineStage,
-  StockProvider,
-  TTSProvider,
-} from '../providers/types';
+import type { ImageProvider, LLMProvider, PipelineStage, StockProvider } from '../providers/types';
 import { sourceVisualBeat } from '../visuals/beat-sourcer';
 import { findExistingBeatUpload } from '../utils/media-upload';
 import { checkAssemblyGate } from '../assembly/gate';
@@ -27,6 +21,7 @@ import { isCaptionPreset, writeAssCaptionsFile, burnCaptions } from '../assembly
 import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
 import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
+import { mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -585,55 +580,26 @@ export class JobRunner {
     }
 
     await this.updateStageStatus('tts', 'running');
-    const overrideConfigId =
-      (job as any).tts_provider_config_id ||
-      (job.script as any)?.tts_provider_config_id;
-    const voiceOverride =
-      (job as any).voice_id ||
-      (job.script as any)?.voice_id ||
-      (job.script as any)?.voice_override;
-
-    const { provider, ctx, maxRetries, configId, providerId, model, options } =
-      await resolveForStage<TTSProvider>('tts', this.supabase, overrideConfigId, voiceOverride);
-
-    let hasFailure = false;
+    const setup = await resolveTtsSetup(this.supabase, job as Parameters<typeof resolveTtsSetup>[1]);
     const outputDir = path.join(this.baseOutputDir, 'audio');
-    const voiceId = (options.voiceId as string) || (options.voice as string) || 'alloy';
+    // Cloud voices can run several beats at once; a local engine on one CPU stays sequential
+    const concurrency = setup.resolved.provider.maxConcurrency ?? 1;
 
-    for (const scene of job.script.scenes) {
-      const result = await runJobUnit({
-        jobId: this.jobId,
-        stage: 'tts',
-        unitIndex: scene.scene_number,
-        input: {
-          text: scene.narration,
-          voiceId,
-        },
-        providerConfigId: configId,
-        providerId,
-        model,
-        baseUrl: ctx.baseUrl,
-        options,
-        maxRetries,
+    const results = await mapWithConcurrency(job.script.scenes, concurrency, (scene) => {
+      if (this.signal?.aborted) {
+        return Promise.resolve({ skipped: false, success: false, error: 'TTS stage aborted' });
+      }
+      return voiceBeat({
         supabase: this.supabase,
+        setup,
+        jobId: this.jobId,
+        unitIndex: scene.scene_number,
+        narration: scene.narration,
         outputDir,
         signal: this.signal,
-        execute: async () => {
-          return await provider.synthesize(
-            {
-              text: scene.narration,
-              voiceId,
-              format: 'mp3',
-            },
-            ctx,
-          );
-        },
       });
-
-      if (!result.success) {
-        hasFailure = true;
-      }
-    }
+    });
+    const hasFailure = results.some((r) => !r.success);
 
     if (hasFailure) {
       await this.updateStageStatus('tts', 'failed', 'One or more TTS scene units failed');

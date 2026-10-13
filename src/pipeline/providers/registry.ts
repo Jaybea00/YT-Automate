@@ -239,6 +239,7 @@ export async function resolveForStage<T extends AnyProvider = AnyProvider>(
   let apiKey = '';
   const envKeyMap: Record<string, string[]> = {
     gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
+    'gemini-tts': ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
     openai: ['OPENAI_API_KEY'],
     anthropic: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
     claude: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],

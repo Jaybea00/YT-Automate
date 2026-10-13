@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
+import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
 
 interface VisualsPageProps {
   params: Promise<{ id: string }>;
@@ -82,6 +83,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [beatErrors, setBeatErrors] = useState<Record<number, string>>({});
   const [beatWarnings, setBeatWarnings] = useState<Record<number, string[]>>({});
   const [cacheBuster, setCacheBuster] = useState<number>(Date.now());
+  const [voiceChecks, setVoiceChecks] = useState<Map<number, BeatVoiceCheck>>(new Map());
 
   // Video Trim Offsets state
   const [trimOffsets, setTrimOffsets] = useState<Record<number, number>>({});
@@ -1164,6 +1166,15 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           </div>
         </div>
 
+        <VoiceCheckPanel
+          videoId={id}
+          onChecks={setVoiceChecks}
+          onRevoiced={() => {
+            setCacheBuster(Date.now());
+            void fetchVideoData();
+          }}
+        />
+
         {/* Beat Cards List */}
         <div className="space-y-6">
           {beats.length === 0 ? (
@@ -1234,13 +1245,14 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   {/* Beat Narration Audio Player */}
                   {data.job && ttsUnit?.status === 'done' && (
                     <div className="bg-zinc-950/40 p-3 rounded-xl border border-zinc-800/60 space-y-1">
-                      <div className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-                        Beat Audio
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+                        <span>Beat Audio</span>
+                        <VoiceCheckBadge check={voiceChecks.get(index)} />
                       </div>
                       <audio
                         controls
                         className="w-full h-8"
-                        src={`/api/jobs/${data.job.id}/units/${index}/audio`}
+                        src={`/api/jobs/${data.job.id}/units/${index}/audio?v=${cacheBuster}`}
                       />
                     </div>
                   )}
