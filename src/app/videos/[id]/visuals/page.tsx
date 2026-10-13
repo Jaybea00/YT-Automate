@@ -111,6 +111,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   // Beat Pacing & Breathing Room state (default 0.5s pause)
   const [beatPauseSeconds, setBeatPauseSeconds] = useState(0.5);
 
+  // Kinetic captions burned into the final render ('none' = off)
+  const [captionPreset, setCaptionPreset] = useState<string>('none');
+
   // Batch Uploader state
   const [showBatchUploader, setShowBatchUploader] = useState(false);
 
@@ -203,6 +206,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     sfxTrack?: string;
     sfxVolume?: number;
     beatPauseSeconds?: number;
+    captionPreset?: string;
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
     const nextTrack = updates.track !== undefined ? updates.track : bgmTrack;
@@ -215,6 +219,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextSfxVolume = updates.sfxVolume !== undefined ? updates.sfxVolume : sfxVolume;
     const nextBeatPause =
       updates.beatPauseSeconds !== undefined ? updates.beatPauseSeconds : beatPauseSeconds;
+    const nextCaptionPreset =
+      updates.captionPreset !== undefined ? updates.captionPreset : captionPreset;
 
     setBgmEnabled(nextEnabled);
     setBgmTrack(nextTrack);
@@ -226,6 +232,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     setSfxTrack(nextSfxTrack);
     setSfxVolume(nextSfxVolume);
     setBeatPauseSeconds(nextBeatPause);
+    setCaptionPreset(nextCaptionPreset);
 
     try {
       setSavingBgm(true);
@@ -243,6 +250,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           sfxTrack: nextSfxTrack,
           sfxVolume: nextSfxVolume,
           beatPauseSeconds: nextBeatPause,
+          captionPreset: nextCaptionPreset,
         }),
       });
     } catch (err) {
@@ -321,6 +329,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           }
           if (bData.beatPauseSeconds !== undefined) {
             setBeatPauseSeconds(Number(bData.beatPauseSeconds));
+          }
+          if (bData.captionPreset) {
+            setCaptionPreset(bData.captionPreset);
           }
         })
         .catch(() => {});
@@ -593,7 +604,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 {data.video.title || 'Video Visuals'}
               </h1>
               <p className="text-sm text-zinc-400 mt-1">
-                Upload one custom visual asset per narration beat. Accepted formats: MP4, MOV, WebM, PNG, JPG, WebP.
+                Beats you don&apos;t upload for are auto-generated (chart, map, newspaper, archive, stock) from their visual type during voicing. Upload only to override one. Accepted formats: MP4, MOV, WebM, PNG, JPG, WebP.
               </p>
             </div>
 
@@ -1114,6 +1125,42 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 </div>
               </div>
             </div>
+
+            {/* Kinetic Captions Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-4">
+              <div>
+                <span className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>💬</span> Kinetic Captions
+                </span>
+                <p className="text-[11px] text-zinc-400">
+                  Burns word-by-word highlighted captions into the final render. Applied at assembly, so change it any time before you render.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: 'none', label: 'Off', desc: 'No captions' },
+                  { id: 'vox', label: 'Vox Minimal', desc: 'White, gold highlight' },
+                  { id: 'social_pop', label: 'Social Pop', desc: 'Bold yellow, heavy outline' },
+                  { id: 'clean_news', label: 'Clean News', desc: 'Boxed, broadcast style' },
+                ].map((option) => {
+                  const isSelected = captionPreset === option.id;
+                  return (
+                    <div
+                      key={option.id}
+                      onClick={() => updateBgmConfig({ captionPreset: option.id })}
+                      className={`p-2.5 rounded-xl border flex flex-col transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-md shadow-indigo-950'
+                          : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                      }`}
+                    >
+                      <span className="text-xs font-medium leading-tight">{option.label}</span>
+                      <span className="text-[10px] text-zinc-400 mt-1">{option.desc}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1145,7 +1192,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                       </span>
                       {asset ? (
                         <span className="text-xs px-2.5 py-0.5 rounded-full font-medium bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1">
-                          ✓ Visual Uploaded ({asset.visual_type})
+                          {asset.visual_type === 'uploaded'
+                            ? '✓ Visual Uploaded'
+                            : `✓ Auto-generated (${asset.visual_type})`}
                         </span>
                       ) : (
                         <span className="text-xs px-2.5 py-0.5 rounded-full font-medium bg-zinc-800 text-zinc-400 border border-zinc-700">

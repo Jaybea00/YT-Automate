@@ -17,7 +17,13 @@ import type {
 import { sourceVisualBeat } from '../visuals/beat-sourcer';
 import { findExistingBeatUpload } from '../utils/media-upload';
 import { checkAssemblyGate } from '../assembly/gate';
-import { renderBeatScene, concatenateSceneClips } from '../assembly/assemble-beat';
+import {
+  renderBeatScene,
+  concatenateSceneClips,
+  probeClipDurationSec,
+  computeSceneStartOffsetsSec,
+} from '../assembly/assemble-beat';
+import { isCaptionPreset, writeAssCaptionsFile, burnCaptions } from '../assembly/captions';
 import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
 import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
@@ -26,7 +32,9 @@ export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
   narration: z.string(),
   visual_prompt: z.string(),
-  visual_type: z.enum(['screen_recording', 'stock', 'chart']).optional(),
+  visual_type: z
+    .enum(['screen_recording', 'stock', 'chart', 'geo_map', 'archive', 'newspaper'])
+    .optional(),
   visual_query: z.string().optional(),
   duration_estimate_seconds: z.number().optional(),
 });
@@ -677,6 +685,7 @@ export class JobRunner {
         videoRecord = vRec;
       }
 
+      const usingVideoBeats = Array.isArray(videoRecord?.script_json?.beats);
       const scriptBeats: any[] =
         videoRecord?.script_json?.beats || job.script?.scenes;
 
@@ -762,10 +771,30 @@ export class JobRunner {
       const sfxPath = sfxEnabled ? await resolveSfxPath(sfxTrack) : null;
 
       const sceneClipPaths: string[] = [];
+      const sceneBeatIndexes: number[] = [];
+
+      // Generated visuals are produced by the voicing job, while assembly runs as its own job,
+      // so the visual-unit fallback searches this job first, then the video's other jobs (newest first).
+      const visualSearchJobIds: string[] = [this.jobId];
+      if (videoId) {
+        const { data: videoJobs } = await this.supabase
+          .from('yt_jobs')
+          .select('id')
+          .eq('video_id', videoId)
+          .order('created_at', { ascending: false });
+        for (const j of videoJobs ?? []) {
+          if (!visualSearchJobIds.includes(j.id)) visualSearchJobIds.push(j.id);
+        }
+      }
 
       // 5. Render or reuse each beat scene
       for (let i = 0; i < scriptBeats.length; i++) {
-        const beatIndex = i;
+        // Video beats are positional; LLM-generated job scenes are keyed by scene_number,
+        // which is what the TTS/visual units were checkpointed under.
+        const beatIndex: number =
+          !usingVideoBeats && typeof scriptBeats[i]?.scene_number === 'number'
+            ? scriptBeats[i].scene_number
+            : i;
 
         // Resolve beat audio and measured duration
         const ttsUnit = ttsMap.get(beatIndex);
@@ -822,21 +851,29 @@ export class JobRunner {
           }
         }
 
-        // C. Fallback / legacy image or visuals units
-        if (!visualPath) {
-          const { data: legacyUnit } = await this.supabase
+        // C. Generated visuals / legacy image units, from this job or an earlier job for the video
+        for (const searchJobId of visualSearchJobIds) {
+          if (visualPath) break;
+          const { data: visualUnits } = await this.supabase
             .from('yt_job_units')
             .select('output_path, stage')
-            .eq('job_id', this.jobId)
+            .eq('job_id', searchJobId)
             .in('stage', ['image', 'visuals'])
             .eq('unit_index', beatIndex)
-            .eq('status', 'done')
-            .maybeSingle();
+            .eq('status', 'done');
 
-          if (legacyUnit?.output_path) {
-            visualPath = legacyUnit.output_path;
-            const unitExt = path.extname(legacyUnit.output_path).toLowerCase().replace('.', '');
-            isVideo = ['mp4', 'mov', 'webm'].includes(unitExt);
+          for (const unit of visualUnits ?? []) {
+            if (!unit.output_path) continue;
+            const onDisk = await fs
+              .stat(unit.output_path)
+              .then((s) => s.isFile() && s.size > 0)
+              .catch(() => false);
+            if (onDisk) {
+              visualPath = unit.output_path;
+              const unitExt = path.extname(unit.output_path).toLowerCase().replace('.', '');
+              isVideo = ['mp4', 'mov', 'webm'].includes(unitExt);
+              break;
+            }
           }
         }
 
@@ -923,6 +960,7 @@ export class JobRunner {
           if (exists) {
             console.log(`[Assembly] Beat ${beatIndex}: Resuming existing unit checkpoint (${existingUnit.output_path})`);
             sceneClipPaths.push(existingUnit.output_path);
+            sceneBeatIndexes.push(beatIndex);
             continue;
           }
         }
@@ -970,6 +1008,7 @@ export class JobRunner {
             { onConflict: 'job_id,stage,unit_index' },
           );
           sceneClipPaths.push(reusableClipPath);
+          sceneBeatIndexes.push(beatIndex);
           continue;
         }
 
@@ -1022,6 +1061,7 @@ export class JobRunner {
             .eq('unit_index', beatIndex);
 
           sceneClipPaths.push(sceneClipPath);
+          sceneBeatIndexes.push(beatIndex);
         } catch (beatErr) {
           const beatErrMsg = beatErr instanceof Error ? beatErr.message : String(beatErr);
           await this.supabase
@@ -1056,6 +1096,41 @@ export class JobRunner {
       await concatenateSceneClips(sceneClipPaths, finalRenderPath, tempDir, {
         transition,
       });
+
+      // 6a. Burn kinetic captions if a preset is selected (off by default)
+      const captionPreset = videoRecord?.script_json?.captions?.preset;
+      if (isCaptionPreset(captionPreset)) {
+        const clipDurationsSec = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
+        const beatStartMs = computeSceneStartOffsetsSec(clipDurationsSec, transition).map((s) =>
+          Math.round(s * 1000),
+        );
+        const assPath = path.join(tempDir, 'captions.ass');
+        await writeAssCaptionsFile(
+          {
+            beats: sceneBeatIndexes.map((beatIndex, pos) => ({
+              index: beatIndex,
+              text: scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration,
+            })),
+            units: Array.from(ttsMap.values()),
+            preset: captionPreset,
+            beatStartMs,
+          },
+          assPath,
+        );
+
+        const uncaptionedPath = path.join(tempDir, `uncaptioned_${Date.now()}.mp4`);
+        await fs.copyFile(finalRenderPath, uncaptionedPath);
+        try {
+          await burnCaptions({ videoPath: uncaptionedPath, assPath, outputPath: finalRenderPath });
+          console.log(`[Assembly] Burned "${captionPreset}" captions into final video`);
+        } catch (captionErr) {
+          // Keep the uncaptioned render rather than failing the whole assembly
+          console.warn('[Assembly] Caption burn-in failed; keeping uncaptioned video:', captionErr);
+          await fs.copyFile(uncaptionedPath, finalRenderPath);
+        } finally {
+          await fs.unlink(uncaptionedPath).catch(() => {});
+        }
+      }
 
       // 6b. Apply background music with auto-ducking if configured
       const bgmEnabled =

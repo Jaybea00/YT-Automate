@@ -31,6 +31,7 @@ const VIDEO_STYLES: Array<{ key: string; label: string; description: string; ico
   { key: 'comparison', label: 'Head-to-Head', description: 'Balanced, analytical, objective comparison', icon: '⚖️' },
   { key: 'eli5', label: 'Explain Like I\'m 5', description: 'Warm, approachable, simplified breakdown', icon: '💡' },
   { key: 'true_crime_pov', label: 'True Crime POV', description: 'Dark, tense, suspenseful first-person atmosphere', icon: '🔍' },
+  { key: 'vox_explainer', label: 'Vox Explainer', description: 'Curious, conversational, evidence-driven', icon: '🧭' },
 ];
 
 export default function NarratorsPage() {

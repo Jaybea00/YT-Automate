@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { VideoRecord } from '@/lib/types/video';
 import { ScriptBeat } from '@/lib/script/generate-script';
+import { applyResearchToBeats } from '@/lib/script/script-quality';
+import { ResearchPanel, BeatSources } from './research-panel';
+import { BeatShots, ShotPlanSummary } from './shots-panel';
+import { BeatRewritePanel, HookLab, RuntimeMeter, ScriptDoctor } from './editor-panels';
 
 interface ReviewPageProps {
   params: Promise<{ id: string }>;
@@ -60,6 +64,12 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [isGeneratingHints, setIsGeneratingHints] = useState(false);
+  const [isPlanningShots, setIsPlanningShots] = useState(false);
+  const [shotPlanError, setShotPlanError] = useState<string | null>(null);
+
+  // Beat rewrite panel (key remounts it so a doctor fix starts a fresh run) and per-beat undo
+  const [rewriteTarget, setRewriteTarget] = useState<{ index: number; instruction?: string; key: number } | null>(null);
+  const [previousBeats, setPreviousBeats] = useState<Record<number, ScriptBeat>>({});
 
   // Fetch Video Data
   async function fetchVideo(quiet = false) {
@@ -177,11 +187,46 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
     return () => clearInterval(interval);
   }, [video?.status, id]);
 
-  // Handle Beat Text Edit
+  // Handle Beat Text Edit (re-evaluates the "needs check" flag against the research dossier)
   function handleBeatTextChange(index: number, newText: string) {
+    const research = video?.script_json?.research;
     setEditableBeats((prev) =>
-      prev.map((beat) => (beat.index === index ? { ...beat, text: newText } : beat)),
+      prev.map((beat) => {
+        if (beat.index !== index) return beat;
+        // Shot word ranges no longer match edited narration, so the beat needs re-planning
+        const edited = { ...beat, text: newText, shots: undefined };
+        // Only refresh the flag here; never override a visual type the user picked
+        return research ? applyResearchToBeats([edited], research, { enforceVisualRules: false })[0] : edited;
+      }),
     );
+    setHasUnsavedEdits(true);
+    setSaveFeedback(null);
+  }
+
+  async function handlePlanShots(onlyMissing: boolean) {
+    setIsPlanningShots(true);
+    setShotPlanError(null);
+    try {
+      const beatIndexes = onlyMissing
+        ? editableBeats.filter((b) => !b.shots?.length).map((b) => b.index)
+        : undefined;
+      const res = await fetch(`/api/videos/${id}/script/shots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ beatIndexes }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to plan shots');
+      await fetchVideo(true);
+    } catch (err) {
+      setShotPlanError(err instanceof Error ? err.message : 'Failed to plan shots');
+    } finally {
+      setIsPlanningShots(false);
+    }
+  }
+
+  function handleMarkChecked(index: number) {
+    setEditableBeats((prev) => prev.map((b) => (b.index === index ? { ...b, needs_check: false } : b)));
     setHasUnsavedEdits(true);
     setSaveFeedback(null);
   }
@@ -239,8 +284,46 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       copy.splice(insertAt, 0, newBeat);
       return copy.map((b, idx) => ({ ...b, index: idx }));
     });
+    resetBeatPositionState();
     setHasUnsavedEdits(true);
     setSaveFeedback(null);
+  }
+
+  /** Undo history and an open rewrite panel are keyed by position, so they reset when beats move. */
+  function resetBeatPositionState() {
+    setPreviousBeats({});
+    setRewriteTarget(null);
+  }
+
+  /** Replaces a beat with a chosen rewrite or hook, remembering the old version for undo. */
+  function applyBeatReplacement(index: number, replacement: ScriptBeat) {
+    const current = editableBeats[index];
+    if (!current) return;
+    setPreviousBeats((prev) => ({ ...prev, [index]: current }));
+    setEditableBeats((prev) =>
+      prev.map((b, i) => (i === index ? { ...replacement, index, shots: undefined } : b)),
+    );
+    setRewriteTarget(null);
+    setHasUnsavedEdits(true);
+    setSaveFeedback(null);
+  }
+
+  function handleUndoBeat(index: number) {
+    const previous = previousBeats[index];
+    if (!previous) return;
+    setEditableBeats((prev) => prev.map((b, i) => (i === index ? previous : b)));
+    setPreviousBeats((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+    setHasUnsavedEdits(true);
+    setSaveFeedback(null);
+  }
+
+  function openRewrite(index: number, instruction?: string) {
+    setRewriteTarget({ index, instruction, key: Date.now() });
+    document.getElementById(`beat-card-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function handleDeleteBeat(index: number) {
@@ -252,6 +335,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       const filtered = prev.filter((_, idx) => idx !== index);
       return filtered.map((b, idx) => ({ ...b, index: idx }));
     });
+    resetBeatPositionState();
     setHasUnsavedEdits(true);
     setSaveFeedback(null);
   }
@@ -266,6 +350,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       copy[targetIndex] = temp;
       return copy.map((b, idx) => ({ ...b, index: idx }));
     });
+    resetBeatPositionState();
     setHasUnsavedEdits(true);
     setSaveFeedback(null);
   }
@@ -372,6 +457,15 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   // Handle Approve Script via POST /api/videos/[id]/script/approve
   async function handleApprove() {
     if (!selectedTitle.trim()) return;
+    const flagged = editableBeats.filter((b) => b.needs_check).length;
+    if (
+      flagged > 0 &&
+      !window.confirm(
+        `${flagged} beat${flagged === 1 ? '' : 's'} state numbers or quotes that no researched source backs. Approve anyway?`,
+      )
+    ) {
+      return;
+    }
 
     setIsApproving(true);
     setError(null);
@@ -848,11 +942,12 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-zinc-800">
                 <div>
-                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <h2 className="text-lg font-bold text-white flex flex-wrap items-center gap-2">
                     <span>2. Review & Refine Beats</span>
                     <span className="text-xs font-normal text-zinc-400">
                       ({editableBeats.length} beats)
                     </span>
+                    <RuntimeMeter beats={editableBeats} targetMinutes={video.target_minutes} />
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
                     Make direct inline adjustments to narration text. Save changes directly without re-running the LLM.
@@ -903,6 +998,31 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 </div>
               </div>
 
+              <ResearchPanel research={video.script_json.research} beats={editableBeats} />
+              <ShotPlanSummary
+                beats={editableBeats}
+                isPlanning={isPlanningShots}
+                hasUnsavedEdits={hasUnsavedEdits}
+                onPlanMissing={() => handlePlanShots(true)}
+                onReplanAll={() => handlePlanShots(false)}
+              />
+              {shotPlanError && (
+                <div className="p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-200 text-xs">
+                  {shotPlanError}
+                </div>
+              )}
+
+              <HookLab videoId={id} beats={editableBeats} onApply={(hook) => applyBeatReplacement(0, hook)} />
+              <ScriptDoctor
+                videoId={id}
+                beats={editableBeats}
+                review={video.script_json.review}
+                onReviewed={(review) =>
+                  setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, review } } : v))
+                }
+                onFix={(beatIndex, instruction) => openRewrite(beatIndex, instruction)}
+              />
+
               {/* Beat Cards */}
               <div className="space-y-4">
                 {editableBeats.map((beat, idx) => {
@@ -912,6 +1032,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                   return (
                     <div
                       key={idx}
+                      id={`beat-card-${idx}`}
                       className="p-5 rounded-xl bg-zinc-950/80 border border-zinc-800 hover:border-zinc-700/80 transition space-y-3"
                     >
                       {/* Beat Header: Index, Interactive Type Selector, Duration & Reorder Controls */}
@@ -946,6 +1067,26 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
                         {/* Reorder & Action Controls */}
                         <div className="flex items-center gap-1 text-xs">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              rewriteTarget?.index === idx ? setRewriteTarget(null) : openRewrite(idx)
+                            }
+                            title="Rewrite this beat with AI"
+                            className="px-2 py-1 rounded hover:bg-indigo-950/60 text-indigo-300 hover:text-indigo-200 text-[11px] font-medium"
+                          >
+                            ✨ Rewrite
+                          </button>
+                          {previousBeats[idx] && (
+                            <button
+                              type="button"
+                              onClick={() => handleUndoBeat(idx)}
+                              title="Restore the version before the last rewrite"
+                              className="px-2 py-1 rounded hover:bg-zinc-800 text-zinc-300 text-[11px] font-medium"
+                            >
+                              ↶ Undo
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleMoveBeat(idx, 'up')}
@@ -1014,6 +1155,26 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                           className="flex-1 bg-transparent border-0 text-zinc-200 italic font-mono text-xs focus:outline-none focus:ring-0 p-0"
                         />
                       </div>
+
+                      <BeatSources
+                        beat={beat}
+                        research={video.script_json?.research}
+                        onMarkChecked={() => handleMarkChecked(beat.index)}
+                      />
+
+                      <BeatShots beat={beat} />
+
+                      {rewriteTarget?.index === idx && (
+                        <BeatRewritePanel
+                          key={rewriteTarget.key}
+                          videoId={id}
+                          beats={editableBeats}
+                          index={idx}
+                          initialInstruction={rewriteTarget.instruction}
+                          onApply={(replacement) => applyBeatReplacement(idx, replacement)}
+                          onClose={() => setRewriteTarget(null)}
+                        />
+                      )}
                     </div>
                   );
                 })}

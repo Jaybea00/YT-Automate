@@ -1,14 +1,30 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getFfmpegPath } from '../utils/ffmpeg';
 import type { BeatTimingLike, UnitDurationLike } from '../utils/subtitles';
 
+const execFileAsync = promisify(execFile);
+
 export type CaptionPreset = 'vox' | 'social_pop' | 'clean_news';
+
+export const CAPTION_PRESETS: CaptionPreset[] = ['vox', 'social_pop', 'clean_news'];
+
+export function isCaptionPreset(value: unknown): value is CaptionPreset {
+  return CAPTION_PRESETS.includes(value as CaptionPreset);
+}
 
 export interface GenerateCaptionsOptions {
   beats: BeatTimingLike[];
   units?: UnitDurationLike[];
   preset?: CaptionPreset;
   outputAssPath?: string;
+  /**
+   * Actual start time (ms) of each beat in the final video, aligned with `beats`.
+   * When omitted, beats are laid back-to-back using their speech durations.
+   */
+  beatStartMs?: number[];
 }
 
 export interface CaptionWord {
@@ -47,9 +63,11 @@ export function generateAssCaptions(options: GenerateCaptionsOptions): {
   assContent: string;
   dialogues: CaptionDialogue[];
 } {
-  const { beats, units = [], preset = 'vox' } = options;
+  const { beats, units = [], preset = 'vox', beatStartMs } = options;
 
   const styleName = preset === 'social_pop' ? 'SocialPop' : preset === 'clean_news' ? 'CleanNews' : 'VoxMinimal';
+  // Social Pop's base text is yellow, so its active word pops in white instead of gold
+  const highlightColour = preset === 'social_pop' ? '&HFFFFFF&' : '&H00D4FF&';
 
   // ASS header with styles
   const header = `[Script Info]
@@ -74,10 +92,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const dialogues: CaptionDialogue[] = [];
   let currentStartMs = 0;
 
-  for (const beat of beats) {
+  for (const [beatPos, beat] of beats.entries()) {
+    if (beatStartMs?.[beatPos] != null) {
+      currentStartMs = beatStartMs[beatPos];
+    }
     const unit = units.find((u) => u.unit_index === beat.index && u.duration_ms != null && u.duration_ms > 0);
     const durationMs = unit?.duration_ms ?? Math.round((beat.duration_estimate_seconds ?? 4) * 1000);
-    const text = (beat.text || '').replace(/[*_#`]/g, '').trim();
+    // Braces and backslashes are ASS override syntax; strip them so narration can't inject tags
+    const text = (beat.text || '').replace(/[*_#`{}\\]/g, '').trim();
 
     if (!text) {
       currentStartMs += durationMs;
@@ -104,11 +126,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const wStartMs = chunkStartMs + wIdx * wordDurationMs;
         const wEndMs = Math.min(chunkEndMs, wStartMs + wordDurationMs);
 
-        // Format chunk with current word highlighted in gold (&H00D4FF&) and others in white
+        // Highlight the current word; {\r} resets the rest back to the style's own colour
         const styledText = chunkWords
           .map((w, idx) => {
             if (idx === wIdx) {
-              return `{\\c&H00D4FF&}${w}{\\c&HFFFFFF&}`;
+              return `{\\c${highlightColour}}${w}{\\r}`;
             }
             return w;
           })
@@ -146,4 +168,44 @@ export async function writeAssCaptionsFile(
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, assContent, 'utf-8');
   return outputPath;
+}
+
+/**
+ * Burns an ASS caption file into a video. Audio is stream-copied.
+ * ffmpeg runs from the caption file's directory and references it by bare filename,
+ * avoiding filter-graph escaping of Windows drive letters and backslashes.
+ */
+export async function burnCaptions(options: {
+  videoPath: string;
+  assPath: string;
+  outputPath: string;
+}): Promise<string> {
+  const { videoPath, assPath, outputPath } = options;
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  const args = [
+    '-y',
+    '-i',
+    path.resolve(videoPath),
+    '-vf',
+    `ass=${path.basename(assPath)}`,
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'copy',
+    path.resolve(outputPath),
+  ];
+
+  try {
+    await execFileAsync(getFfmpegPath(), args, { cwd: path.dirname(path.resolve(assPath)) });
+    return outputPath;
+  } catch (err) {
+    throw new Error(
+      `FFmpeg failed burning captions: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }

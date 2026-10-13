@@ -61,13 +61,10 @@ export function createSafeWebStream(
         }
       };
 
-      stream.on('data', (chunk: Buffer | Uint8Array) => {
+      stream.on('data', (chunk: string | Buffer) => {
         if (isClosed) return;
         try {
-          const uint8 =
-            chunk instanceof Uint8Array
-              ? chunk
-              : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          const uint8 = typeof chunk === 'string' ? new TextEncoder().encode(chunk) : chunk;
           controller.enqueue(uint8);
           if (controller.desiredSize !== null && controller.desiredSize <= 0) {
             stream.pause();

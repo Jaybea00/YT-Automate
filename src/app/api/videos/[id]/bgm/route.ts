@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { PRESET_TRACKS, ensureDefaultBgmPresets } from '@/pipeline/assembly/bgm';
 import { PRESET_SFX, ensureDefaultSfxPresets } from '@/pipeline/assembly/sfx';
+import { isCaptionPreset, type CaptionPreset } from '@/pipeline/assembly/captions';
 
 export async function handleGetBgm(
   _req: Request,
@@ -47,6 +48,9 @@ export async function handleGetBgm(
   const stillMotion = (video.script_json?.still_motion || 'zoom') as 'zoom' | 'static';
   const transition = (video.script_json?.transition || 'cut') as string;
   const beatPauseSeconds = Number(video.script_json?.beat_pause_seconds ?? 0.5);
+  const captionPreset = isCaptionPreset(video.script_json?.captions?.preset)
+    ? video.script_json.captions.preset
+    : 'none';
 
   return NextResponse.json({
     bgm,
@@ -55,6 +59,7 @@ export async function handleGetBgm(
     stillMotion,
     transition,
     beatPauseSeconds,
+    captionPreset,
     presets: PRESET_TRACKS,
     sfxPresets: PRESET_SFX,
   });
@@ -81,6 +86,7 @@ export async function handlePostBgm(
   let stillMotion: 'zoom' | 'static' | undefined;
   let transition: string | undefined;
   let beatPauseSeconds: number | undefined;
+  let captionPreset: CaptionPreset | 'none' | undefined;
 
   let sfxEnabled: boolean | undefined;
   let sfxTrack: string | undefined;
@@ -142,6 +148,10 @@ export async function handlePostBgm(
       if (!isNaN(p)) beatPauseSeconds = Math.max(0, Math.min(2.5, p));
     }
 
+    if (body.captionPreset === 'none' || isCaptionPreset(body.captionPreset)) {
+      captionPreset = body.captionPreset;
+    }
+
     if (body.sfxEnabled !== undefined) sfxEnabled = Boolean(body.sfxEnabled);
     if (body.sfxTrack) sfxTrack = String(body.sfxTrack);
     if (body.sfxVolume !== undefined) sfxVolume = parseFloat(String(body.sfxVolume));
@@ -183,6 +193,9 @@ export async function handlePostBgm(
   }
   if (beatPauseSeconds !== undefined) {
     scriptJson.beat_pause_seconds = beatPauseSeconds;
+  }
+  if (captionPreset !== undefined) {
+    scriptJson.captions = { preset: captionPreset };
   }
 
   const currentSfx = scriptJson.sfx || {};
@@ -228,6 +241,7 @@ export async function handlePostBgm(
     padStyle: scriptJson.pad_style || 'blur',
     stillMotion: scriptJson.still_motion || 'zoom',
     transition: scriptJson.transition || 'cut',
+    captionPreset: scriptJson.captions?.preset || 'none',
   });
 }
 

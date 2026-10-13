@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript, GeneratedScript } from '@/lib/script/generate-script';
 import { VideoStyle } from '@/lib/script/style-templates';
+import { researchTopic } from '@/lib/research/research';
+import { planShots } from '@/lib/script/shot-planner';
 import {
   parseSrtToBeats,
   parseRawTextToParagraphBeats,
   parseRawTextWithAi,
+  planVisualsForUploadedBeats,
 } from '@/lib/script/parser';
 
 export async function GET() {
@@ -58,18 +61,19 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Missing required field: srtText' }, { status: 400 });
       }
 
-      const beats = parseSrtToBeats(srtText, {
+      const parsedBeats = parseSrtToBeats(srtText, {
         minBeatDurationSeconds: minBeatDurationSeconds !== undefined ? Number(minBeatDurationSeconds) : 4.0,
       });
 
-      if (beats.length === 0) {
+      if (parsedBeats.length === 0) {
         return NextResponse.json(
           { error: 'Could not extract any subtitle cues from the provided SRT content.' },
           { status: 400 },
         );
       }
 
-      const videoTopic = topic?.trim() || beats[0]?.text.slice(0, 50) || 'Uploaded Subtitles Video';
+      const videoTopic = topic?.trim() || parsedBeats[0]?.text.slice(0, 50) || 'Uploaded Subtitles Video';
+      const beats = await planVisualsForUploadedBeats(supabase, parsedBeats, videoTopic);
       const totalSeconds = beats.reduce((acc, b) => acc + (b.duration_estimate_seconds || 0), 0);
       const computedMinutes = Math.max(0.5, Math.round((totalSeconds / 60) * 10) / 10);
 
@@ -109,15 +113,16 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Missing required field: rawText' }, { status: 400 });
       }
 
-      const beats = parseRawTextToParagraphBeats(rawText);
-      if (beats.length === 0) {
+      const parsedBeats = parseRawTextToParagraphBeats(rawText);
+      if (parsedBeats.length === 0) {
         return NextResponse.json(
           { error: 'No valid paragraphs found in provided text.' },
           { status: 400 },
         );
       }
 
-      const videoTopic = topic?.trim() || beats[0]?.text.slice(0, 50) || 'Manual Script Video';
+      const videoTopic = topic?.trim() || parsedBeats[0]?.text.slice(0, 50) || 'Manual Script Video';
+      const beats = await planVisualsForUploadedBeats(supabase, parsedBeats, videoTopic);
       const totalSeconds = beats.reduce((acc, b) => acc + (b.duration_estimate_seconds || 0), 0);
       const computedMinutes = Math.max(0.5, Math.round((totalSeconds / 60) * 10) / 10);
 
@@ -179,10 +184,11 @@ export async function POST(req: Request) {
       }
 
       try {
-        const generatedScript = await parseRawTextWithAi(supabase, rawText, {
+        const segmented = await parseRawTextWithAi(supabase, rawText, {
           topic: videoTopic,
           style,
         });
+        const generatedScript = await planShots(supabase, segmented, videoTopic);
 
         const { data: updatedVideo, error: updateError } = await supabase
           .from('videos')
@@ -253,13 +259,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Generate script
+    // 2. Research the topic, then write the script from the researched facts
     try {
-      const generatedScript = await generateScript(supabase, {
+      const research = await researchTopic(supabase, topic.trim());
+      const writtenScript = await generateScript(supabase, {
         topic: topic.trim(),
         style,
         targetMinutes: parsedTargetMinutes,
+        research,
       });
+      const generatedScript = await planShots(supabase, writtenScript, topic.trim());
 
       // 3. Update with script_json and status='script_review'
       const { data: updatedVideo, error: updateError } = await supabase

@@ -4,8 +4,10 @@ import {
   parseSrtToBeats,
   parseRawTextToParagraphBeats,
   parseRawTextWithAi,
+  planVisualsForUploadedBeats,
 } from '@/lib/script/parser';
 import { GeneratedScript } from '@/lib/script/generate-script';
+import { planShots } from '@/lib/script/shot-planner';
 
 export async function POST(
   req: Request,
@@ -53,16 +55,17 @@ export async function POST(
       }
       newScript = {
         title_options: video.script_json?.title_options || [video.title || 'My Video'],
-        beats,
+        beats: await planVisualsForUploadedBeats(supabase, beats, video.topic || video.title),
       };
     } else if (mode === 'raw_ai') {
       if (!rawText || !rawText.trim()) {
         return NextResponse.json({ error: 'Missing required field: rawText' }, { status: 400 });
       }
-      newScript = await parseRawTextWithAi(supabase, rawText, {
+      const segmented = await parseRawTextWithAi(supabase, rawText, {
         topic: video.topic,
         style: video.style,
       });
+      newScript = await planShots(supabase, segmented, video.topic || video.title);
     } else {
       // mode === 'raw_paragraphs'
       if (!rawText || !rawText.trim()) {
@@ -74,7 +77,7 @@ export async function POST(
       }
       newScript = {
         title_options: video.script_json?.title_options || [video.title || 'My Video'],
-        beats,
+        beats: await planVisualsForUploadedBeats(supabase, beats, video.topic || video.title),
       };
     }
 

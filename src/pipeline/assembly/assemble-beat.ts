@@ -83,7 +83,7 @@ export const LOUDNORM_AF = 'loudnorm=I=-16:TP=-1.5:LRA=11';
 /**
  * Probes clip duration in seconds using ffprobe.
  */
-async function probeClipDurationSec(filePath: string): Promise<number> {
+export async function probeClipDurationSec(filePath: string): Promise<number> {
   const ffprobeBin = getFfprobePath();
   try {
     const { stdout } = await execFileAsync(ffprobeBin, [
@@ -356,6 +356,34 @@ export interface ConcatenateSceneClipsOptions {
 }
 
 /**
+ * Overlap (seconds) used by crossfade/wipe transitions, shrunk for very short clips.
+ */
+export function resolveTransitionSeconds(durationsSec: number[], requested = 0.5): number {
+  const minDur = Math.min(...durationsSec);
+  return requested * 2 >= minDur ? Math.max(0.1, minDur / 3) : requested;
+}
+
+/**
+ * Start time (seconds) of each scene clip within the concatenated video.
+ * Crossfade/wipe overlap consecutive clips; every other transition is back-to-back.
+ */
+export function computeSceneStartOffsetsSec(
+  durationsSec: number[],
+  transition: TransitionType = 'cut',
+  transitionDuration?: number,
+): number[] {
+  const overlaps = durationsSec.length > 1 && (transition === 'crossfade' || transition === 'wipe');
+  const transSec = overlaps ? resolveTransitionSeconds(durationsSec, transitionDuration) : 0;
+  const starts: number[] = [];
+  let t = 0;
+  for (const d of durationsSec) {
+    starts.push(t);
+    t += d - transSec;
+  }
+  return starts;
+}
+
+/**
  * Concatenates scene clips into a single final MP4:
  * - If transition is 'crossfade' or 'wipe': renders multi-clip xfade with acrossfade audio.
  * - If transition is 'cut', 'dip_black', or 'dip_white': uses lossless -c copy concat demuxer
@@ -390,11 +418,7 @@ export async function concatenateSceneClips(
       sceneClipPaths.map((p) => probeClipDurationSec(p)),
     );
 
-    let transSec = options?.transitionDuration ?? 0.5;
-    const minDur = Math.min(...durations);
-    if (transSec * 2 >= minDur) {
-      transSec = Math.max(0.1, minDur / 3);
-    }
+    const transSec = resolveTransitionSeconds(durations, options?.transitionDuration);
 
     const inputArgs: string[] = [];
     sceneClipPaths.forEach((p) => {
