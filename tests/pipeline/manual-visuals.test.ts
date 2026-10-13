@@ -285,7 +285,8 @@ describe('Part 1: Manual Visual Upload & Assembly Gate', () => {
       assert.equal(db.video_assets.length, 1);
       assert.equal(db.video_assets[0].visual_type, 'uploaded');
       assert.equal(db.video_assets[0].license_type, 'own_work');
-      assert.equal(db.video_assets[0].source_url, 'original camera photo');
+      // source_url holds the stored file path, which assembly reads the visual from
+      assert.equal(db.video_assets[0].source_url, pngPath);
 
       // 2. Re-upload: replace with MP4 video for beat 0 with new license & note
       const formData2 = new FormData();
@@ -317,7 +318,7 @@ describe('Part 1: Manual Visual Upload & Assembly Gate', () => {
       assert.equal(db.video_assets[0].visual_type, 'uploaded');
       assert.equal(db.video_assets[0].license_type, 'cc_by');
       assert.equal(db.video_assets[0].attribution_text, 'Filmed by John Doe');
-      assert.equal(db.video_assets[0].source_url, 'https://example.com/video');
+      assert.equal(db.video_assets[0].source_url, mp4Path);
     });
   });
 

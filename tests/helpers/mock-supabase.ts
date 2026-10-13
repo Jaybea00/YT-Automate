@@ -160,15 +160,19 @@ export function createMockSupabase(initialData?: Partial<InMemoryDb>): {
           return chain;
         },
         delete: () => {
-          const filters: Array<{ col: string; val: any }> = [];
+          const filters: Array<(r: Record<string, any>) => boolean> = [];
           const chain: any = {
             eq: (col: string, val: any) => {
-              filters.push({ col, val });
+              filters.push((r) => r[col] === val);
+              return chain;
+            },
+            in: (col: string, vals: any[]) => {
+              filters.push((r) => vals.includes(r[col]));
               return chain;
             },
             then: (resolve: (res: any) => void) => {
               for (let i = records.length - 1; i >= 0; i--) {
-                const match = filters.every((f) => records[i][f.col] === f.val);
+                const match = filters.every((f) => f(records[i]));
                 if (match) {
                   records.splice(i, 1);
                 }

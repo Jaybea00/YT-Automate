@@ -43,6 +43,7 @@ interface VideoProgressData {
     status: string;
     script_json?: {
       beats?: ScriptBeat[];
+      still_motion?: 'zoom' | 'static';
     } | null;
   };
   job: {
