@@ -183,6 +183,10 @@ describe('Provider Registry & resolveForStage', () => {
 
     try {
       globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        // This fake server predates /dev/captioned_speech, so the provider falls back to plain speech
+        if (String(input).endsWith('/dev/captioned_speech')) {
+          return new Response('Not Found', { status: 404 });
+        }
         interceptedUrl = String(input);
         interceptedMethod = init?.method || 'GET';
         interceptedHeaders = init?.headers as Record<string, string>;

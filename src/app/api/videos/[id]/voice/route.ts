@@ -240,10 +240,14 @@ export async function handleVoiceRequest(
       );
     }
 
-    // Case B: Latest job failed or was cancelled -> re-queue the SAME job to reuse completed units
+    // Case B: Latest job failed or was cancelled -> re-queue the SAME job to reuse completed units.
+    // Its scenes are refreshed from the current beats, so edits made after the failure are voiced;
+    // unchanged beats still hit their unit checkpoints and aren't re-synthesized.
     if (latestJob && (latestJob.status === 'failed' || latestJob.status === 'cancelled')) {
+      const { scenes: currentScenes, scriptFingerprint: currentFingerprint } = beatsToScenes(beats);
       const updatedScript = {
         ...(latestJob.script ?? {}),
+        scenes: currentScenes,
         ...(targetTtsProviderConfigId !== undefined
           ? { tts_provider_config_id: targetTtsProviderConfigId }
           : {}),
@@ -262,6 +266,7 @@ export async function handleVoiceRequest(
           error: null,
           stages: targetStages,
           script: updatedScript,
+          script_fingerprint: currentFingerprint,
           updated_at: new Date().toISOString(),
         })
         .eq('id', latestJob.id);
@@ -271,6 +276,16 @@ export async function handleVoiceRequest(
           { error: `Failed to re-queue job: ${requeueError.message}` },
           { status: 500 },
         );
+      }
+
+      // A stage marked done would be skipped wholesale; reset the requested ones so their
+      // units are re-checked against the refreshed scenes
+      for (const stage of targetStages) {
+        await supabase
+          .from('yt_job_stages')
+          .update({ status: 'pending', error: null })
+          .eq('job_id', latestJob.id)
+          .eq('stage', stage);
       }
 
       const videoUpdates: Record<string, unknown> = { status: 'voicing', error_message: null };

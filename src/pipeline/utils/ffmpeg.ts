@@ -47,6 +47,48 @@ export async function verifyFfmpegInstalled(): Promise<void> {
   }
 }
 
+/** Parses ffmpeg `silencedetect` output (stderr) into silence intervals in seconds. */
+export function parseSilenceDetect(stderr: string, durationSec: number): Array<{ start: number; end: number }> {
+  const silences: Array<{ start: number; end: number }> = [];
+  let open: number | null = null;
+  for (const line of stderr.split(/\r?\n/)) {
+    const start = line.match(/silence_start:\s*(-?[\d.]+)/);
+    if (start) open = Math.max(0, parseFloat(start[1]));
+    const end = line.match(/silence_end:\s*([\d.]+)/);
+    if (end && open !== null) {
+      silences.push({ start: open, end: parseFloat(end[1]) });
+      open = null;
+    }
+  }
+  // A silence still open at the end of the file runs to the end
+  if (open !== null) silences.push({ start: open, end: durationSec });
+  return silences;
+}
+
+/**
+ * Finds pauses in narration audio (default: below -35 dB for at least 120 ms).
+ * Used to anchor estimated word timings to the real gaps between phrases.
+ */
+export async function detectSilences(
+  filePath: string,
+  durationSec: number,
+  options: { noiseDb?: number; minSeconds?: number } = {},
+): Promise<Array<{ start: number; end: number }>> {
+  const { noiseDb = -35, minSeconds = 0.12 } = options;
+  const nullOut = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  const { stderr } = await execFileAsync(getFfmpegPath(), [
+    '-hide_banner',
+    '-i',
+    filePath,
+    '-af',
+    `silencedetect=noise=${noiseDb}dB:d=${minSeconds}`,
+    '-f',
+    'null',
+    nullOut,
+  ]);
+  return parseSilenceDetect(stderr, durationSec);
+}
+
 /**
  * Measures audio duration in milliseconds using ffprobe.
  * Fails with an Error if ffprobe is missing or output is invalid.

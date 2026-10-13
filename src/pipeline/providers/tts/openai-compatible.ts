@@ -1,21 +1,68 @@
 import { ProviderError } from '../errors';
 import { mapHttpOrSdkError } from '../error-mapper';
-import type { ProviderCallContext, SyncedVoice, TTSProvider, Usage } from '../types';
+import type { ProviderCallContext, SyncedVoice, TTSProvider, TtsRequest, TtsResult, Usage } from '../types';
+import { serverOptions } from './options';
+
+interface CaptionedSpeechResponse {
+  audio: string;
+  timestamps?: Array<{ word: string; start_time: number; end_time: number }> | null;
+}
 
 export class OpenAiCompatibleTtsProvider implements TTSProvider {
   readonly kind = 'tts' as const;
   readonly id: string;
   readonly requiresApiKey: boolean;
+  /** Base URLs whose server has no /dev/captioned_speech (learned on first 404). */
+  private readonly noCaptionedSpeech = new Set<string>();
 
   constructor(id: string = 'openai-compatible', requiresApiKey: boolean = false) {
     this.id = id;
     this.requiresApiKey = requiresApiKey;
   }
 
-  async synthesize(
-    req: { text: string; voiceId: string; speed?: number; format: 'mp3' | 'wav' },
+  /**
+   * Kokoro-FastAPI serves /dev/captioned_speech next to /v1/audio/speech: identical audio plus
+   * word timestamps at no extra cost. Used for any self-hosted base URL unless the binding sets
+   * options.wordTimestamps = false; servers without it fall back to plain speech once.
+   */
+  private async synthesizeCaptioned(
+    req: TtsRequest,
     ctx: ProviderCallContext,
-  ): Promise<{ bytes: Uint8Array; mimeType: string; durationMs?: number; usage: Usage }> {
+    body: Record<string, unknown>,
+    headers: Record<string, string>,
+  ): Promise<TtsResult | null> {
+    const baseUrl = ctx.baseUrl || '';
+    if (!baseUrl || /api\.openai\.com/.test(baseUrl) || ctx.options?.wordTimestamps === false) return null;
+    if (this.noCaptionedSpeech.has(baseUrl)) return null;
+
+    const root = baseUrl.replace(/\/+$/, '').replace(/\/v1$/, '');
+    const response = await fetch(`${root}/dev/captioned_speech`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, stream: false, return_timestamps: true }),
+      signal: ctx.signal,
+    });
+    if (response.status === 404 || response.status === 405) {
+      this.noCaptionedSpeech.add(baseUrl);
+      return null;
+    }
+    if (!response.ok) {
+      throw mapHttpOrSdkError(
+        { status: response.status, message: `Captioned speech failed: ${await response.text().catch(() => '')}`, headers: response.headers },
+        'TTS request failed',
+      );
+    }
+
+    const data = (await response.json()) as CaptionedSpeechResponse;
+    return {
+      bytes: new Uint8Array(Buffer.from(data.audio, 'base64')),
+      mimeType: req.format === 'wav' ? 'audio/wav' : 'audio/mpeg',
+      usage: { characters: req.text.length },
+      words: (data.timestamps ?? []).map((t) => ({ word: t.word, start: Math.max(0, t.start_time), end: t.end_time })),
+    };
+  }
+
+  async synthesize(req: TtsRequest, ctx: ProviderCallContext): Promise<TtsResult> {
     const baseUrl = ctx.baseUrl || 'https://api.openai.com/v1';
     const url = `${baseUrl.replace(/\/+$/, '')}/audio/speech`;
 
@@ -31,7 +78,7 @@ export class OpenAiCompatibleTtsProvider implements TTSProvider {
       input: req.text,
       voice: req.voiceId,
       response_format: req.format,
-      ...ctx.options,
+      ...serverOptions(ctx.options),
     };
 
     if (req.speed !== undefined) {
@@ -39,6 +86,9 @@ export class OpenAiCompatibleTtsProvider implements TTSProvider {
     }
 
     try {
+      const captioned = await this.synthesizeCaptioned(req, ctx, body, headers);
+      if (captioned) return captioned;
+
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -71,11 +121,7 @@ export class OpenAiCompatibleTtsProvider implements TTSProvider {
         characters: req.text.length,
       };
 
-      return {
-        bytes,
-        mimeType,
-        usage,
-      };
+      return { bytes, mimeType, usage };
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;

@@ -804,7 +804,9 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                               <div className="px-3 py-2 rounded-lg bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between">
                                 <span className="flex items-center gap-1.5">
                                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                  Local Kokoro Neural Voice
+                                  {sel.provider_slug === 'gemini-tts' || sel.yt_provider_configs?.provider === 'gemini-tts'
+                                    ? 'Gemini cloud voice'
+                                    : 'Local Kokoro Neural Voice'}
                                 </span>
                                 <span className="font-mono text-zinc-500">{sel.voice_id}</span>
                               </div>

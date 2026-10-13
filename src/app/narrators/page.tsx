@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { PronunciationEditor } from './pronunciation-editor';
 
 interface ProviderConfig {
   id: string;
@@ -20,6 +21,13 @@ interface Narrator {
   created_at: string;
   provider_slug: string | null;
   yt_provider_configs?: ProviderConfig | null;
+}
+
+/** Where a voice without a preview clip runs, by provider slug. */
+function voiceSourceLabel(provider: string | null | undefined): string {
+  if (provider === 'gemini-tts') return 'Gemini cloud voice';
+  if (provider === 'openai-compatible') return 'Local Kokoro Neural';
+  return 'Synthetic voice';
 }
 
 const VIDEO_STYLES: Array<{ key: string; label: string; description: string; icon: string }> = [
@@ -524,7 +532,7 @@ export default function NarratorsPage() {
                             <div className="flex items-center justify-between text-[11px] text-zinc-400 bg-zinc-900/60 px-3 py-1.5 rounded-lg border border-zinc-800/50">
                               <span className="flex items-center gap-1.5 text-zinc-400">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                Local Kokoro Neural
+                                {voiceSourceLabel(narrator.yt_provider_configs?.provider || narrator.provider_slug)}
                               </span>
                               <span className="text-[10px] text-zinc-500 font-mono">Ready</span>
                             </div>
@@ -538,6 +546,8 @@ export default function NarratorsPage() {
             })
           )}
         </div>
+
+        <PronunciationEditor />
       </div>
     </div>
   );

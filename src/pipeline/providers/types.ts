@@ -51,14 +51,33 @@ export interface SyncedVoice {
   trainingDuration?: string | null;
 }
 
+export interface TtsRequest {
+  text: string;
+  voiceId: string;
+  speed?: number;
+  format: 'mp3' | 'wav';
+  /** Natural-language delivery direction ("calm, authoritative documentary narrator"); providers that can't use it ignore it. */
+  direction?: string;
+}
+
+export interface TtsResult {
+  bytes: Uint8Array;
+  mimeType: string;
+  durationMs?: number;
+  usage: Usage;
+  /** Timings of the words as spoken (seconds), when the provider reports them. */
+  words?: Array<{ word: string; start: number; end: number }>;
+}
+
 export interface TTSProvider {
   readonly kind: 'tts';
   readonly id: string;
   readonly requiresApiKey?: boolean;
-  synthesize(
-    req: { text: string; voiceId: string; speed?: number; format: 'mp3' | 'wav' },
-    ctx: ProviderCallContext,
-  ): Promise<{ bytes: Uint8Array; mimeType: string; durationMs?: number; usage: Usage }>;
+  /** How many beats may be voiced at once (default 1). Local engines on one CPU should stay at 1. */
+  readonly maxConcurrency?: number;
+  /** True when the provider uses TtsRequest.direction (so a changed direction should re-voice). */
+  readonly supportsDirection?: boolean;
+  synthesize(req: TtsRequest, ctx: ProviderCallContext): Promise<TtsResult>;
   listVoices?(ctx: ProviderCallContext): Promise<SyncedVoice[]>;
 }
 
