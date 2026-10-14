@@ -43,7 +43,6 @@ export async function sourceVisualBeat(
   options: SourceBeatOptions,
 ): Promise<VisualSourceResult> {
   const {
-    jobId,
     videoId,
     beat,
     targetDurationMs,

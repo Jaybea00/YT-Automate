@@ -22,10 +22,9 @@ describe('Narrator Picker & Style Defaults', () => {
   });
 
   const mockKokoroConfigId = 'kokoro-cfg-123';
-  const mockElevenLabsConfigId = 'eleven-cfg-456';
 
   it('1. Narrator sync upserts without duplicating on re-sync', async () => {
-    let listVoicesCallCount = 0;
+    let _listVoicesCallCount = 0;
     const dummyKokoroProvider: TTSProvider = {
       kind: 'tts',
       id: 'openai-compatible',
@@ -36,7 +35,7 @@ describe('Narrator Picker & Style Defaults', () => {
         durationMs: 1000,
       }),
       listVoices: async () => {
-        listVoicesCallCount++;
+        _listVoicesCallCount++;
         return [
           {
             id: 'af_bella',
@@ -250,7 +249,7 @@ describe('Narrator Picker & Style Defaults', () => {
     };
     registerProvider('tts', 'openai-compatible', dummyProvider);
 
-    const { supabase, db } = createMockSupabase({
+    const { supabase } = createMockSupabase({
       yt_provider_configs: [
         {
           id: mockKokoroConfigId,
@@ -298,7 +297,7 @@ describe('Narrator Picker & Style Defaults', () => {
     const narratorId1 = 'narrator-uuid-tech';
     const narratorId2 = 'narrator-uuid-crime';
 
-    const { supabase, db } = createMockSupabase({
+    const { supabase } = createMockSupabase({
       style_narrator_defaults: [],
       narrators: [
         { id: narratorId1, name: 'Tech Voice' },

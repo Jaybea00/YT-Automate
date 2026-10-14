@@ -52,24 +52,30 @@ export default function NarratorsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [savingStyle, setSavingStyle] = useState<string | null>(null);
 
-  // Fetch Narrators and Style Defaults
+  // Fetch Narrators and Style Defaults; null where a request failed (that state is left as it is)
+  const fetchData = async () => {
+    const [narratorsRes, defaultsRes] = await Promise.all([
+      fetch('/api/narrators'),
+      fetch('/api/narrators/defaults'),
+    ]);
+    const narratorsData = narratorsRes.ok ? await narratorsRes.json() : null;
+    const defaultsData = defaultsRes.ok ? await defaultsRes.json() : null;
+    return {
+      narrators: narratorsData === null ? null : Array.isArray(narratorsData) ? narratorsData : [],
+      defaults: defaultsData === null ? null : defaultsData.defaults || {},
+    };
+  };
+
+  const applyData = (d: Awaited<ReturnType<typeof fetchData>>) => {
+    if (d.narrators) setNarrators(d.narrators);
+    if (d.defaults) setStyleDefaults(d.defaults);
+  };
+
+  // Reload with the spinner (after a sync)
   const loadData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const [narratorsRes, defaultsRes] = await Promise.all([
-        fetch('/api/narrators'),
-        fetch('/api/narrators/defaults'),
-      ]);
-
-      if (narratorsRes.ok) {
-        const narratorsData = await narratorsRes.json();
-        setNarrators(Array.isArray(narratorsData) ? narratorsData : []);
-      }
-
-      if (defaultsRes.ok) {
-        const defaultsData = await defaultsRes.json();
-        setStyleDefaults(defaultsData.defaults || {});
-      }
+      applyData(await fetchData());
     } catch (err) {
       console.error('Failed to load narrator data:', err);
     } finally {
@@ -77,8 +83,17 @@ export default function NarratorsPage() {
     }
   };
 
+  // First load (loading starts true)
   useEffect(() => {
-    loadData();
+    let cancelled = false;
+    fetchData()
+      .then((d) => !cancelled && applyData(d))
+      .catch((err) => console.error('Failed to load narrator data:', err))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount, as before
   }, []);
 
   // Sync handler (sync all or specific provider)
@@ -440,7 +455,7 @@ export default function NarratorsPage() {
             </div>
           ) : filteredGroups.length === 0 ? (
             <div className="p-12 text-center bg-zinc-900 border border-zinc-800 rounded-2xl text-xs text-zinc-400">
-              No voices matched "{searchQuery}".
+              No voices matched &quot;{searchQuery}&quot;.
             </div>
           ) : (
             filteredGroups.map((group) => {

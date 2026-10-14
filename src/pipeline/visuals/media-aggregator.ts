@@ -28,7 +28,6 @@ export async function aggregateMediaCandidates(
     query,
     text,
     explicitType,
-    targetDurationSeconds = 4,
     stockProvider,
     stockCtx,
     limit = 4,

@@ -61,7 +61,7 @@ export default function NewVideoPage() {
     setErrorMessage(null);
 
     let mode: CreationMode = 'ai';
-    const payload: Record<string, any> = { style };
+    const payload: Record<string, unknown> = { style };
 
     if (activeTab === 'ai') {
       mode = 'ai';

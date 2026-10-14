@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
 import { ShotEditor } from './shot-editor';
+import type { MediaCandidate } from '@/pipeline/visuals/types';
 
 interface VisualsPageProps {
   params: Promise<{ id: string }>;
@@ -29,7 +30,7 @@ interface VideoAsset {
   attribution_text: string | null;
   start_offset_seconds?: number | null;
   end_offset_seconds?: number | null;
-  candidates_json?: any[] | null;
+  candidates_json?: MediaCandidate[] | null;
   created_at?: string;
 }
 
@@ -63,7 +64,7 @@ const LICENSE_OPTIONS = [
   { value: 'public_domain', label: 'Public Domain' },
   { value: 'cc0', label: 'Creative Commons Zero (CC0)' },
   { value: 'cc_by', label: 'Creative Commons Attribution (CC-BY)' },
-  { value: 'fair_use', label: 'Fair Use' },
+  { value: 'cc_by_sa', label: 'Creative Commons Attribution-ShareAlike (CC BY-SA)' },
 ];
 
 export default function BeatVisualsPage({ params }: VisualsPageProps) {
@@ -126,7 +127,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [swappingBeat, setSwappingBeat] = useState<number | null>(null);
   const [searchQueries, setSearchQueries] = useState<Record<number, string>>({});
   const [searchingBeat, setSearchingBeat] = useState<number | null>(null);
-  const [customCandidates, setCustomCandidates] = useState<Record<number, any[]>>({});
+  const [customCandidates, setCustomCandidates] = useState<Record<number, MediaCandidate[]>>({});
 
   const bgmAudioRef = useRef<HTMLAudioElement | null>(null);
   const sfxAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -147,7 +148,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   // Retrieve remembered license
   function getLastLicenseChoice(): string {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('yt_last_license_choice') || 'own_work';
+      // A remembered choice that's no longer offered (e.g. the old Fair Use option) falls back to Own Work
+      const saved = localStorage.getItem('yt_last_license_choice');
+      return saved && LICENSE_OPTIONS.some((o) => o.value === saved) ? saved : 'own_work';
     }
     return 'own_work';
   }
@@ -158,7 +161,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     }
   }
 
-  async function handleSwapCandidate(beatIndex: number, candidate: any) {
+  async function handleSwapCandidate(beatIndex: number, candidate: MediaCandidate) {
     try {
       setSwappingBeat(beatIndex);
       const res = await fetch(`/api/videos/${id}/beats/${beatIndex}/swap`, {
@@ -349,7 +352,6 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
         .catch(() => {});
 
       // Initialize license choice for beats not yet populated
-      const defaultLicense = getLastLicenseChoice();
       const initialLicenses: Record<number, string> = {};
       const initialNotes: Record<number, string> = {};
       const initialAttributions: Record<number, string> = {};
@@ -457,10 +459,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const sourceNote = sourceNotes[beatIndex] || '';
     const attribution = attributionTexts[beatIndex] || '';
 
-    if (license === 'cc_by' && !attribution.trim()) {
+    if ((license === 'cc_by' || license === 'cc_by_sa') && !attribution.trim()) {
       setBeatErrors((prev) => ({
         ...prev,
-        [beatIndex]: 'Attribution text is required when license is CC-BY.',
+        [beatIndex]: 'Attribution text is required for CC-BY and CC BY-SA licenses.',
       }));
       return;
     }
@@ -1454,7 +1456,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
                         {pool.length > 0 ? (
                           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 pt-1">
-                            {pool.map((cand: any, cIdx: number) => {
+                            {pool.map((cand: MediaCandidate, cIdx: number) => {
                               const isCurrent =
                                 asset?.source_url?.includes(cand.downloadUrl) ||
                                 (asset?.attribution_text && cand.attribution && asset.attribution_text === cand.attribution);
@@ -1504,7 +1506,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
                                     <button
                                       type="button"
-                                      disabled={isSwappingThisBeat || isCurrent}
+                                      disabled={isSwappingThisBeat || !!isCurrent}
                                       onClick={() => handleSwapCandidate(index, cand)}
                                       className={`w-full py-1 rounded-lg text-xs font-medium transition cursor-pointer flex items-center justify-center gap-1 ${
                                         isCurrent
@@ -1595,15 +1597,15 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                         />
                       </div>
 
-                      {/* Attribution Text Input (required if CC-BY) */}
+                      {/* Attribution Text Input (required if CC-BY or CC BY-SA) */}
                       <div>
                         <label className="block text-xs font-medium text-zinc-400 mb-1">
-                          Attribution Text {currentLicense === 'cc_by' && <span className="text-red-400">*</span>}
+                          Attribution Text {(currentLicense === 'cc_by' || currentLicense === 'cc_by_sa') && <span className="text-red-400">*</span>}
                         </label>
                         <input
                           type="text"
                           placeholder={
-                            currentLicense === 'cc_by'
+                            currentLicense === 'cc_by' || currentLicense === 'cc_by_sa'
                               ? 'Required: Creator name / credit'
                               : 'Optional attribution'
                           }

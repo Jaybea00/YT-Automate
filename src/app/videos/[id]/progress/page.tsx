@@ -12,7 +12,7 @@ interface VideoData {
   render_url: string | null;
   error_message: string | null;
   bgm_track?: string | null;
-  script_json?: any;
+  script_json?: Record<string, unknown> | null;
 }
 
 interface ChapterItem {
@@ -95,7 +95,7 @@ export default function PipelineProgressPage() {
   const id = params?.id as string;
 
   const [data, setData] = useState<ProgressResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stageFilter, setStageFilter] = useState<'all' | 'visuals' | 'tts'>('all');
   const [isTriggering, setIsTriggering] = useState(false);
@@ -149,8 +149,11 @@ export default function PipelineProgressPage() {
   }, [id, fetchChapters]);
 
   useEffect(() => {
-    fetchProgress();
-    fetchChapters();
+    // Started from a microtask: the loaders set state only once their requests answer
+    void Promise.resolve().then(() => {
+      fetchProgress();
+      fetchChapters();
+    });
   }, [fetchProgress, fetchChapters]);
 
   function handleFormatChange(newStyle: 'dash' | 'space') {

@@ -62,7 +62,7 @@ export async function POST(req: Request, context: RouteContext) {
       .eq('beat_index', beatIndex)
       .maybeSingle();
 
-    const existingCandidates: any[] = existingAsset?.candidates_json || [];
+    const existingCandidates: Array<{ id?: unknown }> = existingAsset?.candidates_json || [];
     const updatedCandidates = [candidate, ...existingCandidates.filter((c) => c.id !== candidate.id)].slice(0, 6);
 
     await upsertVideoAssetProvenance(supabase, {

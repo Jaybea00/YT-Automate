@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, use } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import type { MediaCandidate } from '@/pipeline/visuals/types';
 
 interface VibeditPageProps {
   params: Promise<{ id: string }>;
@@ -25,7 +25,7 @@ interface VideoAsset {
   license_source: string | null;
   attribution_text: string | null;
   start_offset_seconds?: number | null;
-  candidates_json?: any[] | null;
+  candidates_json?: MediaCandidate[] | null;
 }
 
 interface JobUnit {
@@ -57,7 +57,6 @@ interface VideoProgressData {
 export default function VibeditStudioPage({ params }: VibeditPageProps) {
   const resolvedParams = use(params);
   const id = resolvedParams.id;
-  const router = useRouter();
 
   const [data, setData] = useState<VideoProgressData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,9 +65,9 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
   // Video Player state
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [videoDuration, setVideoDuration] = useState(0);
+  const [, setVideoDuration] = useState(0);
   const [activeBeatIndex, setActiveBeatIndex] = useState(0);
   const [videoLoadError, setVideoLoadError] = useState(false);
 
@@ -85,7 +84,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
   const [generatingVideoBeat, setGeneratingVideoBeat] = useState<number | null>(null);
   const [uploadingBeat, setUploadingBeat] = useState<number | null>(null);
   const [keyModalMessage, setKeyModalMessage] = useState<string | null>(null);
-  const [customCandidates, setCustomCandidates] = useState<Record<number, any[]>>({});
+  const [customCandidates, setCustomCandidates] = useState<Record<number, MediaCandidate[]>>({});
 
 
   // Assembly trigger
@@ -96,10 +95,13 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
 
   useEffect(() => {
-    fetchVideoData();
+    // Started from a microtask: fetchVideoData sets state only once its request answers
+    void Promise.resolve().then(() => fetchVideoData());
   }, [id]);
 
   useEffect(() => {
+    // Clearing the error before the HEAD check is deliberate; deferring it would show a stale error for a frame.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVideoLoadError(false);
     if (playerMode === 'beat') {
       fetch(`/api/videos/${id}/beats/${activeBeatIndex}/visual?t=${cacheBuster}`, {
@@ -242,7 +244,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
     }
   }
 
-  async function handleSwapCandidate(index: number, candidate: any) {
+  async function handleSwapCandidate(index: number, candidate: MediaCandidate) {
     try {
       setSwappingBeat(index);
       const res = await fetch(`/api/videos/${id}/beats/${index}/swap`, {
@@ -969,7 +971,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
                   {pool.length > 0 ? (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                      {pool.map((cand: any, cIdx: number) => {
+                      {pool.map((cand: MediaCandidate, cIdx: number) => {
                         const isCurrent =
                           asset?.source_url?.includes(cand.downloadUrl) ||
                           (asset?.attribution_text &&
@@ -1008,7 +1010,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                               </p>
                               <button
                                 type="button"
-                                disabled={isSwapping || isCurrent}
+                                disabled={isSwapping || !!isCurrent}
                                 onClick={() => handleSwapCandidate(index, cand)}
                                 className={`w-full py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                                   isCurrent

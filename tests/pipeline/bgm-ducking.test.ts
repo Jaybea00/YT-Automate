@@ -9,7 +9,6 @@ import {
   ensureDefaultBgmPresets,
   resolveBgmTrackPath,
   applyBackgroundMusic,
-  PRESET_TRACKS,
 } from '../../src/pipeline/assembly/bgm.ts';
 import {
   getFfmpegPath,

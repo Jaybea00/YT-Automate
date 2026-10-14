@@ -2,6 +2,21 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { MediaCandidate } from '../../visuals/types';
 
+/** The parts of a Commons API page (with imageinfo and extmetadata) this module reads. */
+interface CommonsPage {
+  pageid?: number;
+  title?: string;
+  imageinfo?: Array<{
+    mime?: string;
+    width?: number;
+    height?: number;
+    url?: string;
+    thumburl?: string;
+    descriptionurl?: string;
+    extmetadata?: Record<string, { value?: string } | undefined>;
+  }>;
+}
+
 export interface WikimediaOptions {
   limit?: number;
   minWidth?: number;
@@ -46,7 +61,7 @@ export async function searchWikimediaCommons(
     }
 
     const data = await res.json();
-    const pages = Object.values(data.query?.pages || {}) as any[];
+    const pages = Object.values(data.query?.pages || {}) as CommonsPage[];
 
     const candidates: MediaCandidate[] = [];
 
@@ -90,15 +105,15 @@ export async function searchWikimediaCommons(
       const extmeta = info.extmetadata || {};
       const license = extmeta.LicenseShortName?.value || extmeta.UsageTerms?.value || 'Public domain / CC';
       const author = extmeta.Artist?.value?.replace(/<[^>]*>?/gm, '').trim() || 'Wikimedia Commons contributor';
-      const desc = extmeta.ImageDescription?.value?.replace(/<[^>]*>?/gm, '').trim() || title.replace(/^File:/, '');
 
       candidates.push({
         id: `wiki_${page.pageid || Math.random()}`,
         provider: 'wikimedia',
         mediaType: isVideo ? 'video' : 'image',
         title: title.replace(/^File:/, ''),
-        thumbnailUrl: info.thumburl || info.url,
-        downloadUrl: info.url,
+        // Commons always returns url for an imageinfo request
+        thumbnailUrl: (info.thumburl || info.url) as string,
+        downloadUrl: info.url as string,
         pageUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(title)}`,
         width,
         height,

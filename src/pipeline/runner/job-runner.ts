@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '../providers/registry';
 import { runJobUnit } from './unit-runner';
-import { assembleVideo, getAudioDurationMs } from '../utils/ffmpeg';
+import { getAudioDurationMs } from '../utils/ffmpeg';
 import { computeInputHash, computeScriptFingerprint } from '../utils/hash';
 import { chromium, type Browser } from 'playwright';
 import type { ImageProvider, LLMProvider, PipelineStage, StockProvider } from '../providers/types';
@@ -719,6 +719,8 @@ export class JobRunner {
       }
 
       // 2. Resolve beats / scenes
+      // An untyped select('*') row whose script_json holds many optional, evolving settings
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let videoRecord: any = null;
       if (videoId) {
         const { data: vRec } = await this.supabase
@@ -730,6 +732,8 @@ export class JobRunner {
       }
 
       const usingVideoBeats = Array.isArray(videoRecord?.script_json?.beats);
+      // Either video beats or legacy job scenes; both shapes are read field by field below
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const scriptBeats: any[] =
         videoRecord?.script_json?.beats || job.script?.scenes;
 
@@ -889,6 +893,7 @@ export class JobRunner {
         }
 
         // Fetch video_assets row for fallback visual or trim offsets
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- untyped select('*') row
         let assetRow: any = null;
         if (videoId) {
           const { data: aRow } = await this.supabase

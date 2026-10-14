@@ -112,7 +112,7 @@ test('Video Trim Offsets Pipeline Tests', async (t) => {
           return {
             select() {
               return {
-                eq(_col: string, val: any) {
+                eq(_col: string, _val: any) {
                   return {
                     eq(_c2: string, _v2: any) {
                       return {

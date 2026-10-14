@@ -39,7 +39,8 @@ export async function POST(req: Request, context: RouteContext) {
 
     const body = await req.json().catch(() => ({}));
     const customPrompt: string | undefined = body.prompt;
-    const model: any = body.model || 'veo2';
+    // Passed through as sent (the step falls back to its default for an unknown model)
+    const model = (body.model || 'veo2') as 'veo2' | 'kling' | 'minimax' | 'luma';
 
     const supabase = getSupabaseServerClient();
 
@@ -86,7 +87,7 @@ export async function POST(req: Request, context: RouteContext) {
       .eq('beat_index', beatIndex)
       .maybeSingle();
 
-    const existingCandidates: any[] = existingAsset?.candidates_json || [];
+    const existingCandidates: Array<{ id?: unknown }> = existingAsset?.candidates_json || [];
     const updatedCandidates = [candidate, ...existingCandidates.filter((c) => c.id !== candidate.id)].slice(0, 6);
 
     await upsertVideoAssetProvenance(supabase, {

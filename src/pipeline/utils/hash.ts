@@ -42,7 +42,7 @@ export interface UnitHashInput {
  * Computes input_hash = sha256(stableStringify({ stage, input, providerId, model, baseUrl, options }))
  * If input and providerId are not explicitly specified, hashes the whole object deterministically.
  */
-export function computeInputHash(params: UnitHashInput | Record<string, any>): string {
+export function computeInputHash(params: UnitHashInput | Record<string, unknown>): string {
   if ('input' in params && 'providerId' in params) {
     return sha256({
       stage: params.stage,

@@ -51,12 +51,12 @@ export class FalVideoProvider implements VideoProvider {
 
     const modelKey = req.model || (ctx.options.model as string) || 'veo2';
     const endpoint = MODEL_ENDPOINTS[modelKey] || MODEL_ENDPOINTS.veo2;
-    const aspectRatio = req.aspectRatio || (ctx.options.aspectRatio as any) || '16:9';
+    const aspectRatio = req.aspectRatio || (ctx.options.aspectRatio as typeof req.aspectRatio) || '16:9';
 
     try {
       // 1. Submit job to Fal queue
       const submitUrl = `https://queue.fal.run/${endpoint}`;
-      const payload: Record<string, any> = {
+      const payload: Record<string, unknown> = {
         prompt: cleanPrompt,
         aspect_ratio: aspectRatio,
       };

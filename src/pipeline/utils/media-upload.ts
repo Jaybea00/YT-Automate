@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFfprobePath } from './ffmpeg';
 
 const execFileAsync = promisify(execFile);
@@ -203,7 +204,10 @@ export async function probeMediaFile(filePath: string): Promise<MediaProbeInfo> 
     );
   }
 
-  let data: any;
+  let data: {
+    streams?: Array<{ width?: number | string; height?: number | string; duration?: string }>;
+    format?: { duration?: string };
+  };
   try {
     data = JSON.parse(stdout);
   } catch {
@@ -373,7 +377,7 @@ export function computeUploadWarnings(
  * can never accidentally be reused.
  */
 export async function invalidateBeatAssemblyCache(
-  supabase: any,
+  supabase: SupabaseClient,
   videoId: string,
   beatIndex: number,
 ): Promise<void> {
@@ -386,7 +390,7 @@ export async function invalidateBeatAssemblyCache(
       .eq('video_id', videoId);
 
     if (jobs && jobs.length > 0) {
-      const jobIds = jobs.map((j: any) => j.id);
+      const jobIds = jobs.map((j: { id: string }) => j.id);
       await supabase
         .from('yt_job_units')
         .delete()

@@ -24,4 +24,6 @@ export interface VideoRecord {
   title?: string | null;
   script_approved_at?: string | null;
   error_message?: string | null;
+  /** The narrator chosen for voicing, when one has been picked. */
+  narrator_id?: string | null;
 }

@@ -6,12 +6,11 @@ import * as os from 'node:os';
 import { createMockSupabase } from '../helpers/mock-supabase';
 import { JobRunner } from '../../src/pipeline/runner/job-runner';
 import { sourceVisualBeat } from '../../src/pipeline/visuals/beat-sourcer';
-import { extractChartSpec, verifyNumbersInText } from '../../src/pipeline/visuals/chart-step';
+import { extractChartSpec } from '../../src/pipeline/visuals/chart-step';
 import { resolveOfficialUrl } from '../../src/pipeline/visuals/screen-recording-step';
 import { ProviderError } from '../../src/pipeline/providers/errors';
 import {
   pickBestVideoCandidate,
-  PixabayStockProvider,
   sanitizePixabayQuery,
 } from '../../src/pipeline/providers/stock/pixabay';
 import { extractStockKeywords } from '../../src/pipeline/visuals/stock-keywords';
@@ -83,7 +82,7 @@ describe('Part C Visuals Stage: Stock, Chart, Screen Recording & Provenance', ()
       async generateText() {
         return { text: 'ok', usage: {} };
       },
-      async generateJson<T>(req: { schema: any }) {
+      async generateJson<T>(_req: { schema: any }) {
         if (options?.resolvedUrl !== undefined) {
           return {
             data: {
@@ -350,7 +349,7 @@ describe('Part C Visuals Stage: Stock, Chart, Screen Recording & Provenance', ()
       kind: 'stock',
       id: 'pixabay',
       requiresApiKey: true,
-      async searchVideos(q: string) {
+      async searchVideos(_q: string) {
         return sampleCandidates;
       },
       async downloadVideo(url: string, targetPath: string) {
@@ -486,8 +485,6 @@ describe('Part C Visuals Stage: Stock, Chart, Screen Recording & Provenance', ()
         'sec-openai-dur': 'test-key',
       },
     });
-
-    let queriedDurationSeconds: number | null = null;
 
     const mockStock: StockProvider = {
       kind: 'stock',
