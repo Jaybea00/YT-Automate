@@ -32,6 +32,57 @@ export interface GenerateSubtitlesOptions {
   beats: BeatTimingLike[];
   units?: UnitDurationLike[];
   maxCharsPerCue?: number; // default 80
+  /** Where each beat's voice really starts in the finished video (from assembly's timeline). */
+  voiceStartMs?: Record<number, number>;
+  /** The narrator's word timings per beat (seconds from the beat's voice start). */
+  words?: Record<number, Array<{ word: string; start: number; end: number }>>;
+}
+
+/** Subtitle lines: at most two of this length (the common broadcast limit). */
+const LINE_CHARS = 42;
+const MIN_CUE_MS = 1000;
+const MAX_CUE_MS = 7000;
+/** A cue stays up this long after its last word unless the next one starts sooner. */
+const CUE_HOLD_MS = 300;
+
+/** Breaks a cue into at most two balanced lines at the space nearest the middle. */
+export function wrapCue(text: string): string {
+  if (text.length <= LINE_CHARS) return text;
+  const mid = text.length / 2;
+  let best = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === ' ' && (best < 0 || Math.abs(i - mid) < Math.abs(best - mid))) best = i;
+  }
+  return best < 0 ? text : `${text.slice(0, best)}\n${text.slice(best + 1)}`;
+}
+
+/**
+ * Cues timed to the narrator's words: phrases end at sentence or clause ends and pauses, fit two
+ * lines, and stay up between one and seven seconds.
+ */
+function wordTimedCues(words: Array<{ word: string; startMs: number; endMs: number }>): Array<{ startMs: number; endMs: number; text: string }> {
+  const cues: Array<{ startMs: number; endMs: number; text: string }> = [];
+  let current: typeof words = [];
+  const flush = () => {
+    if (current.length) cues.push({ startMs: current[0].startMs, endMs: current[current.length - 1].endMs, text: current.map((w) => w.word).join(' ') });
+    current = [];
+  };
+  for (const [i, w] of words.entries()) {
+    const prev = words[i - 1];
+    const text = [...current, w].map((x) => x.word).join(' ');
+    const tooLong = text.length > LINE_CHARS * 2 || (current.length > 0 && w.endMs - current[0].startMs > MAX_CUE_MS);
+    const pause = prev && w.startMs - prev.endMs > 400;
+    const sentenceEnded = prev && /[.?!]["”’']?$/.test(prev.word) && current.length > 0;
+    const clauseEnded = prev && /[,;:—–]["”’']?$/.test(prev.word) && [...current].map((x) => x.word).join(' ').length > LINE_CHARS;
+    if (current.length && (tooLong || pause || sentenceEnded || clauseEnded)) flush();
+    current.push(w);
+  }
+  flush();
+  return cues.map((c, i) => {
+    const next = cues[i + 1]?.startMs ?? Number.POSITIVE_INFINITY;
+    const end = Math.min(next, Math.max(c.startMs + MIN_CUE_MS, c.endMs + CUE_HOLD_MS));
+    return { startMs: Math.round(c.startMs), endMs: Math.round(end), text: wrapCue(c.text) };
+  });
 }
 
 export interface SubtitlesResult {
@@ -147,6 +198,22 @@ export function generateSubtitles(options: GenerateSubtitlesOptions): SubtitlesR
       ? measuredMs!
       : (beat.duration_estimate_seconds ? beat.duration_estimate_seconds * 1000 : 5000);
 
+    // With the rendered video's timeline, the beat starts where its voice really starts
+    // (after lead-ins and pauses), and its words carry their own timing
+    const voiceStart = options.voiceStartMs?.[beat.index];
+    if (voiceStart !== undefined) {
+      cumulativeMs = voiceStart;
+      const timed = options.words?.[beat.index];
+      if (timed?.length) {
+        const clean = timed
+          .map((w) => ({ word: w.word.replace(/[*_#`]/g, '').trim(), startMs: voiceStart + w.start * 1000, endMs: voiceStart + w.end * 1000 }))
+          .filter((w) => w.word);
+        for (const cue of wordTimedCues(clean)) cues.push({ index: cueCounter++, ...cue });
+        cumulativeMs += beatDurationMs;
+        continue;
+      }
+    }
+
     const beatText = (beat.text || '').trim();
     const chunks = splitTextIntoChunks(beatText, maxCharsPerCue);
 
@@ -156,7 +223,7 @@ export function generateSubtitles(options: GenerateSubtitlesOptions): SubtitlesR
         index: cueCounter++,
         startMs: cumulativeMs,
         endMs: cumulativeMs + beatDurationMs,
-        text: beatText || `[Beat ${beat.index + 1}]`,
+        text: beatText ? (voiceStart !== undefined ? wrapCue(beatText) : beatText) : `[Beat ${beat.index + 1}]`,
       });
     } else {
       // Distribute beat duration proportionally across chunks
@@ -178,7 +245,7 @@ export function generateSubtitles(options: GenerateSubtitlesOptions): SubtitlesR
           index: cueCounter++,
           startMs: chunkStart,
           endMs: chunkEnd,
-          text: chunk,
+          text: voiceStart !== undefined ? wrapCue(chunk) : chunk,
         });
 
         chunkStart = chunkEnd;

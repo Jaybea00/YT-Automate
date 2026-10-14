@@ -28,13 +28,17 @@ import { ensureMusicPlan, musicCredits, pickMusic } from '../assembly/music-plan
 import { buildMusicBed } from '../assembly/music-bed';
 import { lookFilter } from '../assembly/look';
 import { runFinalQualityCheck, type QualityReport } from '../assembly/final-check';
+import { generateMetadata, type VideoMetadata } from '../publish/metadata';
+import { generateThumbnails } from '../publish/publish-assets';
+import type { Thumbnail } from '../publish/thumbnails';
+import type { VideoTimeline } from '../utils/timeline';
 import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
 import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
 import { mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
 import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visual';
 import { themeForStyle } from '../visuals/motion/theme';
-import type { ScriptBeat } from '@/lib/script/generate-script';
+import { withWritingModel, type ScriptBeat } from '@/lib/script/generate-script';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -1366,6 +1370,65 @@ export class JobRunner {
       // 7. Update videos status, render_url, and final chapters
       if (videoId) {
         let updatedScriptJson = videoRecord?.script_json;
+
+        // Title options, description, tags and hashtags for publishing (regenerated on the publish page)
+        let publishMetadata: VideoMetadata | null = videoRecord?.script_json?.publish?.metadata ?? null;
+        if (usingVideoBeats) {
+          try {
+            const scriptLlm = await resolveForStage<LLMProvider>('script', this.supabase);
+            publishMetadata = await generateMetadata({
+              topic: videoRecord?.topic ?? '',
+              style: videoRecord?.style,
+              currentTitle: videoRecord?.title,
+              narration: scriptBeats.map((b) => String(b.text ?? '')),
+              sectionTitles: sections.map((s) => s.title),
+              facts: (videoRecord?.script_json?.research?.facts ?? []).map((f: { claim: string }) => f.claim),
+              llm: scriptLlm.provider,
+              ctx: withWritingModel(scriptLlm.ctx, scriptLlm.options),
+            });
+          } catch (metaErr) {
+            console.warn('[Assembly] Publishing metadata could not be generated (regenerate on the publish page):', metaErr);
+          }
+        }
+
+        // Where everything is in the finished video (subtitles, thumbnails and Shorts use it)
+        const videoTimeline: VideoTimeline = {
+          version: 1,
+          renderedAt: new Date().toISOString(),
+          totalMs: beatStartMs.length
+            ? beatStartMs[beatStartMs.length - 1] + Math.round(clipDurationsSec[clipDurationsSec.length - 1] * 1000)
+            : 0,
+          beats: sceneBeatIndexes.map((b, pos) => ({
+            index: b,
+            sceneStartMs: beatStartMs[pos],
+            sceneMs: Math.round(clipDurationsSec[pos] * 1000),
+            voiceStartMs: beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0),
+            voiceMs: ttsMap.get(b)?.duration_ms ?? null,
+            audioPath: ttsMap.get(b)?.output_path ?? null,
+            trackPath: trackByBeat.get(b) ?? null,
+          })),
+        };
+
+        // Thumbnails from the video's own strongest frames (regenerated on the publish page)
+        let publishThumbnails: Thumbnail[] | null = videoRecord?.script_json?.publish?.thumbnails ?? null;
+        if (usingVideoBeats && videoTimeline.beats.length) {
+          try {
+            publishThumbnails = await generateThumbnails({
+              videoId,
+              timeline: videoTimeline,
+              finalVideoPath: finalRenderPath,
+              title: publishMetadata?.titles[0]?.text ?? videoRecord?.title ?? videoRecord?.topic ?? '',
+              topic: videoRecord?.topic ?? '',
+              narration: scriptBeats.map((b) => String(b.text ?? '')).join(' '),
+              theme: themeForStyle(videoRecord?.style),
+              llm: await resolveForStage<LLMProvider>('script', this.supabase).catch(() => null),
+            });
+            console.log(`[Assembly] Thumbnails: ${publishThumbnails.map((t) => `"${t.text}"`).join(', ')}`);
+          } catch (thumbErr) {
+            console.warn('[Assembly] Thumbnails could not be generated (regenerate on the publish page):', thumbErr);
+          }
+        }
+
         if (scriptBeats && scriptBeats.length > 0) {
           try {
             const chapterResult = generateYouTubeChapters({
@@ -1387,7 +1450,9 @@ export class JobRunner {
               chapters: chapterResult.chapters,
               formatted_chapters: chapterResult.formattedText,
               music_credits: musicCreditLines,
+              timeline: videoTimeline,
               quality_report: qualityReport,
+              publish: { ...(videoRecord?.script_json?.publish ?? {}), metadata: publishMetadata, thumbnails: publishThumbnails },
             };
           } catch (chapErr) {
             console.warn('[JobRunner] Failed to generate chapters on assembly finish:', chapErr);

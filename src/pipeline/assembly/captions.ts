@@ -39,6 +39,14 @@ export interface GenerateCaptionsOptions {
   highlightHex?: string;
   /** Where captions hide (full-screen text) or rise (lower-thirds). */
   zones?: CaptionZone[];
+  /** Canvas size (default 1920x1080; Shorts use 1080x1920). */
+  resolution?: { width: number; height: number };
+  /** Distance of captions from the bottom edge, overriding the preset's. */
+  marginV?: number;
+  /** Text size, overriding the preset's. */
+  fontSize?: number;
+  /** Lines shown for the whole video (e.g. a Short's hook banner), in ASS override syntax-free text. */
+  banners?: Array<{ text: string; startMs: number; endMs: number; position: 'top' | 'bottom' }>;
 }
 
 export interface CaptionWord {
@@ -170,23 +178,26 @@ export function generateAssCaptions(options: GenerateCaptionsOptions): {
   const { beats, units = [], preset = 'vox', beatStartMs, words: timedWords = {}, zones = [] } = options;
   const look = PRESET_STYLES[preset] ?? PRESET_STYLES.vox;
   const highlightColour = options.highlightHex ? toAssColour(options.highlightHex) : DEFAULT_HIGHLIGHT;
-  const styleLine = (name: string, marginV: number) =>
-    `Style: ${name}, ${look.font}, ${look.size}, &H00FFFFFF, &H00FFFFFF, &H00101010, ${look.back}, 0, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, 2, 100, 100, ${marginV}, 1`;
+  const { width = 1920, height = 1080 } = options.resolution ?? {};
+  const size = options.fontSize ?? look.size;
+  const styleLine = (name: string, marginV: number, alignment = 2, fontSize = size) =>
+    `Style: ${name}, ${look.font}, ${fontSize}, &H00FFFFFF, &H00FFFFFF, &H00101010, ${look.back}, 0, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, ${alignment}, 60, 60, ${marginV}, 1`;
+  const banners = options.banners ?? [];
 
   const header = `[Script Info]
 Title: YT-Automation Kinetic Subtitles
 ScriptType: v4.00+
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: ${width}
+PlayResY: ${height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-${styleLine(look.name, look.marginV)}
+${styleLine(look.name, options.marginV ?? look.marginV)}
 ${styleLine(`${look.name}Raised`, RAISED_MARGIN_V)}
-
+${banners.length ? `${styleLine('Banner', Math.round(height * 0.08), 8, Math.round(size * 1.05))}\n` : ''}
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
@@ -233,6 +244,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         .join(' ');
       dialogues.push({ startMs: Math.round(startMs), endMs: Math.round(endMs), text, style });
     });
+  }
+
+  for (const b of banners) {
+    const text = b.text.replace(/[{}\\]/g, '').trim();
+    // Banners use the top-centred Banner style (bottom ones the base style); the active-word
+    // highlight colour picks out the whole banner
+    if (text) dialogues.push({ startMs: b.startMs, endMs: b.endMs, text: `{\\c${highlightColour}}${text}`, style: b.position === 'top' ? 'Banner' : look.name });
   }
 
   const dialogueLines = dialogues.map(
