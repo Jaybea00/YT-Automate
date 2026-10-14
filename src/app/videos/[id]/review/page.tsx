@@ -37,7 +37,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
   // Approval State
   const [isApproving, setIsApproving] = useState(false);
-  const [approvalSuccess, setApprovalSuccess] = useState(false);
+  const [, setApprovalSuccess] = useState(false);
 
   // Narrator State
   const [narrators, setNarrators] = useState<Array<{
@@ -109,7 +109,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           fetch('/api/narrators/defaults'),
         ]);
 
-        let loadedNarrators: any[] = [];
+        let loadedNarrators: typeof narrators = [];
         if (narratorsRes.ok) {
           loadedNarrators = await narratorsRes.json();
           setNarrators(Array.isArray(loadedNarrators) ? loadedNarrators : []);
@@ -124,9 +124,9 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
         if (video) {
           const defaultNarratorId = defaults[video.style];
-          if ((video as any).narrator_id) {
-            setSelectedNarratorId((video as any).narrator_id);
-          } else if (defaultNarratorId && loadedNarrators.some((n: any) => n.id === defaultNarratorId)) {
+          if (video.narrator_id) {
+            setSelectedNarratorId(video.narrator_id);
+          } else if (defaultNarratorId && loadedNarrators.some((n) => n.id === defaultNarratorId)) {
             setSelectedNarratorId(defaultNarratorId);
           } else if (loadedNarrators.length > 0 && !selectedNarratorId) {
             setSelectedNarratorId(loadedNarrators[0].id);
@@ -140,7 +140,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
     if (video) {
       loadNarratorsAndDefaults();
     }
-  }, [video?.id, video?.style, (video as any)?.narrator_id]);
+  }, [video?.id, video?.style, video?.narrator_id]);
 
   async function handleStartVoicing() {
     setIsTriggeringVoice(true);
@@ -173,7 +173,8 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   }
 
   useEffect(() => {
-    fetchVideo();
+    // Started from a microtask: fetchVideo sets state only once its request answers
+    void Promise.resolve().then(() => fetchVideo());
   }, [id]);
 
   // Polling when in 'scripting' status
@@ -359,7 +360,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
     setIsImporting(true);
     setImportError(null);
     try {
-      const payload: Record<string, any> = {
+      const payload: Record<string, unknown> = {
         mode: importTab === 'srt' ? 'srt' : importRawMode,
       };
 

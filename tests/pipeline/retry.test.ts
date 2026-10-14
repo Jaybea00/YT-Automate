@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { getRetryDecision, ProviderError } from '../../src/pipeline/providers/errors.ts';
-import { mapHttpOrSdkError, parseRetryAfter } from '../../src/pipeline/providers/error-mapper.ts';
+import { mapHttpOrSdkError } from '../../src/pipeline/providers/error-mapper.ts';
 
 describe('Retry Policy & Error Classification', () => {
   it('does NOT auto-retry auth errors', () => {

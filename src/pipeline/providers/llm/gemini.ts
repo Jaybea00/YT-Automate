@@ -42,7 +42,7 @@ export function modelFallbackOrder(primaryModel: string, now = Date.now()): stri
 }
 
 function isFallbackEligible(error: unknown): boolean {
-  const err = error as Record<string, any>;
+  const err = error as { status?: number; message?: string; cause?: { status?: number; message?: string } } | null | undefined;
   const status = err?.status || err?.cause?.status;
   const msg = `${err?.message || ''} ${err?.cause?.message || ''}`;
   return (
@@ -242,7 +242,9 @@ export class GeminiLlmProvider implements LLMProvider {
 
         // Resilient normalization: If LLM returned raw array but schema expects an object containing an array
         if (Array.isArray(parsed)) {
-          const shape = (req.schema as any)?._def?.shape?.() || (req.schema as any)?._def?.shape;
+          // Zod keeps an object schema's fields on _def.shape (a function in older versions)
+          const def = (req.schema as unknown as { _def?: { shape?: Record<string, unknown> | (() => Record<string, unknown>) } })._def;
+          const shape = typeof def?.shape === 'function' ? def.shape() : def?.shape;
           if (shape && typeof shape === 'object') {
             for (const key of Object.keys(shape)) {
               const testCandidate = { [key]: parsed };

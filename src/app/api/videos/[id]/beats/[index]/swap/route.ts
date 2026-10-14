@@ -1,11 +1,8 @@
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import {
   getSafeUploadPath,
   deleteExistingBeatUploads,
-  ALLOWED_EXTENSIONS,
   normalizeLicenseType,
   invalidateBeatAssemblyCache,
 } from '@/pipeline/utils/media-upload';

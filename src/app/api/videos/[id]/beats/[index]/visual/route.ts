@@ -120,9 +120,9 @@ export async function handleVisualUpload(
     );
   }
 
-  if (licenseType === 'cc_by' && (!attributionText || !attributionText.trim())) {
+  if ((licenseType === 'cc_by' || licenseType === 'cc_by_sa') && (!attributionText || !attributionText.trim())) {
     return NextResponse.json(
-      { error: 'attribution_text is required when license_type is cc_by' },
+      { error: 'attribution_text is required when license_type is cc_by or cc_by_sa' },
       { status: 400 },
     );
   }

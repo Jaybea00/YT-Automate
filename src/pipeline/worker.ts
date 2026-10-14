@@ -13,8 +13,10 @@ export function loadEnvFiles(): void {
     const fullPath = path.resolve(process.cwd(), file);
     if (fs.existsSync(fullPath)) {
       try {
-        if (typeof (process as any).loadEnvFile === 'function') {
-          (process as any).loadEnvFile(fullPath);
+        // process.loadEnvFile exists from Node 20.12; older runtimes rely on the shell environment
+        const loader = (process as { loadEnvFile?: (file: string) => void }).loadEnvFile;
+        if (typeof loader === 'function') {
+          loader.call(process, fullPath);
         }
       } catch {
         // Ignore parsing issues, environment variables already set take precedence

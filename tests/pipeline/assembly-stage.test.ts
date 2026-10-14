@@ -13,7 +13,6 @@ import { checkAssemblyGate } from '../../src/pipeline/assembly/gate.ts';
 import { JobRunner } from '../../src/pipeline/runner/job-runner.ts';
 import {
   getFfmpegPath,
-  getAudioDurationMs,
   getVideoDurationMs,
 } from '../../src/pipeline/utils/ffmpeg.ts';
 import { createMockSupabase } from '../helpers/mock-supabase.ts';

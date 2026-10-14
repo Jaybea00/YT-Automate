@@ -127,7 +127,7 @@ export function classifyVisualIntent(
     if (combined.includes(kw)) {
       return {
         intent: 'newspaper',
-        keywords: distillKeywords(visualQuery || text, kw),
+        keywords: distillKeywords(visualQuery || text),
         confidence: 0.9,
       };
     }
@@ -138,7 +138,7 @@ export function classifyVisualIntent(
     if (combined.includes(kw)) {
       return {
         intent: 'nasa_space',
-        keywords: distillKeywords(visualQuery || text, kw),
+        keywords: distillKeywords(visualQuery || text),
         confidence: 0.9,
       };
     }
@@ -149,7 +149,7 @@ export function classifyVisualIntent(
     if (combined.includes(kw)) {
       return {
         intent: 'archive',
-        keywords: distillKeywords(visualQuery || text, kw),
+        keywords: distillKeywords(visualQuery || text),
         confidence: 0.85,
       };
     }
@@ -160,7 +160,7 @@ export function classifyVisualIntent(
     if (combined.includes(kw)) {
       return {
         intent: 'geo_map',
-        keywords: distillKeywords(visualQuery || text, kw),
+        keywords: distillKeywords(visualQuery || text),
         confidence: 0.8,
       };
     }
@@ -177,7 +177,7 @@ export function classifyVisualIntent(
 /**
  * Distills query into concise search keywords suitable for media search APIs.
  */
-function distillKeywords(text: string, seedWord?: string): string {
+function distillKeywords(text: string): string {
   const clean = text
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')

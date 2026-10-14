@@ -1,7 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { MediaCandidate } from './types';
-import { pollinationsImage } from '../providers/image/pollinations';
 
 export interface GenerateAiVisualOptions {
   prompt: string;

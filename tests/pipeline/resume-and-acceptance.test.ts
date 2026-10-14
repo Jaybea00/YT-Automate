@@ -334,7 +334,7 @@ describe('Acceptance Tests: Resume, Hashing & Resilience', () => {
 
   it('TTS duration: measures duration and fails if ffprobe measurement fails', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'yt-test-'));
-    const { supabase, db } = createMockSupabase();
+    const { supabase } = createMockSupabase();
 
     // 1. Adapter does not return durationMs -> measureDuration callback is called
     let probeCalled = false;

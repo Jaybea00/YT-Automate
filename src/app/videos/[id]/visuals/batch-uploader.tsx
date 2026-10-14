@@ -24,10 +24,10 @@ export interface BatchUploaderProps {
 
 const LICENSE_OPTIONS = [
   { value: 'own_work', label: 'Original Work (Own Creation)' },
-  { value: 'pexels_pixabay', label: 'Stock (Pexels / Pixabay License)' },
+  { value: 'royalty_free', label: 'Stock (Pexels / Pixabay License)' },
   { value: 'cc0', label: 'Public Domain / CC0' },
   { value: 'cc_by', label: 'Creative Commons Attribution (CC-BY)' },
-  { value: 'fair_use', label: 'Fair Use' },
+  { value: 'cc_by_sa', label: 'Creative Commons Attribution-ShareAlike (CC BY-SA)' },
 ];
 
 export default function BatchVisualUploader({
@@ -196,12 +196,6 @@ export default function BatchVisualUploader({
   function handleItemBeatChange(id: string, newBeatIndex: number | null) {
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, assignedBeatIndex: newBeatIndex } : item)),
-    );
-  }
-
-  function handleItemLicenseChange(id: string, newLicense: string) {
-    setItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, licenseType: newLicense } : item)),
     );
   }
 

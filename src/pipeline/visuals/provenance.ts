@@ -13,7 +13,7 @@ export interface VideoAssetRecord {
   license_proof_url?: string | null;
   start_offset_seconds?: number | null;
   end_offset_seconds?: number | null;
-  candidates_json?: any[] | null;
+  candidates_json?: unknown[] | null;
 }
 
 /**
@@ -34,7 +34,7 @@ export async function upsertVideoAssetProvenance(
   const normLicense = normalizeLicenseType(record.license_type);
   const attribution = record.attribution_text ?? (normLicense === 'cc_by' ? `Asset beat ${record.beat_index}` : null);
 
-  const payload: Record<string, any> = {
+  const payload: Record<string, unknown> = {
     video_id: record.video_id,
     beat_index: record.beat_index,
     visual_type: record.visual_type,

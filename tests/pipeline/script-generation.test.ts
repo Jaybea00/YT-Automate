@@ -9,7 +9,7 @@ import {
 } from '../../src/lib/script/generate-script.ts';
 import { registerProvider } from '../../src/pipeline/providers/registry.ts';
 import { ProviderError } from '../../src/pipeline/providers/errors.ts';
-import type { LLMProvider, ProviderCallContext } from '../../src/pipeline/providers/types.ts';
+import type { LLMProvider } from '../../src/pipeline/providers/types.ts';
 import { createMockSupabase } from '../helpers/mock-supabase.ts';
 import {
   GeminiLlmProvider,

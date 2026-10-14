@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { generateAiMotionVideoCandidate, downloadAndSaveAiVideo } from '../../src/pipeline/visuals/ai-video-step';
-import { falVideo } from '../../src/pipeline/providers/video/fal';
 
 test('AI Motion Video Generation (Google Veo / Kling) Tests', async (t) => {
   const tempDir = path.join(process.cwd(), 'storage', 'test_ai_video');
@@ -54,7 +53,7 @@ test('AI Motion Video Generation (Google Veo / Kling) Tests', async (t) => {
 
     try {
       // Mock Google Generative Language long-running operation submit & poll
-      globalThis.fetch = async (url: any, opts: any) => {
+      globalThis.fetch = async (url: any, _opts: any) => {
         const urlStr = String(url);
         if (urlStr.includes('predictLongRunning')) {
           return {

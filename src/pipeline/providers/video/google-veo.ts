@@ -54,7 +54,10 @@ export class GoogleVeoVideoProvider implements VideoProvider {
       // 1. Submit long-running video generation request
       const submitUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${apiKey}`;
 
-      const payload: Record<string, any> = {
+      const payload: {
+        instances: Array<{ prompt: string; image?: { imageUri: string } }>;
+        parameters: Record<string, unknown>;
+      } = {
         instances: [
           {
             prompt: cleanPrompt,
