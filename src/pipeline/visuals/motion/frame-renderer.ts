@@ -38,6 +38,10 @@ export async function renderMotionClip(options: RenderMotionOptions): Promise<st
     '-framerate', String(fps),
     '-c:v', 'mjpeg',
     '-i', '-',
+    // JPEG frames are full-range; convert to the TV range footage uses, or a joined track
+    // inherits the full-range tag and players show the footage parts with wrong contrast
+    '-vf', 'scale=in_range=pc:out_range=tv,format=yuv420p',
+    '-color_range', 'tv',
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     // Same settings as footage clips (clips.ts) so shots join losslessly with stream copy

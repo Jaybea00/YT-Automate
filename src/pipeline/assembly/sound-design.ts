@@ -1,0 +1,208 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getFfmpegPath } from '../utils/ffmpeg';
+import type { ComposedShot } from '../visuals/shot-composer';
+import { readSidecar } from '../visuals/shot-editor';
+import { ensureSoundLibrary, soundPath, type SoundId } from './sfx';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Smart sound design: effects placed by what is on screen, not one sound per beat. A big number
+ * lands with an impact, chart bars and timeline events tick in, map pins ping, newspapers rustle,
+ * kinetic words click, chapter cards ring in, and a section change swooshes through its dip.
+ * Plain footage cuts stay clean. Times mirror the motion-graphic templates' own animation timing.
+ */
+
+export interface SoundCue {
+  atMs: number;
+  sound: SoundId;
+  /** Relative level (1 = the designed level, already well under the voice). */
+  gain: number;
+}
+
+export interface SceneForSound {
+  /** Where the scene starts in the video. */
+  sceneStartMs: number;
+  /** Composed track (its shot list says what is on screen), or null for a single visual. */
+  trackPath: string | null;
+  /** The scene opens a new section (it dips in from black). */
+  opensSection: boolean;
+}
+
+/**
+ * Overall bed level: effects sit about 10 dB under the narration while they play (measured on
+ * real beats), as documentary effects do, so they're felt more than noticed.
+ */
+const BED_GAIN = 0.2;
+/** The same sound closer than this to its previous cue is dropped (no machine-gun ticks). */
+const MIN_REPEAT_MS = 110;
+const MAX_CUES = 400;
+const MAX_KEY_CLICKS = 14;
+
+const clampMin = (a: number, b: number) => Math.min(a, b);
+
+/** Cues for one shot, in seconds from the shot's start. */
+export function shotCues(
+  shot: Pick<ComposedShot, 'renderedType' | 'durationSec' | 'note'> & { plan?: ComposedShot['plan'] },
+): Array<{ at: number; sound: SoundId; gain: number }> {
+  const d = shot.durationSec;
+  // Beats composed before shot lists kept their plans still get sounds, from the shot type alone
+  const plan: Partial<ComposedShot['plan']> = shot.plan ?? {};
+  const cues: Array<{ at: number; sound: SoundId; gain: number }> = [];
+  switch (shot.renderedType) {
+    case 'title':
+      // A riser builds into the card, which rings in as it appears
+      cues.push({ at: -1.4, sound: 'riser', gain: 0.55 }, { at: 0.15, sound: 'chime', gain: 0.6 });
+      break;
+    case 'stat':
+      // statTemplate counts up from 0.1 s over min(1.6, 45%) and lands
+      cues.push({ at: 0, sound: 'whoosh', gain: 0.5 }, { at: 0.1 + clampMin(1.6, d * 0.45), sound: 'impact', gain: 0.9 });
+      break;
+    case 'chart': {
+      const chart = plan.chart;
+      const n = chart?.values.length ?? 0;
+      if (chart?.chart_type === 'bar') {
+        // Bars start 0.18 s apart and grow for min(1.4, 40%); each ticks as it lands
+        const grow = clampMin(1.4, d * 0.4);
+        for (let i = 0; i < n; i++) cues.push({ at: 0.25 + i * 0.18 + grow, sound: 'tick', gain: 0.55 });
+      } else if (chart?.chart_type === 'line') {
+        // The line draws from 0.3 s over min(2.2, 50%); each point ticks as the line reaches it
+        const draw = clampMin(2.2, d * 0.5);
+        for (let i = 0; i < n; i++) cues.push({ at: 0.3 + draw * (n === 1 ? 1 : i / (n - 1)), sound: 'tick', gain: 0.5 });
+      } else {
+        cues.push({ at: 0.2, sound: 'whoosh', gain: 0.5 });
+      }
+      break;
+    }
+    case 'timeline': {
+      const n = Math.min(6, plan.timeline?.events.length ?? 0);
+      const span = Math.max(0.6, d * 0.55);
+      cues.push({ at: 0, sound: 'whoosh', gain: 0.35 });
+      for (let i = 0; i < n; i++) cues.push({ at: 0.4 + (span * i) / n, sound: 'tick', gain: 0.55 });
+      break;
+    }
+    case 'comparison':
+      cues.push({ at: 0.1, sound: 'whoosh', gain: 0.45 }, { at: clampMin(d * 0.35, 1.2), sound: 'whoosh', gain: 0.5 }, { at: clampMin(d * 0.35, 1.2) + 0.3, sound: 'tick', gain: 0.5 });
+      break;
+    case 'kinetic_text': {
+      // Words appear across max(0.6, 45%) from 0.1 s
+      const words = (plan.kinetic?.phrase ?? plan.covers ?? '').split(/\s+/).filter(Boolean).slice(0, MAX_KEY_CLICKS);
+      const span = Math.max(0.6, d * 0.45);
+      words.forEach((_, i) => cues.push({ at: 0.1 + (span * i) / words.length, sound: 'key', gain: 0.4 }));
+      break;
+    }
+    case 'quote':
+      cues.push({ at: 0, sound: 'whoosh', gain: 0.35 });
+      break;
+    case 'newspaper':
+      cues.push({ at: 0, sound: 'paper', gain: 0.7 });
+      break;
+    case 'geo_map': {
+      // map-scene: the camera settles over min(2.4, 55%); pins drop as each arc arrives
+      cues.push({ at: 0, sound: 'swoosh', gain: 0.5 });
+      const places = plan.map?.places.length ?? 1;
+      const camEnd = clampMin(2.4, d * 0.55);
+      if (places <= 1 || plan.map?.mode === 'locate') {
+        cues.push({ at: camEnd * 0.6, sound: 'ping', gain: 0.6 });
+      } else {
+        const arcs = places - 1;
+        const span = Math.max(0.6, d * 0.82 - camEnd * 0.5);
+        cues.push({ at: 0.3, sound: 'ping', gain: 0.5 });
+        for (let i = 0; i < arcs; i++) cues.push({ at: camEnd * 0.5 + (span * i) / arcs + (span / arcs) * 0.8, sound: 'ping', gain: 0.6 });
+      }
+      break;
+    }
+    default:
+      // Footage: only a name caption sliding in gets a sound
+      if (shot.note?.includes('caption:')) cues.push({ at: 0.35, sound: 'whoosh', gain: 0.4 });
+  }
+  return cues.filter((c) => c.at <= d);
+}
+
+/** Every cue in the video, from composed beats' shot lists and section changes. */
+export async function planSoundCues(scenes: SceneForSound[]): Promise<SoundCue[]> {
+  const cues: SoundCue[] = [];
+  for (const [pos, scene] of scenes.entries()) {
+    // A section change swooshes through its dip to black
+    if (scene.opensSection && pos > 0) cues.push({ atMs: scene.sceneStartMs - 300, sound: 'swoosh', gain: 0.6 });
+    if (!scene.trackPath) continue;
+    const sidecar = await readSidecar(scene.trackPath);
+    for (const shot of sidecar?.shots ?? []) {
+      for (const c of shotCues(shot)) {
+        cues.push({ atMs: Math.round(scene.sceneStartMs + (shot.startSec + c.at) * 1000), sound: c.sound, gain: c.gain });
+      }
+    }
+  }
+  return thinCues(cues);
+}
+
+/** Drops cues before the start, too-close repeats of one sound, and anything past the cap. */
+export function thinCues(cues: SoundCue[]): SoundCue[] {
+  const lastAt = new Map<SoundId, number>();
+  return [...cues]
+    .filter((c) => c.atMs >= 0)
+    .sort((a, b) => a.atMs - b.atMs)
+    .filter((c) => {
+      const prev = lastAt.get(c.sound);
+      if (prev !== undefined && c.atMs - prev < MIN_REPEAT_MS) return false;
+      lastAt.set(c.sound, c.atMs);
+      return true;
+    })
+    .slice(0, MAX_CUES);
+}
+
+/**
+ * Lays the cues over the programme in one pass: each library sound is split once per use,
+ * delayed into place and set to its level, then everything is summed with the programme
+ * (without amix's input halving). The picture is copied.
+ */
+export async function applySoundDesign(options: {
+  videoPath: string;
+  outputPath: string;
+  cues: SoundCue[];
+  /** The video's effects volume setting, where 0.25 is the designed level. */
+  volume?: number;
+}): Promise<{ outputPath: string; cueCount: number }> {
+  const { videoPath, outputPath, cues } = options;
+  const master = BED_GAIN * Math.max(0, Math.min(3, (options.volume ?? 0.25) / 0.25));
+  if (cues.length === 0 || master === 0) {
+    await fs.copyFile(videoPath, outputPath);
+    return { outputPath, cueCount: 0 };
+  }
+  await ensureSoundLibrary();
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  const sounds = [...new Set(cues.map((c) => c.sound))];
+  const inputs = sounds.flatMap((s) => ['-i', soundPath(s)]);
+  const graph: string[] = [];
+  const labels: string[] = [];
+  sounds.forEach((sound, si) => {
+    const uses = cues.filter((c) => c.sound === sound);
+    const outs = uses.map((_, ui) => `[s${si}u${ui}]`);
+    graph.push(`[${si + 1}:a]asplit=${uses.length}${outs.join('')}`);
+    uses.forEach((cue, ui) => {
+      const label = `[c${si}_${ui}]`;
+      graph.push(`[s${si}u${ui}]adelay=${cue.atMs}:all=1,volume=${(cue.gain * master).toFixed(3)},aformat=channel_layouts=stereo${label}`);
+      labels.push(label);
+    });
+  });
+  graph.push(`[0:a]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0[aout]`);
+
+  // Large graphs go through a script file (Windows caps command-line length)
+  const scriptPath = `${outputPath}.sfx-graph.txt`;
+  await fs.writeFile(scriptPath, graph.join(';\n'), 'utf-8');
+  try {
+    await execFileAsync(
+      getFfmpegPath(),
+      // "-/option file" reads the option's value from a file (ffmpeg 7+; -filter_complex_script is gone)
+      ['-y', '-i', videoPath, ...inputs, '-/filter_complex', scriptPath, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', outputPath],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+  } finally {
+    await fs.unlink(scriptPath).catch(() => {});
+  }
+  return { outputPath, cueCount: cues.length };
+}

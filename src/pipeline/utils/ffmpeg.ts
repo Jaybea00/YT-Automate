@@ -244,7 +244,9 @@ export async function convertWebmToMp4(
 
   args.push(
     '-vf',
-    'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p',
+    'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,scale=out_range=tv,format=yuv420p',
+    '-color_range',
+    'tv',
     '-c:v',
     'libx264',
     '-preset',

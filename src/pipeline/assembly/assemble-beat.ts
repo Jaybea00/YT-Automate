@@ -22,7 +22,14 @@ export interface RenderBeatSceneOptions {
   transition?: TransitionType;
   sfxPath?: string | null;
   sfxVolume?: number;
+  /** Silence after the narration (the picture keeps going). */
   pauseSeconds?: number;
+  /** Silence before the narration: the cut lands first and the voice follows. */
+  leadInSeconds?: number;
+  /** Fade up from black over the lead-in (the beat opens a section). */
+  dipIn?: boolean;
+  /** Fade down to black over the pause (the next beat opens a section). */
+  dipOut?: boolean;
 }
 
 /**
@@ -31,14 +38,14 @@ export interface RenderBeatSceneOptions {
  * and formats pixel format to yuv420p.
  */
 export const CONTAIN_FIT_VF =
-  'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p';
+  'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,setsar=1,scale=out_range=tv,format=yuv420p';
 
 /**
  * For short video clips, tpad clones the final frame indefinitely so the scene
  * holds its last visual state instead of freezing or ending early.
  */
 export const CONTAIN_FIT_HOLD_VF =
-  'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,tpad=stop_mode=clone:stop=-1,setsar=1,format=yuv420p';
+  'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,tpad=stop_mode=clone:stop=-1,setsar=1,scale=out_range=tv,format=yuv420p';
 
 /**
  * Filter complexes for blurred duplicate background padding.
@@ -49,19 +56,19 @@ export const BLUR_PAD_VIDEO_HOLD_FC =
   '[0:v]split=2[v_bg][v_fg];' +
   '[v_bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=25,eq=brightness=-0.08:contrast=1.05,tpad=stop_mode=clone:stop=-1[bg_blur];' +
   '[v_fg]scale=1920:1080:force_original_aspect_ratio=decrease,tpad=stop_mode=clone:stop=-1[fg_fit];' +
-  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[vout]';
+  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,scale=out_range=tv,format=yuv420p[vout]';
 
 export const BLUR_PAD_VIDEO_LOOP_FC =
   '[0:v]split=2[v_bg][v_fg];' +
   '[v_bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=25,eq=brightness=-0.08:contrast=1.05[bg_blur];' +
   '[v_fg]scale=1920:1080:force_original_aspect_ratio=decrease[fg_fit];' +
-  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[vout]';
+  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,scale=out_range=tv,format=yuv420p[vout]';
 
 export const BLUR_PAD_STILL_STATIC_FC =
   '[0:v]split=2[v_bg][v_fg];' +
   '[v_bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=25,eq=brightness=-0.08:contrast=1.05[bg_blur];' +
   '[v_fg]scale=1920:1080:force_original_aspect_ratio=decrease[fg_fit];' +
-  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[vout]';
+  '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,setsar=1,scale=out_range=tv,format=yuv420p[vout]';
 
 /**
  * Ken Burns Dynamic Motion (subtle slow zoom on still graphics).
@@ -69,16 +76,64 @@ export const BLUR_PAD_STILL_STATIC_FC =
  */
 export const KEN_BURNS_ZOOM_VF =
   'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,' +
-  'zoompan=z=\'min(zoom+0.0006,1.10)\':x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':d=1:s=1920x1080:fps=30,setsar=1,format=yuv420p';
+  'zoompan=z=\'min(zoom+0.0006,1.10)\':x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':d=1:s=1920x1080:fps=30,setsar=1,scale=out_range=tv,format=yuv420p';
 
 export const BLUR_PAD_STILL_ZOOM_FC =
   '[0:v]split=2[v_bg][v_fg];' +
   '[v_bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=25,eq=brightness=-0.08:contrast=1.05[bg_blur];' +
   '[v_fg]scale=1920:1080:force_original_aspect_ratio=decrease[fg_fit];' +
   '[bg_blur][fg_fit]overlay=(W-w)/2:(H-h)/2,' +
-  'zoompan=z=\'min(zoom+0.0015,1.15)\':x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':d=1:s=1920x1080:fps=30,setsar=1,format=yuv420p[vout]';
+  'zoompan=z=\'min(zoom+0.0015,1.15)\':x=\'iw/2-(iw/zoom/2)\':y=\'ih/2-(ih/zoom/2)\':d=1:s=1920x1080:fps=30,setsar=1,scale=out_range=tv,format=yuv420p[vout]';
 
 export const LOUDNORM_AF = 'loudnorm=I=-16:TP=-1.5:LRA=11';
+
+/**
+ * Broadcast voice chain applied to each beat's narration: rumble cut, a little less boxiness,
+ * presence for clarity, de-essing, and gentle compression so words sit at an even level.
+ * Loudness is set once for the whole programme at mastering (single-pass loudnorm on short
+ * beats made levels jump from beat to beat).
+ */
+export const VOICE_CHAIN_AF =
+  'highpass=f=70,equalizer=f=250:t=q:w=1:g=-1.5,equalizer=f=3500:t=q:w=1.2:g=2,' +
+  'deesser=i=0.3,acompressor=threshold=0.1:ratio=2.5:attack=15:release=200:makeup=1.6';
+
+/**
+ * Scene clips are intermediates that are joined (and maybe captioned) later, so they're encoded
+ * near-transparently; the final quality is decided once, at mastering.
+ */
+export const SCENE_VIDEO_ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-pix_fmt', 'yuv420p', '-color_range', 'tv'];
+export const SCENE_AUDIO_ENCODE = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000', '-ac', '2'];
+
+/**
+ * True when a video is already a finished 1080p30 H.264 track at least `minSec` long (beats
+ * composed from shots are), so the scene can copy its picture instead of re-encoding it.
+ */
+export async function isPassThroughVideo(filePath: string, minSec: number): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(getFfprobePath(), [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=codec_name,width,height,pix_fmt,r_frame_rate:format=duration',
+      '-of', 'json', filePath,
+    ]);
+    const info = JSON.parse(stdout) as {
+      streams?: Array<{ codec_name?: string; width?: number; height?: number; pix_fmt?: string; r_frame_rate?: string }>;
+      format?: { duration?: string };
+    };
+    const s = info.streams?.[0];
+    const duration = Number.parseFloat(info.format?.duration ?? '0');
+    return Boolean(
+      s &&
+        s.codec_name === 'h264' &&
+        s.width === 1920 &&
+        s.height === 1080 &&
+        s.pix_fmt === 'yuv420p' &&
+        s.r_frame_rate === '30/1' &&
+        duration >= minSec - 1 / 30,
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Probes clip duration in seconds using ffprobe.
@@ -135,7 +190,8 @@ export async function renderBeatScene(options: RenderBeatSceneOptions): Promise<
 
   const pauseSecClamped = Math.max(0, Math.min(3.0, Number(pauseSeconds ?? 0.5)));
   const pauseMs = Math.round(pauseSecClamped * 1000);
-  const totalDurationMs = durationMs + pauseMs;
+  const leadInMs = Math.round(Math.max(0, Math.min(3.0, Number(options.leadInSeconds ?? 0))) * 1000);
+  const totalDurationMs = leadInMs + durationMs + pauseMs;
   const totalDurationSec = (totalDurationMs / 1000).toFixed(3);
   const ffmpegBin = getFfmpegPath();
 
@@ -150,18 +206,51 @@ export async function renderBeatScene(options: RenderBeatSceneOptions): Promise<
   );
 
   const sfxVol = Math.max(0.02, Math.min(0.8, sfxVolume)).toFixed(2);
-  const audioFC = `[1:a]loudnorm=I=-16:TP=-1.5:LRA=11,apad[voice];[2:a]volume=${sfxVol}[sfx];[voice][sfx]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
-  const voiceOnlyAF = 'loudnorm=I=-16:TP=-1.5:LRA=11,apad';
+  // normalize=0: amix otherwise halves every input, so adding an effect would drop the voice 6 dB
+  // The voice starts after the lead-in: the picture cuts first, the narrator follows
+  const delay = leadInMs > 0 ? `,adelay=${leadInMs}:all=1` : '';
+  const audioFC = `[1:a]${VOICE_CHAIN_AF}${delay},apad[voice];[2:a]volume=${sfxVol}[sfx];[voice][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`;
+  const voiceOnlyAF = `${VOICE_CHAIN_AF}${delay},apad`;
 
   const args: string[] = ['-y'];
 
-  // Prepare dip to black or flash to white transition string if selected
-  const isDip = transition === 'dip_black' || transition === 'dip_white';
+  // Fades: the video-wide dip setting fades every beat; otherwise only section changes dip,
+  // inside the silent lead-in and tail so no words are darkened
+  const globalDip = transition === 'dip_black' || transition === 'dip_white';
   const fadeColor = transition === 'dip_white' ? 'white' : 'black';
-  const targetFade = transition === 'dip_white' ? 0.20 : 0.35;
-  const fadeSec = Math.min(targetFade, Math.max(0.05, totalDurationMs / 4000));
-  const fadeOutStart = Math.max(0, (totalDurationMs / 1000) - fadeSec).toFixed(3);
-  const fadeStr = `fade=t=in:st=0:d=${fadeSec.toFixed(3)}:c=${fadeColor},fade=t=out:st=${fadeOutStart}:d=${fadeSec.toFixed(3)}:c=${fadeColor}`;
+  const globalFadeSec = Math.min(transition === 'dip_white' ? 0.2 : 0.35, Math.max(0.05, totalDurationMs / 4000));
+  const fadeInSec = globalDip ? globalFadeSec : options.dipIn && leadInMs > 0 ? Math.min(0.5, (leadInMs / 1000) * 0.85) : 0;
+  const fadeOutSec = globalDip ? globalFadeSec : options.dipOut && pauseMs > 0 ? Math.min(0.5, (pauseMs / 1000) * 0.85) : 0;
+  const isDip = fadeInSec > 0 || fadeOutSec > 0;
+
+  // Fast path: a finished track (a beat composed from shots) keeps its picture untouched
+  if (
+    isVideo &&
+    !isDip &&
+    !(startOffsetSeconds > 0) &&
+    shortVideoBehavior === 'hold' &&
+    (await isPassThroughVideo(visualPath, totalDurationMs / 1000))
+  ) {
+    args.push('-i', visualPath, '-i', audioPath);
+    if (hasSfx && sfxPath) {
+      args.push('-i', sfxPath, '-filter_complex', audioFC, '-map', '0:v:0', '-map', '[aout]');
+    } else {
+      args.push('-map', '0:v:0', '-map', '1:a:0', '-af', voiceOnlyAF);
+    }
+    args.push('-c:v', 'copy', ...SCENE_AUDIO_ENCODE, '-t', totalDurationSec, outputPath);
+    try {
+      await execFileAsync(ffmpegBin, args);
+      return outputPath;
+    } catch (err) {
+      throw new Error(`FFmpeg failed rendering beat scene (${outputPath}): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const fadeStr = [
+    fadeInSec > 0 ? `fade=t=in:st=0:d=${fadeInSec.toFixed(3)}:c=${fadeColor}` : '',
+    fadeOutSec > 0 ? `fade=t=out:st=${Math.max(0, totalDurationMs / 1000 - fadeOutSec).toFixed(3)}:d=${fadeOutSec.toFixed(3)}:c=${fadeColor}` : '',
+  ]
+    .filter(Boolean)
+    .join(',');
 
   if (isVideo) {
     if (shortVideoBehavior === 'loop') {
@@ -231,27 +320,7 @@ export async function renderBeatScene(options: RenderBeatSceneOptions): Promise<
       }
     }
 
-    args.push(
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-pix_fmt',
-      'yuv420p',
-      '-r',
-      String(fps),
-      '-c:a',
-      'aac',
-      '-b:a',
-      '192k',
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
-      '-t',
-      totalDurationSec,
-      outputPath,
-    );
+    args.push(...SCENE_VIDEO_ENCODE, '-r', String(fps), ...SCENE_AUDIO_ENCODE, '-t', totalDurationSec, outputPath);
   } else {
     // Still image
     args.push('-loop', '1', '-i', visualPath);
@@ -315,27 +384,7 @@ export async function renderBeatScene(options: RenderBeatSceneOptions): Promise<
       }
     }
 
-    args.push(
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-pix_fmt',
-      'yuv420p',
-      '-r',
-      String(fps),
-      '-c:a',
-      'aac',
-      '-b:a',
-      '192k',
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
-      '-t',
-      totalDurationSec,
-      outputPath,
-    );
+    args.push(...SCENE_VIDEO_ENCODE, '-r', String(fps), ...SCENE_AUDIO_ENCODE, '-t', totalDurationSec, outputPath);
   }
 
   try {
@@ -460,22 +509,10 @@ export async function concatenateSceneClips(
       '[vout]',
       '-map',
       '[aout]',
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-pix_fmt',
-      'yuv420p',
+      ...SCENE_VIDEO_ENCODE,
       '-r',
       '30',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '192k',
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
+      ...SCENE_AUDIO_ENCODE,
       outputPath,
     ];
 

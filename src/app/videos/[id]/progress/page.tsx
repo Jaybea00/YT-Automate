@@ -34,6 +34,8 @@ interface ChaptersData {
   totalDurationFormatted: string;
   hasMeasuredDurations: boolean;
   customTitles: Record<number, string>;
+  /** Music and visual credits the description must carry. */
+  creditsText?: string;
 }
 
 interface JobData {
@@ -101,6 +103,7 @@ export default function PipelineProgressPage() {
   // YouTube Chapters State
   const [chaptersData, setChaptersData] = useState<ChaptersData | null>(null);
   const [copiedChapters, setCopiedChapters] = useState(false);
+  const [copiedCredits, setCopiedCredits] = useState(false);
   const [formatStyle, setFormatStyle] = useState<'dash' | 'space'>('dash');
   const [editingTitles, setEditingTitles] = useState<Record<number, string>>({});
   const [isSavingTitles, setIsSavingTitles] = useState(false);
@@ -190,6 +193,17 @@ export default function PipelineProgressPage() {
     }
   }
 
+  async function handleCopyCredits() {
+    if (!chaptersData?.creditsText) return;
+    try {
+      await navigator.clipboard.writeText(chaptersData.creditsText);
+      setCopiedCredits(true);
+      setTimeout(() => setCopiedCredits(false), 2500);
+    } catch {
+      // Clipboard unavailable; the text is selectable
+    }
+  }
+
   function handleSeekVideo(seconds: number) {
     const videoEl = document.getElementById('final-video-player') as HTMLVideoElement | null;
     if (videoEl) {
@@ -255,6 +269,9 @@ export default function PipelineProgressPage() {
   }
 
   const video = data?.video;
+  const qualityReport = video?.script_json?.quality_report as
+    | { passed: boolean; checkedAt: string; checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }> }
+    | undefined;
   const job = data?.job;
   const stages = data?.stages || [];
   const units = data?.units || [];
@@ -660,9 +677,60 @@ export default function PipelineProgressPage() {
                   {chaptersData.formattedText}
                 </pre>
               </div>
+
+              {/* Credits the licences require in the description */}
+              {chaptersData.creditsText && (
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                    <span className="font-semibold uppercase tracking-wider">Description Credits (required by the licences)</span>
+                    <button
+                      type="button"
+                      onClick={handleCopyCredits}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[11px] font-medium transition"
+                    >
+                      {copiedCredits ? '✓ Copied' : 'Copy credits'}
+                    </button>
+                  </div>
+                  <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300 whitespace-pre-wrap select-all">
+                    {chaptersData.creditsText}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Final quality check on the rendered video */}
+        {qualityReport && qualityReport.checks.length > 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Final Quality Check</h2>
+              <span
+                className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
+                  qualityReport.passed
+                    ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                    : 'bg-red-950 text-red-300 border-red-800'
+                }`}
+              >
+                {qualityReport.passed ? '✓ Ready to upload' : '✗ Needs attention'}
+              </span>
+            </div>
+            <ul className="divide-y divide-zinc-800/80">
+              {qualityReport.checks.map((c) => (
+                <li key={c.id} className="flex items-start gap-3 py-2 text-sm">
+                  <span className={c.status === 'pass' ? 'text-emerald-400' : c.status === 'warn' ? 'text-amber-400' : 'text-red-400'}>
+                    {c.status === 'pass' ? '✓' : c.status === 'warn' ? '!' : '✗'}
+                  </span>
+                  <span className="text-zinc-200 font-medium min-w-[14rem]">{c.label}</span>
+                  <span className="text-zinc-400 text-xs pt-0.5">{c.detail}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-zinc-500">
+              Checked {new Date(qualityReport.checkedAt).toLocaleString()}. Intended dips at chapter changes and the closing fade are not flagged.
+            </p>
+          </div>
+        )}
 
         {/* Pipeline Stages Progress */}
         {job && (

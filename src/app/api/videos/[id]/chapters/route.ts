@@ -8,6 +8,30 @@ import {
   type ScriptBeatLike,
   type UnitTimingLike,
 } from '@/pipeline/utils/chapters';
+import { DEFAULT_BEAT_PAUSE_SEC, planPacing } from '@/pipeline/assembly/pacing';
+import type { SavedSections } from '@/pipeline/assembly/sections';
+import { buildDescriptionCredits } from '@/pipeline/utils/credits';
+
+/**
+ * Chapters for a script: by section when sections are planned, timed with the pauses between
+ * beats included (the same pacing assembly uses).
+ */
+function chaptersFor(
+  scriptJson: { sections?: SavedSections; beat_pause_seconds?: number } | null | undefined,
+  beats: ScriptBeatLike[],
+  units: UnitTimingLike[],
+  customTitles: Record<number, string>,
+  formatStyle: 'dash' | 'space' = 'dash',
+) {
+  const sections = scriptJson?.sections?.sections;
+  const pacing = sections?.length
+    ? planPacing(beats.map((b) => ({ index: b.index, text: b.text ?? '' })), sections, Number(scriptJson?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC))
+    : null;
+  const gapMs = pacing
+    ? Object.fromEntries([...pacing].map(([i, p]) => [i, Math.round((p.leadInSec + p.tailSec) * 1000)]))
+    : undefined;
+  return generateYouTubeChapters({ beats, units, customTitles, formatStyle, sections, gapMs });
+}
 
 export async function handleGetChapters(
   req: Request,
@@ -69,13 +93,20 @@ export async function handleGetChapters(
   }
 
   const customTitles = (video.script_json?.custom_chapters || {}) as Record<number, string>;
+  const chapterResult = chaptersFor(video.script_json, beats, units, customTitles, formatStyle);
 
-  const chapterResult = generateYouTubeChapters({
-    beats,
-    units,
-    customTitles,
-    formatStyle,
-  });
+  // Credits the description must carry (music, and visuals whose licence requires attribution).
+  // An extra: failing to load them never breaks the chapters
+  let creditsText = '';
+  try {
+    const { data: assets } = await supabase.from('video_assets').select('license_type, attribution_text').eq('video_id', id);
+    creditsText = buildDescriptionCredits(
+      Array.isArray(video.script_json?.music_credits) ? video.script_json.music_credits : [],
+      assets ?? [],
+    );
+  } catch (err) {
+    console.warn('[Chapters] Could not load credits:', err);
+  }
 
   return NextResponse.json({
     videoId: id,
@@ -86,6 +117,7 @@ export async function handleGetChapters(
     totalDurationFormatted: formatTimestamp(chapterResult.totalDurationSeconds),
     hasMeasuredDurations: chapterResult.hasMeasuredDurations,
     customTitles,
+    creditsText,
   });
 }
 
@@ -111,7 +143,9 @@ export async function handlePostChapters(
   }
 
   const body = await req.json().catch(() => ({}));
-  let newCustomTitles: Record<number, string> = {};
+  const newCustomTitles: Record<number, string> = {};
+  // Pasted chapter lines are in chapter order; titles are stored by each chapter's first beat
+  const currentChapters = chaptersFor(video.script_json, video.script_json?.beats ?? [], [], {}).chapters;
 
   if (body.customTitles && typeof body.customTitles === 'object') {
     for (const [k, v] of Object.entries(body.customTitles)) {
@@ -124,7 +158,7 @@ export async function handlePostChapters(
     // Parse from pasted text format
     const parsed = parseChaptersText(body.rawText);
     parsed.forEach((item, idx) => {
-      newCustomTitles[idx] = item.title;
+      newCustomTitles[currentChapters[idx]?.beatIndex ?? idx] = item.title;
     });
   }
 

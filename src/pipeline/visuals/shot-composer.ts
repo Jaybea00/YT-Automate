@@ -91,11 +91,32 @@ export interface ComposeBeatOptions {
   renderShot: ShotRenderer;
   /** Background color for a shot that can't be rendered at all. */
   fallbackColor?: string;
+  /** Picture before the narration starts (the cut lands before the voice); the first shot runs this much longer. */
+  leadInSec?: number;
+  /** Picture after the narration ends; the last shot keeps moving through it instead of freezing. */
+  tailSec?: number;
 }
 
 export interface ComposedBeat {
   trackPath: string;
   shots: ComposedShot[];
+  leadInSec: number;
+  tailSec: number;
+}
+
+/**
+ * Extends a beat's timeline by its lead-in and tail: the first shot starts earlier and the last
+ * runs on, while every cut stays on its word (now `leadInSec` into the track).
+ */
+export function padTimeline(slots: ShotSlot[], leadInSec: number, tailSec: number): ShotSlot[] {
+  const leadFrames = Math.max(0, Math.round(leadInSec * FPS));
+  const tailFrames = Math.max(0, Math.round(tailSec * FPS));
+  const last = slots.length - 1;
+  return slots.map((slot, i) => ({
+    ...slot,
+    startSec: i === 0 ? 0 : slot.startSec + leadFrames / FPS,
+    frames: slot.frames + (i === 0 ? leadFrames : 0) + (i === last ? tailFrames : 0),
+  }));
 }
 
 /**
@@ -105,10 +126,12 @@ export interface ComposedBeat {
  */
 export async function composeBeatTrack(options: ComposeBeatOptions): Promise<ComposedBeat> {
   const { beatIndex, shots, words, audioDurationSec, outputDir, renderShot, fallbackColor = '#0c0d10' } = options;
+  const leadInSec = Math.round(Math.max(0, options.leadInSec ?? 0) * FPS) / FPS;
+  const tailSec = Math.round(Math.max(0, options.tailSec ?? 0) * FPS) / FPS;
   const shotDir = path.join(outputDir, `beat_${beatIndex}_shots`);
   await fs.mkdir(shotDir, { recursive: true });
 
-  const slots = computeShotTimeline(shots, words, audioDurationSec);
+  const slots = padTimeline(computeShotTimeline(shots, words, audioDurationSec), leadInSec, tailSec);
   const rendered: ComposedBeat['shots'] = [];
   for (const [i, slot] of slots.entries()) {
     const clipPath = path.join(shotDir, `shot_${i}.mp4`);
@@ -125,8 +148,8 @@ export async function composeBeatTrack(options: ComposeBeatOptions): Promise<Com
 
   const trackPath = path.join(outputDir, `visuals_beat_${beatIndex}.mp4`);
   await concatClips(rendered.map((r) => r.clipPath), trackPath);
-  await fs.writeFile(`${trackPath}.shots.json`, JSON.stringify({ beatIndex, shots: rendered }, null, 2), 'utf-8');
-  return { trackPath, shots: rendered };
+  await fs.writeFile(`${trackPath}.shots.json`, JSON.stringify({ beatIndex, leadInSec, tailSec, shots: rendered }, null, 2), 'utf-8');
+  return { trackPath, shots: rendered, leadInSec, tailSec };
 }
 
 const LICENSE_STRICTNESS = ['cc_by_sa', 'cc_by', 'royalty_free', 'cc0', 'public_domain', 'own_work', 'purchased'];

@@ -16,6 +16,18 @@ export interface ComposedBeatRecord {
   beatIndex: number;
   trackPath: string;
   shots: ComposedShot[];
+  /** Picture before the narration starts (0 for tracks composed before pacing existed). */
+  leadInSec: number;
+  tailSec: number;
+}
+
+/** A composed track's sidecar, or null when there is none. */
+export async function readSidecar(trackPath: string): Promise<{ beatIndex: number; shots: ComposedShot[]; leadInSec?: number; tailSec?: number } | null> {
+  try {
+    return JSON.parse(await fs.readFile(sidecarPath(trackPath), 'utf-8'));
+  } catch {
+    return null;
+  }
 }
 
 export const sidecarPath = (trackPath: string) => `${trackPath}.shots.json`;
@@ -47,14 +59,10 @@ export async function loadComposedBeat(
     .maybeSingle();
   if (asset?.visual_type !== 'composite' || !asset.source_url) return null;
   const trackPath = resolvePath(asset.source_url);
-  try {
-    const sidecar = JSON.parse(await fs.readFile(sidecarPath(trackPath), 'utf-8')) as { beatIndex: number; shots: ComposedShot[] };
-    // Sidecars written before shot editing existed lack the plan; those beats can't be edited
-    if (!sidecar.shots.every((s) => s.plan && Number.isInteger(s.frames))) return null;
-    return { beatIndex, trackPath, shots: sidecar.shots };
-  } catch {
-    return null;
-  }
+  const sidecar = await readSidecar(trackPath);
+  // Sidecars written before shot editing existed lack the plan; those beats can't be edited
+  if (!sidecar || !sidecar.shots.every((s) => s.plan && Number.isInteger(s.frames))) return null;
+  return { beatIndex, trackPath, shots: sidecar.shots, leadInSec: sidecar.leadInSec ?? 0, tailSec: sidecar.tailSec ?? 0 };
 }
 
 /**
@@ -99,7 +107,11 @@ export async function replaceShot(options: {
   const shots = beat.shots.map((s, i) => (i === shotIndex ? updated : s));
   const clips = shots.map((_, i) => shotClipPath(beat.trackPath, beat.beatIndex, i));
   await concatClips(clips, beat.trackPath);
-  await fs.writeFile(sidecarPath(beat.trackPath), JSON.stringify({ beatIndex: beat.beatIndex, shots }, null, 2), 'utf-8');
+  await fs.writeFile(
+    sidecarPath(beat.trackPath),
+    JSON.stringify({ beatIndex: beat.beatIndex, leadInSec: beat.leadInSec, tailSec: beat.tailSec, shots }, null, 2),
+    'utf-8',
+  );
 
   const { license, attribution, sources } = summarizeLicenses(shots);
   await upsertVideoAssetProvenance(supabase, {

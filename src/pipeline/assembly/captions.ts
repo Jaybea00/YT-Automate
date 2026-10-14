@@ -15,16 +15,30 @@ export function isCaptionPreset(value: unknown): value is CaptionPreset {
   return CAPTION_PRESETS.includes(value as CaptionPreset);
 }
 
+/** Times where captions must make way for what's on screen. */
+export interface CaptionZone {
+  startMs: number;
+  endMs: number;
+  /** hide: full-screen text (the words are already on screen); raise: clear a lower-third. */
+  kind: 'hide' | 'raise';
+}
+
 export interface GenerateCaptionsOptions {
   beats: BeatTimingLike[];
   units?: UnitDurationLike[];
   preset?: CaptionPreset;
   outputAssPath?: string;
   /**
-   * Actual start time (ms) of each beat in the final video, aligned with `beats`.
+   * Where each beat's voice starts in the final video (ms), aligned with `beats`.
    * When omitted, beats are laid back-to-back using their speech durations.
    */
   beatStartMs?: number[];
+  /** The narrator's word timings per beat (seconds from the beat's voice start), by beat index. */
+  words?: Record<number, Array<{ word: string; start: number; end: number }>>;
+  /** The video's accent colour (#rrggbb) for the active word. */
+  highlightHex?: string;
+  /** Where captions hide (full-screen text) or rise (lower-thirds). */
+  zones?: CaptionZone[];
 }
 
 export interface CaptionWord {
@@ -56,24 +70,113 @@ export function formatAssTime(ms: number): string {
   return `${hours}:${pad(min)}:${pad(sec)}.${pad(cs, 2)}`;
 }
 
+/** Per-preset look. Fonts are ones installed with Windows (libass falls back silently otherwise). */
+interface PresetStyle {
+  name: string;
+  font: string;
+  size: number;
+  outline: number;
+  shadow: number;
+  /** 1: outline and shadow; 3: opaque box behind the text. */
+  borderStyle: 1 | 3;
+  back: string;
+  marginV: number;
+  maxWords: number;
+  maxChars: number;
+  /** Active word grows slightly, for presets made to pop. */
+  popScale: number;
+  uppercase: boolean;
+  highlight: boolean;
+}
+
+const PRESET_STYLES: Record<CaptionPreset, PresetStyle> = {
+  // A heavy outline and shadow keep white text readable on light graphics as well as footage
+  vox: { name: 'VoxMinimal', font: 'Segoe UI Semibold', size: 58, outline: 4, shadow: 2, borderStyle: 1, back: '&H80000000', marginV: 70, maxWords: 6, maxChars: 38, popScale: 100, uppercase: false, highlight: true },
+  social_pop: { name: 'SocialPop', font: 'Segoe UI Black', size: 74, outline: 5, shadow: 2, borderStyle: 1, back: '&H00000000', marginV: 150, maxWords: 3, maxChars: 22, popScale: 112, uppercase: true, highlight: true },
+  clean_news: { name: 'CleanNews', font: 'Segoe UI', size: 46, outline: 10, shadow: 0, borderStyle: 3, back: '&H99000000', marginV: 60, maxWords: 8, maxChars: 48, popScale: 100, uppercase: false, highlight: false },
+};
+
+/** Default active-word colour (gold), in ASS's &HBBGGRR& order. */
+const DEFAULT_HIGHLIGHT = '&H00D4FF&';
+/** How far captions rise to clear a lower-third name caption. */
+const RAISED_MARGIN_V = 330;
+/** A phrase stays up this long after its last word unless the next one starts sooner. */
+const PHRASE_HOLD_MS = 500;
+/** A silence this long between words starts a new phrase. */
+const PHRASE_GAP_MS = 350;
+
+/** #rrggbb to ASS colour (&HBBGGRR&). */
+export function toAssColour(hex: string): string {
+  const m = hex.trim().match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  return m ? `&H${m[3]}${m[2]}${m[1]}&`.toUpperCase() : DEFAULT_HIGHLIGHT;
+}
+
+/** Splits timed words into caption phrases at sentence and clause ends, pauses, and length limits. */
+export function groupPhrases(words: CaptionWord[], maxWords: number, maxChars: number): CaptionWord[][] {
+  const phrases: CaptionWord[][] = [];
+  let current: CaptionWord[] = [];
+  const length = (ws: CaptionWord[]) => ws.reduce((n, w) => n + w.word.length + 1, -1);
+  for (const [i, w] of words.entries()) {
+    const prev = words[i - 1];
+    const breakBefore =
+      current.length > 0 &&
+      (current.length >= maxWords ||
+        length([...current, w]) > maxChars ||
+        (prev !== undefined && w.startMs - prev.endMs > PHRASE_GAP_MS) ||
+        /[.?!;:…]["”’']?$/.test(prev?.word ?? '') ||
+        (/[,—–]["”’']?$/.test(prev?.word ?? '') && current.length >= 3));
+    if (breakBefore) {
+      phrases.push(current);
+      current = [];
+    }
+    current.push(w);
+  }
+  if (current.length) phrases.push(current);
+
+  // A lone word left over by the length limit joins the phrase before it when it fits nearly
+  // as well, rather than flashing up on its own
+  for (let i = phrases.length - 1; i > 0; i--) {
+    const [only] = phrases[i];
+    const before = phrases[i - 1];
+    const last = before[before.length - 1];
+    const continuous = only.startMs - last.endMs <= PHRASE_GAP_MS && !/[.?!;:…,—–]["”’']?$/.test(last.word);
+    if (phrases[i].length === 1 && continuous && length([...before, only]) <= maxChars + 8) {
+      before.push(only);
+      phrases.splice(i, 1);
+    }
+  }
+  return phrases;
+}
+
+function evenlyTimed(text: string, startMs: number, durationMs: number): CaptionWord[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const step = durationMs / Math.max(1, words.length);
+  return words.map((word, i) => ({ word, startMs: startMs + i * step, endMs: startMs + (i + 1) * step }));
+}
+
+// Braces and backslashes are ASS override syntax; strip them so narration can't inject tags
+const cleanWord = (w: string) => w.replace(/[*_#`{}\\]/g, '').trim();
+
 /**
- * Builds kinetic ASS subtitles with high-retention active word color highlights.
+ * Builds kinetic ASS captions: phrases timed to the narrator's actual words (from the voicing
+ * stage's word timings, or spread evenly when a beat has none), the word being spoken
+ * highlighted in the video's accent colour, hidden while full-screen text is showing and raised
+ * above lower-third name captions.
  */
 export function generateAssCaptions(options: GenerateCaptionsOptions): {
   assContent: string;
   dialogues: CaptionDialogue[];
 } {
-  const { beats, units = [], preset = 'vox', beatStartMs } = options;
+  const { beats, units = [], preset = 'vox', beatStartMs, words: timedWords = {}, zones = [] } = options;
+  const look = PRESET_STYLES[preset] ?? PRESET_STYLES.vox;
+  const highlightColour = options.highlightHex ? toAssColour(options.highlightHex) : DEFAULT_HIGHLIGHT;
+  const styleLine = (name: string, marginV: number) =>
+    `Style: ${name}, ${look.font}, ${look.size}, &H00FFFFFF, &H00FFFFFF, &H00101010, ${look.back}, 0, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, 2, 100, 100, ${marginV}, 1`;
 
-  const styleName = preset === 'social_pop' ? 'SocialPop' : preset === 'clean_news' ? 'CleanNews' : 'VoxMinimal';
-  // Social Pop's base text is yellow, so its active word pops in white instead of gold
-  const highlightColour = preset === 'social_pop' ? '&HFFFFFF&' : '&H00D4FF&';
-
-  // ASS header with styles
   const header = `[Script Info]
 Title: YT-Automation Kinetic Subtitles
 ScriptType: v4.00+
-WrapStyle: 0
+WrapStyle: 2
 ScaledBorderAndShadow: yes
 YCbCr Matrix: TV.709
 PlayResX: 1920
@@ -81,80 +184,61 @@ PlayResY: 1080
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: VoxMinimal, Inter, 54, &H00FFFFFF, &H0000D4FF, &H00000000, &H80000000, 1, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, 2, 100, 100, 80, 1
-Style: SocialPop, Montserrat, 62, &H0000FFFF, &H00FFFFFF, &H00000000, &H00000000, 1, 0, 0, 0, 100, 100, 0, 0, 1, 4, 3, 2, 80, 80, 100, 1
-Style: CleanNews, Arial, 46, &H00FFFFFF, &H00FFFFFF, &H00000000, &H90000000, 0, 0, 0, 0, 100, 100, 0, 0, 3, 2, 0, 2, 80, 80, 60, 1
+${styleLine(look.name, look.marginV)}
+${styleLine(`${look.name}Raised`, RAISED_MARGIN_V)}
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
-  const dialogues: CaptionDialogue[] = [];
-  let currentStartMs = 0;
-
-  for (const [beatPos, beat] of beats.entries()) {
-    if (beatStartMs?.[beatPos] != null) {
-      currentStartMs = beatStartMs[beatPos];
-    }
+  // Every word of the video on one timeline
+  const allWords: CaptionWord[] = [];
+  let cursorMs = 0;
+  for (const [pos, beat] of beats.entries()) {
+    if (beatStartMs?.[pos] != null) cursorMs = beatStartMs[pos];
     const unit = units.find((u) => u.unit_index === beat.index && u.duration_ms != null && u.duration_ms > 0);
     const durationMs = unit?.duration_ms ?? Math.round((beat.duration_estimate_seconds ?? 4) * 1000);
-    // Braces and backslashes are ASS override syntax; strip them so narration can't inject tags
-    const text = (beat.text || '').replace(/[*_#`{}\\]/g, '').trim();
+    const timed = timedWords[beat.index];
+    const beatWords = timed?.length
+      ? timed.map((w) => ({ word: cleanWord(w.word), startMs: cursorMs + w.start * 1000, endMs: cursorMs + w.end * 1000 }))
+      : evenlyTimed(cleanWord(beat.text || '').replace(/\s+/g, ' '), cursorMs, durationMs).map((w) => ({ ...w, word: cleanWord(w.word) }));
+    allWords.push(...beatWords.filter((w) => w.word));
+    cursorMs += durationMs;
+  }
 
-    if (!text) {
-      currentStartMs += durationMs;
-      continue;
-    }
+  const inZone = (startMs: number, endMs: number, kind: CaptionZone['kind']) =>
+    zones.some((z) => z.kind === kind && Math.min(endMs, z.endMs) - Math.max(startMs, z.startMs) > (endMs - startMs) / 2);
 
-    const words = text.split(/\s+/).filter(Boolean);
-    if (words.length === 0) {
-      currentStartMs += durationMs;
-      continue;
-    }
+  const dialogues: CaptionDialogue[] = [];
+  const phrases = groupPhrases(allWords, look.maxWords, look.maxChars);
+  for (const [p, phrase] of phrases.entries()) {
+    const phraseStart = phrase[0].startMs;
+    const nextStart = phrases[p + 1]?.[0].startMs ?? Infinity;
+    const phraseEnd = Math.min(nextStart, phrase[phrase.length - 1].endMs + PHRASE_HOLD_MS);
+    if (inZone(phraseStart, phraseEnd, 'hide')) continue;
+    const style = inZone(phraseStart, phraseEnd, 'raise') ? `${look.name}Raised` : look.name;
+    const shown = phrase.map((w) => (look.uppercase ? w.word.toUpperCase() : w.word));
 
-    // Chunk into 3-4 word phrases with active word highlighting
-    const chunkSize = 4;
-    const wordDurationMs = durationMs / words.length;
-
-    for (let i = 0; i < words.length; i += chunkSize) {
-      const chunkWords = words.slice(i, i + chunkSize);
-      const chunkStartMs = currentStartMs + i * wordDurationMs;
-      const chunkEndMs = Math.min(currentStartMs + durationMs, chunkStartMs + chunkWords.length * wordDurationMs);
-
-      // Sub-step word highlights within this chunk
-      for (let wIdx = 0; wIdx < chunkWords.length; wIdx++) {
-        const wStartMs = chunkStartMs + wIdx * wordDurationMs;
-        const wEndMs = Math.min(chunkEndMs, wStartMs + wordDurationMs);
-
-        // Highlight the current word; {\r} resets the rest back to the style's own colour
-        const styledText = chunkWords
-          .map((w, idx) => {
-            if (idx === wIdx) {
-              return `{\\c${highlightColour}}${w}{\\r}`;
-            }
-            return w;
-          })
-          .join(' ');
-
-        dialogues.push({
-          startMs: Math.round(wStartMs),
-          endMs: Math.round(wEndMs),
-          text: styledText,
-          style: styleName,
-        });
-      }
-    }
-
-    currentStartMs += durationMs;
+    phrase.forEach((w, i) => {
+      // Each word is lit from when it's spoken until the next word starts
+      const startMs = i === 0 ? phraseStart : w.startMs;
+      const endMs = i + 1 < phrase.length ? phrase[i + 1].startMs : phraseEnd;
+      if (endMs <= startMs) return;
+      const text = shown
+        .map((word, k) => {
+          if (k !== i || !look.highlight) return word;
+          const pop = look.popScale !== 100 ? `\\fscx${look.popScale}\\fscy${look.popScale}` : '';
+          return `{\\c${highlightColour}${pop}}${word}{\\r}`;
+        })
+        .join(' ');
+      dialogues.push({ startMs: Math.round(startMs), endMs: Math.round(endMs), text, style });
+    });
   }
 
   const dialogueLines = dialogues.map(
-    (d) =>
-      `Dialogue: 0,${formatAssTime(d.startMs)},${formatAssTime(d.endMs)},${d.style},,0,0,0,,${d.text}`,
+    (d) => `Dialogue: 0,${formatAssTime(d.startMs)},${formatAssTime(d.endMs)},${d.style},,0,0,0,,${d.text}`,
   );
-
-  const assContent = `${header}${dialogueLines.join('\n')}\n`;
-  return { assContent, dialogues };
+  return { assContent: `${header}${dialogueLines.join('\n')}\n`, dialogues };
 }
 
 /**
@@ -193,6 +277,8 @@ export async function burnCaptions(options: {
     'libx264',
     '-preset',
     'veryfast',
+    '-crf',
+    '18',
     '-pix_fmt',
     'yuv420p',
     '-c:a',
