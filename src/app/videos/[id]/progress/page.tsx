@@ -422,6 +422,12 @@ export default function PipelineProgressPage() {
                   <span>Final Video Rendered Successfully</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/videos/${id}/publish`}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition shadow-md shadow-indigo-950"
+                  >
+                    🚀 Publish: titles, thumbnails, Shorts
+                  </Link>
                   <a
                     href={`/api/videos/${id}/render`}
                     download={`${video?.title || 'video'}.mp4`}

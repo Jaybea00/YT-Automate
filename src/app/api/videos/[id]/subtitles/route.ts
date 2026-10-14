@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import {
-  generateSubtitles,
-  type BeatTimingLike,
-  type UnitDurationLike,
-} from '@/pipeline/utils/subtitles';
+import { subtitlesForVideo } from '@/pipeline/publish/subtitle-files';
 
 export async function handleGetSubtitles(
   req: Request,
@@ -33,39 +29,8 @@ export async function handleGetSubtitles(
   const format = (url.searchParams.get('format') || 'srt').toLowerCase();
   const isDownload = url.searchParams.get('download') === '1' || url.searchParams.get('download') === 'true';
 
-  // 2. Extract beats from script_json
-  const beats: BeatTimingLike[] =
-    video.script_json?.beats ||
-    video.script_json?.scenes?.map((s: { scene_number: number; narration?: string; duration_estimate_seconds?: number }) => ({
-      index: s.scene_number,
-      text: s.narration,
-      duration_estimate_seconds: s.duration_estimate_seconds,
-    })) ||
-    [];
-
-  // 3. Fetch latest job units for real measured duration_ms
-  const { data: latestJob } = await supabase
-    .from('yt_jobs')
-    .select('id')
-    .eq('video_id', id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  let units: UnitDurationLike[] = [];
-  if (latestJob?.id) {
-    const { data: jobUnits } = await supabase
-      .from('yt_job_units')
-      .select('unit_index, duration_ms, stage, status')
-      .eq('job_id', latestJob.id)
-      .in('stage', ['tts', 'assembly']);
-
-    if (jobUnits) {
-      units = jobUnits;
-    }
-  }
-
-  const result = generateSubtitles({ beats, units });
+  // 2. Timed to the narrator's words and real voice starts when the video has a timeline
+  const result = await subtitlesForVideo(supabase, video);
 
   const safeTitle = (video.title || 'subtitles')
     .replace(/[^a-zA-Z0-9-_ ]/g, '')
