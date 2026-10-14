@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { MediaCandidate } from '../../visuals/types';
+import { MAX_MEDIA_BYTES, downloadToFile } from '../../utils/download';
 
 export interface ArchiveOrgOptions {
   limit?: number;
@@ -109,33 +110,41 @@ export async function downloadArchiveOrgAsset(
   }
 
   const metaData = await metaRes.json();
-  const files: any[] = metaData.result || [];
+  const files: ArchiveFile[] = metaData.result || [];
 
-  // Find preferred file: 512Kb MPEG4 or h.264 mp4 or high-res jpg
-  const mp4 = files.find(
-    (f) =>
-      f.name?.toLowerCase().endsWith('.mp4') &&
-      !f.name?.toLowerCase().includes('_thumb') &&
-      !f.name?.toLowerCase().includes('_sub'),
-  );
-  const jpg = files.find(
-    (f) =>
-      (f.name?.toLowerCase().endsWith('.jpg') || f.name?.toLowerCase().endsWith('.png')) &&
-      !f.name?.toLowerCase().includes('_thumb'),
-  );
-
-  const chosenFile = mp4 || jpg || files[0];
+  const chosenFile = chooseArchiveFile(files);
   if (!chosenFile?.name) {
-    throw new Error(`No downloadable media file found in archive.org item ${identifier}`);
+    throw new Error(`No downloadable media file under the size limit in archive.org item ${identifier}`);
   }
 
-  const directFileUrl = `https://archive.org/download/${identifier}/${chosenFile.name}`;
-  const fileRes = await fetch(directFileUrl, { signal });
-  if (!fileRes.ok) {
-    throw new Error(`Failed to download from ${directFileUrl} (HTTP ${fileRes.status})`);
-  }
+  const directFileUrl = `https://archive.org/download/${identifier}/${encodeURIComponent(chosenFile.name)}`;
+  return downloadToFile(directFileUrl, targetPath, { signal });
+}
 
-  const arrayBuffer = await fileRes.arrayBuffer();
-  await fs.writeFile(targetPath, Buffer.from(arrayBuffer));
-  return targetPath;
+interface ArchiveFile {
+  name?: string;
+  size?: string;
+  format?: string;
+}
+
+/**
+ * Picks the most usable file in an archive.org item: an MP4 under the download cap, preferring
+ * the small web derivatives archive.org generates ("512Kb MPEG4", "h.264") over multi-hundred-MB
+ * originals; otherwise the largest still image under the cap.
+ */
+export function chooseArchiveFile(files: ArchiveFile[]): ArchiveFile | undefined {
+  const sizeOf = (f: ArchiveFile) => Number(f.size) || 0;
+  const usable = (f: ArchiveFile) => !/_thumb|_sub|\.gif$/i.test(f.name ?? '') && sizeOf(f) <= MAX_MEDIA_BYTES;
+
+  const videos = files
+    .filter((f) => /\.mp4$/i.test(f.name ?? '') && usable(f) && sizeOf(f) > 200 * 1024)
+    .sort((a, b) => {
+      const derivative = (f: ArchiveFile) => (/512kb|h\.264|mpeg4/i.test(`${f.name} ${f.format}`) ? 0 : 1);
+      return derivative(a) - derivative(b) || sizeOf(b) - sizeOf(a);
+    });
+  if (videos.length) return videos[0];
+
+  return files
+    .filter((f) => /\.(jpe?g|png)$/i.test(f.name ?? '') && usable(f))
+    .sort((a, b) => sizeOf(b) - sizeOf(a))[0];
 }

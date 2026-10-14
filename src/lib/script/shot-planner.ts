@@ -11,7 +11,7 @@ import {
   type ShotPlan,
   type ShotType,
 } from './generate-script';
-import { STREET_LEVEL_PLACE, estimateSpeechSeconds, toStockQuery } from './script-quality';
+import { SPEECH_WORDS_PER_SECOND, STREET_LEVEL_PLACE, estimateSpeechSeconds, toStockQuery } from './script-quality';
 
 /** Target on-screen time per shot; viewers expect the picture to change every 3-6 seconds. */
 const SECONDS_PER_SHOT = 4.5;
@@ -19,8 +19,24 @@ const MAX_SHOTS_PER_BEAT = 4;
 /** ~2.2s at narration pace; shorter cuts feel choppy on footage. */
 const MIN_WORDS_PER_SHOT = 5;
 const BEATS_PER_BATCH = 12;
-const GRAPHIC_TYPES = new Set<ShotType>(['chart', 'stat', 'quote', 'geo_map', 'newspaper']);
+const GRAPHIC_TYPES = new Set<ShotType>(['chart', 'stat', 'quote', 'geo_map', 'newspaper', 'timeline', 'comparison', 'title', 'kinetic_text']);
 const MAX_SAME_GRAPHIC_IN_A_ROW = 2;
+/** Chapter cards mark real turns in the story; closer together they stop meaning anything. */
+const MIN_BEATS_BETWEEN_TITLES = 6;
+const MAX_TITLE_WORDS = 8;
+const MAX_KINETIC_WORDS = 12;
+/** How far an on-screen figure may be from the spoken one (rounding: "about 381" vs 381.17). */
+const SPOKEN_FIGURE_TOLERANCE = 0.05;
+/** Minimum on-screen seconds for a graphic to be read; a timeline needs this per event. */
+const MIN_GRAPHIC_SECONDS: Partial<Record<ShotType, number>> = {
+  chart: 3.5,
+  comparison: 3,
+  quote: 2.5,
+  newspaper: 2.5,
+  title: 2,
+  stat: 2,
+};
+const SECONDS_PER_TIMELINE_EVENT = 1.6;
 
 export function shotCountForBeat(text: string): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
@@ -48,9 +64,16 @@ SHOT TYPES (fill the matching spec object; leave the others out)
 - "geo_map": places at city, country, or continent scale. map = {places: [...], mode: "route"|"spread"|"locate"}. Never streets or buildings.
 - "newspaper": a real front page. newspaper = {outlet, date, headline}. Only headlines quoted in the research facts.
 - "screen_recording": a named website or app shown live. visual_query: its URL.
+- "timeline": 2-6 dated events in order. timeline = {events: [{date, label}]}, e.g. {date: "Oct 24", label: "Black Thursday"}. Only dates stated in the narration or research.
+- "comparison": two figures side by side. comparison = {title, left: {value, label}, right: {value, label}}, e.g. left {value: "3%", label: "unemployed in 1929"}. Values must be stated in the narration or research.
+- "title": a chapter card where the story turns to a new part. title_card = {text, kicker}; text at most ${MAX_TITLE_WORDS} words, kicker a short label like "Part two". Use rarely: at most once every ${MIN_BEATS_BETWEEN_TITLES} beats.
+- "kinetic_text": the narrator's own words set as bold animated type, for the single most important line of a passage. kinetic = {phrase, emphasis}; phrase is copied exactly from the shot's narration, at most ${MAX_KINETIC_WORDS} words; emphasis is 1-3 key words from it.
+- Footage of a specific named person or place may carry caption = {name, detail}, a lower-third such as {name: "Herbert Hoover", detail: "U.S. President, 1929-33"}. Only names and details stated in the narration or research.
 
 DATA INTEGRITY
 - Every value in a chart or stat must be a number stated in the beat's narration or its research facts. Never estimate, interpolate, or invent data points. If you only have one number, use "stat", not "chart".
+- A stat or comparison shows the figure the narration speaks in that beat, never a different figure from the research.
+- Give graphics time to be read: a chart needs about 8 words of narration, a timeline about 4 words per event.
 - Set fact_ids on each shot to the research facts it shows.
 
 RHYTHM AND VARIETY
@@ -81,6 +104,15 @@ const DirectorShotSchema = z.object({
   quote: nullableObject({ text: z.string(), attribution: z.string() }),
   map: nullableObject({ places: z.array(z.string()), mode: z.enum(['route', 'spread', 'locate']) }),
   newspaper: nullableObject({ outlet: z.string(), date: z.string(), headline: z.string() }),
+  timeline: nullableObject({ events: z.array(z.object({ date: z.string(), label: z.string() })) }),
+  comparison: nullableObject({
+    title: z.string().nullable().optional(),
+    left: z.object({ value: z.string(), label: z.string() }),
+    right: z.object({ value: z.string(), label: z.string() }),
+  }),
+  title_card: nullableObject({ text: z.string(), kicker: z.string().nullable().optional() }),
+  kinetic: nullableObject({ phrase: z.string(), emphasis: z.array(z.string()) }),
+  caption: nullableObject({ name: z.string(), detail: z.string().nullable().optional() }),
 });
 
 export const DirectorResponseSchema = z.object({
@@ -325,8 +357,74 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
   };
   const withFacts = (extra: string[]): DirectorShot =>
     extra.length ? { ...shot, fact_ids: [...new Set([...(shot.fact_ids ?? []), ...extra])] } : shot;
+  /** Text named in the narration, a cited fact, or any research fact (whole words only). */
+  const isNamed = (s: string) => {
+    const n = normalizeText(s);
+    return Boolean(n) && (` ${groundNorm} `.includes(` ${n} `) || ` ${anyFactNorm} `.includes(` ${n} `));
+  };
+  // Close to a number the beat's narration states: "sixteen million" covers 16.4M on screen
+  const spokenPool = numbersIn(beat.text);
+  const isSpokenFigure = (value: number) =>
+    spokenPool.some((n) => Math.abs(n - Math.abs(value)) <= Math.max(1e-9, Math.abs(n) * SPOKEN_FIGURE_TOLERANCE));
+  // Dates are grounded by their exact day and year numbers (no rounding tolerance: 1925 is not
+  // 1929); month names may be abbreviated, so they aren't compared
+  const datePool = new Set(numbersIn([groundText, ...facts.map((f) => f.claim)].join(' ')));
+  const isStatedDate = (date: string) => {
+    const nums = numbersIn(date);
+    return nums.length ? nums.every((v) => datePool.has(v)) : isNamed(date);
+  };
 
   switch (shot.visual_type) {
+    case 'stock':
+    case 'archive': {
+      if (!shot.caption) return shot;
+      // A caption naming someone the narration never names would be an unchecked claim
+      const name = shot.caption.name.trim();
+      if (!name || !isNamed(name)) return { ...shot, caption: null };
+      const detail = shot.caption.detail?.trim();
+      const detailOk = detail && groundValues(quantitiesIn(detail)) !== null && detail.split(/\s+/).length <= 8;
+      return { ...shot, caption: { name, detail: detailOk ? detail : null } };
+    }
+    case 'timeline': {
+      const events = (shot.timeline?.events ?? [])
+        .map((e) => ({ date: e.date.trim(), label: e.label.trim() }))
+        .filter((e) => e.date && e.label && isStatedDate(e.date) && groundValues(quantitiesIn(e.label)) !== null)
+        .slice(0, 6);
+      return events.length >= 2 ? { ...shot, timeline: { events } } : footageFallback(beat, shot);
+    }
+    case 'comparison': {
+      const cmp = shot.comparison;
+      if (!cmp) return footageFallback(beat, shot);
+      const sideOk = (side: { value: string; label: string }) => {
+        const nums = numbersIn(side.value);
+        return (
+          side.value.trim() &&
+          side.label.trim() &&
+          (nums.length ? nums.some(isSpokenFigure) && groundValues(nums) !== null : isNamed(side.value))
+        );
+      };
+      if (!sideOk(cmp.left) || !sideOk(cmp.right)) return footageFallback(beat, shot);
+      const extra = [...(groundValues(numbersIn(cmp.left.value)) ?? []), ...(groundValues(numbersIn(cmp.right.value)) ?? [])];
+      return withFacts(extra);
+    }
+    case 'title': {
+      const text = shot.title_card?.text.trim() ?? '';
+      if (!text || text.split(/\s+/).length > MAX_TITLE_WORDS) return footageFallback(beat, shot);
+      const kicker = shot.title_card?.kicker?.trim();
+      return { ...shot, title_card: { text, kicker: kicker && kicker.split(/\s+/).length <= 4 ? kicker : null } };
+    }
+    case 'kinetic_text': {
+      // Only the narrator's own words, so the type always matches what is heard
+      const spoken = ` ${normalizeText(beat.text)} `;
+      let phrase = shot.kinetic?.phrase.trim().replace(/^["“'‘]+|["”'’]+$/g, '') ?? '';
+      if (!phrase || !spoken.includes(` ${normalizeText(phrase)} `)) phrase = shot.covers.trim();
+      if (!phrase || phrase.split(/\s+/).length > MAX_KINETIC_WORDS || !spoken.includes(` ${normalizeText(phrase)} `)) {
+        return footageFallback(beat, shot);
+      }
+      const phraseWords = new Set(phrase.split(/\s+/).map(normalizeWord));
+      const emphasis = (shot.kinetic?.emphasis ?? []).filter((w) => phraseWords.has(normalizeWord(w))).slice(0, 3);
+      return { ...shot, kinetic: { phrase, emphasis } };
+    }
     case 'chart': {
       const chart = shot.chart;
       if (!chart) return footageFallback(beat, shot);
@@ -338,7 +436,9 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
       return { ...withFacts(extra), chart: { ...chart, labels, values } };
     }
     case 'stat': {
-      const extra = shot.stat ? groundValues([shot.stat.value]) : null;
+      // A lone figure must be the one being spoken: a true but different number on screen
+      // ("$14 billion" while the narrator says "thirty billion") reads as a contradiction
+      const extra = shot.stat && isSpokenFigure(shot.stat.value) ? groundValues([shot.stat.value]) : null;
       return extra ? withFacts(extra) : footageFallback(beat, shot);
     }
     case 'quote': {
@@ -374,26 +474,25 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
   }
 }
 
-/** Downgrades the third-in-a-row graphic of the same type (across beats) to footage. */
+/**
+ * Downgrades the third-in-a-row graphic of the same type (across beats) to footage, and any
+ * chapter card closer than MIN_BEATS_BETWEEN_TITLES beats to the previous one.
+ */
 export function enforceShotVariety(beats: ScriptBeat[]): ScriptBeat[] {
   let runType: ShotType | null = null;
   let runLength = 0;
+  let lastTitleBeat = -Infinity;
   return beats.map((beat) => ({
     ...beat,
     shots: beat.shots?.map((shot) => {
       const sameRun = GRAPHIC_TYPES.has(shot.visual_type) && shot.visual_type === runType;
-      if (sameRun && runLength >= MAX_SAME_GRAPHIC_IN_A_ROW) {
+      const titleTooSoon = shot.visual_type === 'title' && beat.index - lastTitleBeat < MIN_BEATS_BETWEEN_TITLES;
+      if ((sameRun && runLength >= MAX_SAME_GRAPHIC_IN_A_ROW) || titleTooSoon) {
         runType = null;
         runLength = 0;
-        return {
-          visual_type: beat.visual_type === 'archive' ? ('archive' as const) : ('stock' as const),
-          visual_query: toStockQuery(shot.visual_query) || beat.visual_query,
-          covers: shot.covers,
-          word_start: shot.word_start,
-          word_count: shot.word_count,
-          fact_ids: shot.fact_ids,
-        };
+        return planAsFootage(beat, shot);
       }
+      if (shot.visual_type === 'title') lastTitleBeat = beat.index;
       runLength = sameRun ? runLength + 1 : 1;
       runType = shot.visual_type;
       return shot;
@@ -419,13 +518,55 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   if (shot.visual_type === 'quote' && shot.quote) plan.quote = shot.quote;
   if (shot.visual_type === 'geo_map' && shot.map) plan.map = shot.map;
   if (shot.visual_type === 'newspaper' && shot.newspaper) plan.newspaper = shot.newspaper;
+  if (shot.visual_type === 'timeline' && shot.timeline) plan.timeline = shot.timeline;
+  if (shot.visual_type === 'comparison' && shot.comparison) {
+    plan.comparison = { ...shot.comparison, title: shot.comparison.title ?? undefined };
+  }
+  if (shot.visual_type === 'title' && shot.title_card) {
+    plan.title_card = { text: shot.title_card.text, kicker: shot.title_card.kicker ?? undefined };
+  }
+  if (shot.visual_type === 'kinetic_text' && shot.kinetic) plan.kinetic = shot.kinetic;
+  if ((shot.visual_type === 'stock' || shot.visual_type === 'archive') && shot.caption) {
+    plan.caption = { name: shot.caption.name, detail: shot.caption.detail ?? undefined };
+  }
   return plan;
+}
+
+function planAsFootage(beat: ScriptBeat, shot: ShotPlan): ShotPlan {
+  return {
+    visual_type: beat.visual_type === 'archive' ? 'archive' : 'stock',
+    visual_query: toStockQuery(shot.visual_query) || beat.visual_query,
+    covers: shot.covers,
+    word_start: shot.word_start,
+    word_count: shot.word_count,
+    fact_ids: shot.fact_ids,
+  };
+}
+
+/**
+ * Gives every graphic enough screen time to be read: a timeline keeps only as many events as
+ * fit, and a graphic that can't fit becomes footage. Times are estimated from the words the
+ * shot plays under.
+ */
+export function fitGraphicsToTime(beat: ScriptBeat, shots: ShotPlan[]): ShotPlan[] {
+  return shots.map((shot) => {
+    const seconds = shot.word_count / SPEECH_WORDS_PER_SECOND;
+    if (shot.visual_type === 'timeline' && shot.timeline) {
+      const fits = Math.floor(seconds / SECONDS_PER_TIMELINE_EVENT);
+      if (fits < 2) return planAsFootage(beat, shot);
+      return fits < shot.timeline.events.length
+        ? { ...shot, timeline: { events: shot.timeline.events.slice(0, fits) } }
+        : shot;
+    }
+    const min = MIN_GRAPHIC_SECONDS[shot.visual_type];
+    return min && seconds < min ? planAsFootage(beat, shot) : shot;
+  });
 }
 
 /** Validates, aligns, and converts the director's shots for one beat. */
 export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts: ResearchFact[]): ShotPlan[] {
   const verified = shots.map((s) => verifyShot(s, beat, facts));
-  return alignShotsToNarration(beat.text, verified).map(toShotPlan);
+  return fitGraphicsToTime(beat, alignShotsToNarration(beat.text, verified).map(toShotPlan));
 }
 
 // --------------------------------------------------------------------------

@@ -22,6 +22,9 @@ import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
 import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
 import { mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
+import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visual';
+import { themeForStyle } from '../visuals/motion/theme';
+import type { ScriptBeat } from '@/lib/script/generate-script';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -321,19 +324,30 @@ export class JobRunner {
       // 3. Fetch all completed TTS units for this job to use real measured duration_ms
       const { data: ttsUnits } = await this.supabase
         .from('yt_job_units')
-        .select('unit_index, duration_ms, status')
+        .select('unit_index, duration_ms, status, output_path')
         .eq('job_id', this.jobId)
         .eq('stage', 'tts')
         .eq('status', 'done');
 
       const ttsDurationMap = new Map<number, number>();
+      const ttsAudioMap = new Map<number, string>();
       if (ttsUnits) {
         for (const u of ttsUnits) {
           if (u.duration_ms != null && u.duration_ms > 0) {
             ttsDurationMap.set(u.unit_index, u.duration_ms);
           }
+          if (u.output_path) ttsAudioMap.set(u.unit_index, u.output_path);
         }
       }
+
+      // Beats with a director's shot plan are composed shot by shot (cut on the narration's
+      // word timings); the rest are sourced as one visual per beat
+      const { data: videoRow } = job.video_id
+        ? await this.supabase.from('videos').select('style, script_json').eq('id', job.video_id).maybeSingle()
+        : { data: null };
+      const plannedBeats: ScriptBeat[] = Array.isArray(videoRow?.script_json?.beats) ? videoRow.script_json.beats : [];
+      const theme = themeForStyle(videoRow?.style);
+      const sharedRenderState = { usedSources: new Set<string>(), motionCounter: { next: 0 } };
 
       const outputDir = path.join(this.baseOutputDir, 'visuals');
       let hasFailure = false;
@@ -358,6 +372,16 @@ export class JobRunner {
             scene.duration_estimate_seconds ? Math.round(scene.duration_estimate_seconds * 1000) : 5000
           );
 
+          const plannedBeat = plannedBeats[scene.scene_number];
+          const audioPath = ttsAudioMap.get(scene.scene_number);
+          const composeShots = Boolean(
+            job.video_id &&
+              plannedBeat?.shots?.length &&
+              audioPath &&
+              measuredTtsDurationMs &&
+              !(await hasUploadedVisual(this.supabase, job.video_id, scene.scene_number)),
+          );
+
           const result = await runJobUnit({
             jobId: this.jobId,
             stage: 'visuals',
@@ -368,6 +392,8 @@ export class JobRunner {
               visualQuery: scene.visual_query,
               narration: scene.narration,
               targetDurationMs,
+              // A changed shot plan or look re-renders the beat
+              ...(composeShots ? { shots: plannedBeat!.shots, theme: theme.name, composer: 'shots-v1' } : {}),
             },
             providerConfigId: stock.configId,
             providerId: stock.providerId,
@@ -379,6 +405,27 @@ export class JobRunner {
             outputDir,
             signal: this.signal,
             execute: async () => {
+              if (composeShots) {
+                const scriptLlm = await getScriptLlm();
+                return composeShotBeat({
+                  supabase: this.supabase,
+                  videoId: job.video_id!,
+                  beat: { ...plannedBeat!, index: scene.scene_number },
+                  audioPath: audioPath!,
+                  audioDurationMs: measuredTtsDurationMs!,
+                  outputDir,
+                  renderContext: {
+                    theme,
+                    browser,
+                    stockProvider: stock.provider,
+                    stockCtx: stock.ctx,
+                    llmProvider: scriptLlm?.provider,
+                    llmCtx: scriptLlm?.ctx,
+                    ...sharedRenderState,
+                  },
+                });
+              }
+
               // Dynamically re-check for LLM provider if not previously resolved
               let activeLlm = llm;
               if (!activeLlm && (scene.visual_type === 'chart' || scene.visual_type === 'screen_recording')) {

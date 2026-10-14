@@ -21,14 +21,22 @@ export interface LLMProvider {
   readonly kind: 'llm';
   readonly id: string;
   readonly requiresApiKey?: boolean;
+  /** Accepts images in generateJson (used to check footage relevance). */
+  readonly supportsVision?: boolean;
   generateText(
     req: { system?: string; prompt: string; maxTokens?: number; temperature?: number },
     ctx: ProviderCallContext,
   ): Promise<{ text: string; usage: Usage }>;
   generateJson<T>(
-    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number },
+    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number; images?: LlmImage[] },
     ctx: ProviderCallContext,
   ): Promise<{ data: T; usage: Usage }>;
+}
+
+/** An image passed to a vision-capable LLM, base64-encoded. */
+export interface LlmImage {
+  mimeType: string;
+  data: string;
 }
 
 export interface ImageProvider {
@@ -99,6 +107,8 @@ export interface StockVideoCandidate {
   attribution?: string;
   tags?: string;
   files?: StockVideoFile[];
+  /** A still preview of the clip, for relevance checks before downloading. */
+  thumbnailUrl?: string;
 }
 
 export interface StockProvider {

@@ -212,9 +212,10 @@ test('Multi-Source Open Archive & Candidate Pooling Tests', async (t) => {
     const { normalizeLicenseType } = await import('../../src/pipeline/utils/media-upload');
 
     // Creative Commons variations
-    assert.equal(normalizeLicenseType('CC BY-SA 4.0'), 'cc_by');
+    // ShareAlike is recorded as such; NC/ND are rejected before normalizing (see isUnusableLicense)
+    assert.equal(normalizeLicenseType('CC BY-SA 4.0'), 'cc_by_sa');
+    assert.equal(normalizeLicenseType('https://creativecommons.org/licenses/by-sa/3.0/'), 'cc_by_sa');
     assert.equal(normalizeLicenseType('CC BY 3.0'), 'cc_by');
-    assert.equal(normalizeLicenseType('CC-BY-NC 2.0'), 'cc_by');
     assert.equal(normalizeLicenseType('https://creativecommons.org/licenses/by/4.0/'), 'cc_by');
     assert.equal(normalizeLicenseType('cc_by'), 'cc_by');
 
@@ -241,6 +242,14 @@ test('Multi-Source Open Archive & Candidate Pooling Tests', async (t) => {
     assert.equal(normalizeLicenseType('Fair Use'), 'fair_use');
     assert.equal(normalizeLicenseType('own_work'), 'own_work');
     assert.equal(normalizeLicenseType('Commercial purchase'), 'purchased');
+
+    const { isUnusableLicense } = await import('../../src/pipeline/utils/media-upload');
+    for (const unusable of ['CC-BY-NC 2.0', 'CC BY-NC-SA 4.0', 'https://creativecommons.org/licenses/by-nd/4.0/', 'Attribution-NonCommercial']) {
+      assert.equal(isUnusableLicense(unusable), true, unusable);
+    }
+    for (const usable of ['CC BY-SA 4.0', 'CC0', 'Public domain', 'Pixabay Content License', null]) {
+      assert.equal(isUnusableLicense(usable), false, String(usable));
+    }
   });
 });
 

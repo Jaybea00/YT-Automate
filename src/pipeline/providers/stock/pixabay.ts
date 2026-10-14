@@ -168,6 +168,7 @@ export class PixabayStockProvider implements StockProvider {
           attribution: hit.user ? `Video by ${hit.user} on Pixabay` : 'Pixabay',
           tags: hit.tags,
           files,
+          thumbnailUrl: hit.videos.medium?.thumbnail ?? hit.videos.small?.thumbnail ?? hit.videos.large?.thumbnail,
         };
       });
     } catch (error) {

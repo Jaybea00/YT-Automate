@@ -13,6 +13,10 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   geo_map: { label: 'Map', icon: '🗺️', bar: 'bg-blue-500/80', chip: 'text-blue-300 border-blue-500/30 bg-blue-500/10' },
   newspaper: { label: 'Newspaper', icon: '📰', bar: 'bg-amber-500/80', chip: 'text-amber-300 border-amber-500/30 bg-amber-500/10' },
   screen_recording: { label: 'Screen', icon: '💻', bar: 'bg-indigo-500/80', chip: 'text-indigo-300 border-indigo-500/30 bg-indigo-500/10' },
+  timeline: { label: 'Timeline', icon: '🕰️', bar: 'bg-cyan-500/80', chip: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10' },
+  comparison: { label: 'Compare', icon: '⚖️', bar: 'bg-lime-500/80', chip: 'text-lime-300 border-lime-500/30 bg-lime-500/10' },
+  title: { label: 'Title', icon: '🔖', bar: 'bg-rose-500/80', chip: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
+  kinetic_text: { label: 'Kinetic', icon: '🔤', bar: 'bg-violet-500/80', chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10' },
 };
 
 const shotSeconds = (shot: ShotPlan) => shot.word_count / SPEECH_WORDS_PER_SECOND;
@@ -26,6 +30,14 @@ function describeSpec(shot: ShotPlan): string {
   if (shot.quote) return `"${shot.quote.text}" (${shot.quote.attribution})`;
   if (shot.map) return `${shot.map.mode}: ${shot.map.places.join(' → ')}`;
   if (shot.newspaper) return `${shot.newspaper.outlet}, ${shot.newspaper.date}: "${shot.newspaper.headline}"`;
+  if (shot.timeline) return shot.timeline.events.map((e) => `${e.date}: ${e.label}`).join(' → ');
+  if (shot.comparison) {
+    const { left, right } = shot.comparison;
+    return `${left.value} ${left.label} vs ${right.value} ${right.label}`;
+  }
+  if (shot.title_card) return `${shot.title_card.kicker ? `${shot.title_card.kicker} · ` : ''}${shot.title_card.text}`;
+  if (shot.kinetic) return `"${shot.kinetic.phrase}"`;
+  if (shot.caption) return `${shot.visual_query} · caption: ${shot.caption.name}${shot.caption.detail ? `, ${shot.caption.detail}` : ''}`;
   return shot.visual_query;
 }
 

@@ -4,6 +4,7 @@ import {
   DirectorResponseSchema,
   alignShotsToNarration,
   enforceShotVariety,
+  fitGraphicsToTime,
   numbersIn,
   planShotsWith,
   shotCountForBeat,
@@ -140,7 +141,7 @@ describe('Shot planner: grounding graphic shots', () => {
     assert.equal(headline('Panic Grips Nation'), 'archive');
   });
 
-  it('reads spelled-out numbers and grounds stats from any research fact, recording it', () => {
+  it('reads spelled-out numbers and grounds spoken stats from any research fact, recording it', () => {
     assert.ok(numbersIn('about thirty billion dollars').includes(30e9));
     assert.ok(numbersIn('twenty-five percent of three hundred eighty-one').includes(25));
     assert.ok(numbersIn('three hundred eighty-one').includes(381));
@@ -151,14 +152,47 @@ describe('Shot planner: grounding graphic shots', () => {
       'stat',
     );
 
-    const uncited = beat(4, 'Black Tuesday wiped out fortunes.');
+    const uncited = beat(4, 'Black Tuesday wiped out some fourteen billion in fortunes.');
     const grounded = verifyShot(
       { visual_type: 'stat', covers: '', visual_query: '$14B', stat: { value: 14, label: 'billion lost' } },
       uncited,
       facts,
     );
     assert.equal(grounded.visual_type, 'stat');
-    assert.deepEqual(grounded.fact_ids, ['F1'], 'source fact attached');
+  });
+
+  it('shows only the figure being spoken, never a different true one', () => {
+    // True ($14B is in the research) but the narrator is saying thirty billion
+    const spoken = beat(7, 'About thirty billion dollars disappeared that autumn, roughly ten times the federal budget.');
+    const stat = (value: number) =>
+      verifyShot({ visual_type: 'stat', covers: '', visual_query: 'x', stat: { value, prefix: '$', suffix: ' billion', label: 'lost' } }, spoken, facts).visual_type;
+    assert.equal(stat(14), 'stock');
+    assert.equal(stat(30), 'stat');
+
+    const rounded = beat(8, 'More than sixteen million shares changed hands, and the Dow fell 381.');
+    const precise = verifyShot({ visual_type: 'stat', covers: '', visual_query: 'x', stat: { value: 16.4, suffix: 'M', label: 'shares' } }, rounded, [
+      { id: 'F9', claim: 'About 16.4 million shares traded on Black Tuesday.', sourceIds: ['S1'] },
+    ]);
+    assert.equal(precise.visual_type, 'stat', 'a spoken round number covers the precise researched figure');
+    assert.deepEqual(precise.fact_ids, ['F9'], 'the fact with the precise figure is attached');
+  });
+
+  it('gives graphics time to be read, trimming timelines to fit', () => {
+    const b3 = beat(9, 'one two three four five six seven eight nine ten eleven twelve');
+    const plan = (visual_type: ShotPlan['visual_type'], word_count: number, extra: Partial<ShotPlan> = {}): ShotPlan => ({
+      visual_type, visual_query: 'q', covers: 'c', word_start: 0, word_count, ...extra,
+    });
+    const events = [1, 2, 3, 4].map((n) => ({ date: `${1929 + n}`, label: `e${n}` }));
+    const [chartShort, chartOk, timeline, tooShortTimeline] = fitGraphicsToTime(b3, [
+      plan('chart', 5),
+      plan('chart', 9),
+      plan('timeline', 8, { timeline: { events } }), // ~3.5s fits 2 events
+      plan('timeline', 6, { timeline: { events } }), // ~2.6s fits 1: not a timeline
+    ]);
+    assert.equal(chartShort.visual_type, 'stock');
+    assert.equal(chartOk.visual_type, 'chart');
+    assert.equal(timeline.timeline?.events.length, 2);
+    assert.equal(tooShortTimeline.visual_type, 'stock');
   });
 
   it('never grounds a figure on a date or year in an unrelated fact', () => {
@@ -289,5 +323,75 @@ describe('Shot planner: variety and orchestration', () => {
     assert.equal(result.beats[0].shots?.[0].visual_query, 'scene 0');
     assert.equal(result.beats[12].shots, undefined, 'failed batch keeps beat-level visuals');
     assert.equal(result.beats[25].shots?.length, 1);
+  });
+});
+
+describe('Shot planner: timelines, comparisons, titles, kinetic type, captions', () => {
+  const b = beat(
+    5,
+    'Herbert Hoover promised recovery. Unemployment rose from 3 percent in 1929 to 25 percent by 1933, and the crowd can be wrong.',
+  );
+  const verify = (shot: Record<string, unknown>) =>
+    verifyShot({ covers: '', visual_query: 'x', ...shot } as Parameters<typeof verifyShot>[0], b, facts);
+
+  it('keeps timeline events whose dates are stated, and needs two', () => {
+    const shot = verify({
+      visual_type: 'timeline',
+      timeline: {
+        events: [
+          { date: 'Sep 3, 1929', label: 'Dow peaks at 381.17' },
+          { date: 'Jul 8, 1932', label: 'Dow bottoms at 41.22' },
+          { date: 'Mar 4, 1931', label: 'Invented event' },
+        ],
+      },
+    });
+    assert.equal(shot.visual_type, 'timeline');
+    assert.deepEqual(shot.timeline?.events.map((e) => e.date), ['Sep 3, 1929', 'Jul 8, 1932']);
+
+    const invented = verify({ visual_type: 'timeline', timeline: { events: [{ date: '1925', label: 'a' }, { date: '1927', label: 'b' }] } });
+    assert.equal(invented.visual_type, 'stock');
+  });
+
+  it('keeps a comparison only when both figures are stated', () => {
+    const ok = verify({ visual_type: 'comparison', comparison: { left: { value: '3%', label: '1929' }, right: { value: '25%', label: '1933' } } });
+    assert.equal(ok.visual_type, 'comparison');
+    const invented = verify({ visual_type: 'comparison', comparison: { left: { value: '3%', label: '1929' }, right: { value: '40%', label: '1933' } } });
+    assert.equal(invented.visual_type, 'stock');
+  });
+
+  it('limits chapter titles in length and spaces them out', () => {
+    assert.equal(verify({ visual_type: 'title', title_card: { text: 'The Crash' } }).visual_type, 'title');
+    assert.equal(verify({ visual_type: 'title', title_card: { text: 'one two three four five six seven eight nine' } }).visual_type, 'stock');
+
+    const title: ShotPlan = { visual_type: 'title', visual_query: 'stock market', covers: 'a', word_start: 0, word_count: 5, title_card: { text: 'Part' } };
+    const beats = enforceShotVariety([0, 3, 6].map((i) => ({ ...beat(i, 'a b c d e'), shots: [title] })));
+    assert.deepEqual(beats.map((x) => x.shots![0].visual_type), ['title', 'stock', 'title']);
+  });
+
+  it('sets only the narrator\'s own words as kinetic type', () => {
+    const ok = verify({ visual_type: 'kinetic_text', kinetic: { phrase: 'the crowd can be wrong', emphasis: ['wrong', 'nothing'] } });
+    assert.equal(ok.visual_type, 'kinetic_text');
+    assert.deepEqual(ok.kinetic?.emphasis, ['wrong']);
+
+    const rewritten = verify({ visual_type: 'kinetic_text', covers: 'and the crowd can be wrong.', kinetic: { phrase: 'Crowds are always wrong', emphasis: [] } });
+    assert.equal(rewritten.kinetic?.phrase, 'and the crowd can be wrong.', 'falls back to the words actually spoken');
+
+    const tooLong = verify({ visual_type: 'kinetic_text', covers: b.text, kinetic: { phrase: 'Never said this', emphasis: [] } });
+    assert.equal(tooLong.visual_type, 'stock');
+  });
+
+  it('keeps a caption only for a name the narration or research states', () => {
+    const named = verify({ visual_type: 'archive', caption: { name: 'Herbert Hoover', detail: 'U.S. President' } });
+    assert.deepEqual(named.caption, { name: 'Herbert Hoover', detail: 'U.S. President' });
+    const unnamed = verify({ visual_type: 'archive', caption: { name: 'Andrew Mellon', detail: null } });
+    assert.equal(unnamed.visual_type, 'archive');
+    assert.equal(unnamed.caption, null);
+  });
+
+  it('includes the new types in the director schema', () => {
+    const schema = toGeminiResponseSchema(DirectorResponseSchema) as any;
+    const shotSchema = schema.properties.beats.items.properties.shots.items;
+    for (const type of ['timeline', 'comparison', 'title', 'kinetic_text']) assert.ok(shotSchema.properties.visual_type.enum.includes(type));
+    assert.equal(shotSchema.properties.caption.nullable, true);
   });
 });
