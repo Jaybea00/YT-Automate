@@ -33,14 +33,14 @@ export async function handleGetBgm(
 
   const bgm = {
     enabled: video.bgm_enabled !== false && video.script_json?.bgm?.enabled !== false,
-    track: video.bgm_track || video.script_json?.bgm?.track || 'lofi',
+    track: video.bgm_track || video.script_json?.bgm?.track || 'story',
     volume: Number(video.bgm_volume ?? video.script_json?.bgm?.volume ?? 0.2),
     customUrl: video.bgm_custom_url || video.script_json?.bgm?.customUrl || null,
   };
 
   const sfx = {
     enabled: video.script_json?.sfx?.enabled !== false,
-    track: video.script_json?.sfx?.track || 'whoosh',
+    track: video.script_json?.sfx?.track || 'smart',
     volume: Number(video.script_json?.sfx?.volume ?? 0.25),
   };
 
@@ -60,6 +60,7 @@ export async function handleGetBgm(
     transition,
     beatPauseSeconds,
     captionPreset,
+    look: video.script_json?.look === 'off' ? 'off' : 'auto',
     presets: PRESET_TRACKS,
     sfxPresets: PRESET_SFX,
   });
@@ -78,7 +79,7 @@ export async function handlePostBgm(
   const contentType = req.headers.get('content-type') || '';
 
   let enabled = true;
-  let track = 'lofi';
+  let track = 'story';
   let volume = 0.2;
   let customUrl: string | null = null;
 
@@ -87,6 +88,7 @@ export async function handlePostBgm(
   let transition: string | undefined;
   let beatPauseSeconds: number | undefined;
   let captionPreset: CaptionPreset | 'none' | undefined;
+  let look: 'auto' | 'off' | undefined;
 
   let sfxEnabled: boolean | undefined;
   let sfxTrack: string | undefined;
@@ -151,6 +153,7 @@ export async function handlePostBgm(
     if (body.captionPreset === 'none' || isCaptionPreset(body.captionPreset)) {
       captionPreset = body.captionPreset;
     }
+    if (body.look === 'auto' || body.look === 'off') look = body.look;
 
     if (body.sfxEnabled !== undefined) sfxEnabled = Boolean(body.sfxEnabled);
     if (body.sfxTrack) sfxTrack = String(body.sfxTrack);
@@ -197,11 +200,14 @@ export async function handlePostBgm(
   if (captionPreset !== undefined) {
     scriptJson.captions = { preset: captionPreset };
   }
+  if (look !== undefined) {
+    scriptJson.look = look;
+  }
 
   const currentSfx = scriptJson.sfx || {};
   scriptJson.sfx = {
     enabled: sfxEnabled !== undefined ? sfxEnabled : currentSfx.enabled !== false,
-    track: sfxTrack || currentSfx.track || 'whoosh',
+    track: sfxTrack || currentSfx.track || 'smart',
     volume: sfxVolume !== undefined ? sfxVolume : currentSfx.volume ?? 0.25,
   };
 
@@ -242,6 +248,7 @@ export async function handlePostBgm(
     stillMotion: scriptJson.still_motion || 'zoom',
     transition: scriptJson.transition || 'cut',
     captionPreset: scriptJson.captions?.preset || 'none',
+    look: scriptJson.look === 'off' ? 'off' : 'auto',
   });
 }
 

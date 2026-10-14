@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getFfmpegPath } from '../utils/ffmpeg';
+import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +18,7 @@ export interface ApplyBgmOptions {
 }
 
 export const PRESET_TRACKS = [
+  { id: 'story', name: 'Story-matched', description: 'Music chosen per chapter from the mood library, changing where the story turns' },
   { id: 'lofi', name: 'Chill Lo-Fi', description: 'Warm mellow beats, perfect for explainers & essays' },
   { id: 'ambient', name: 'Cinematic Ambient', description: 'Spacious synthesizer pads for storytelling & deep dives' },
   { id: 'tech', name: 'Modern Tech & Corporate', description: 'Crisp, upbeat acoustic-digital rhythm for tutorials' },
@@ -151,6 +152,21 @@ export async function resolveBgmTrackPath(options: {
   return lofiExists ? lofiFallback : null;
 }
 
+const MUSIC_FADE_IN_SEC = 2;
+const MUSIC_FADE_OUT_SEC = 3;
+
+async function probeDurationSec(filePath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync(getFfprobePath(), [
+      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath,
+    ]);
+    const d = Number.parseFloat(stdout.trim());
+    return Number.isFinite(d) && d > 0 ? d : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Mixes background music under voice narration using real-time sidechain ducking:
  * - When voice speaks, BGM volume smoothly attenuates.
@@ -176,11 +192,21 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
   // Clamp volume between 0.02 and 0.80
   const safeVolume = Math.max(0.02, Math.min(0.8, volume));
 
-  // sidechaincompress: voice signal [0:a] ducks background music [bgm]
+  // Music eases in at the start and out under the last words instead of cutting off
+  const programSec = await probeDurationSec(videoPath);
+  const fadeIn = Math.min(MUSIC_FADE_IN_SEC, programSec / 4);
+  const fadeOut = Math.min(MUSIC_FADE_OUT_SEC, programSec / 4);
+  const fades = programSec > 0
+    ? `,afade=t=in:st=0:d=${fadeIn.toFixed(2)},afade=t=out:st=${Math.max(0, programSec - fadeOut).toFixed(2)}:d=${fadeOut.toFixed(2)}`
+    : '';
+
+  // The voice [0:a] is split: one copy is heard, the other drives the ducking. Sidechain inputs
+  // must not be reused as mix inputs, and amix's default normalisation would halve the voice.
   const filterGraph = [
-    `[1:a]volume=${safeVolume.toFixed(2)}[bgm]`,
-    `[bgm][0:a]sidechaincompress=threshold=${duckingThreshold}:ratio=${duckingRatio}:attack=${attackMs}:release=${releaseMs}[ducked_bgm]`,
-    `[0:a][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+    `[0:a]asplit=2[voice][key]`,
+    `[1:a]volume=${safeVolume.toFixed(2)}${fades}[bgm]`,
+    `[bgm][key]sidechaincompress=threshold=${duckingThreshold}:ratio=${duckingRatio}:attack=${attackMs}:release=${releaseMs}[ducked_bgm]`,
+    `[voice][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`,
   ].join(';');
 
   const args = [
@@ -199,10 +225,11 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     '[aout]',
     '-c:v',
     'copy',
+    // An intermediate: mastering sets the final loudness and encodes the delivery audio
     '-c:a',
     'aac',
     '-b:a',
-    '192k',
+    '256k',
     '-ar',
     '48000',
     outputPath,

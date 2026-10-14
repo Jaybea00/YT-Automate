@@ -97,7 +97,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
   // Background Music (Auto-Ducked) state
   const [bgmEnabled, setBgmEnabled] = useState(true);
-  const [bgmTrack, setBgmTrack] = useState('lofi');
+  const [bgmTrack, setBgmTrack] = useState('story');
   const [bgmVolume, setBgmVolume] = useState(0.2);
   const [previewingTrack, setPreviewingTrack] = useState<string | null>(null);
   const [savingBgm, setSavingBgm] = useState(false);
@@ -107,7 +107,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
   // Transition Sound Effects (SFX) state
   const [sfxEnabled, setSfxEnabled] = useState(true);
-  const [sfxTrack, setSfxTrack] = useState('whoosh');
+  const [sfxTrack, setSfxTrack] = useState('smart');
   const [sfxVolume, setSfxVolume] = useState(0.25);
   const [previewingSfx, setPreviewingSfx] = useState<string | null>(null);
 
@@ -116,6 +116,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
   // Kinetic captions burned into the final render ('none' = off)
   const [captionPreset, setCaptionPreset] = useState<string>('none');
+  // The style's colour grade at mastering ('auto') or none ('off', faster to render)
+  const [filmLook, setFilmLook] = useState<'auto' | 'off'>('auto');
 
   // Batch Uploader state
   const [showBatchUploader, setShowBatchUploader] = useState(false);
@@ -210,6 +212,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     sfxVolume?: number;
     beatPauseSeconds?: number;
     captionPreset?: string;
+    look?: 'auto' | 'off';
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
     const nextTrack = updates.track !== undefined ? updates.track : bgmTrack;
@@ -224,6 +227,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
       updates.beatPauseSeconds !== undefined ? updates.beatPauseSeconds : beatPauseSeconds;
     const nextCaptionPreset =
       updates.captionPreset !== undefined ? updates.captionPreset : captionPreset;
+    const nextLook = updates.look !== undefined ? updates.look : filmLook;
 
     setBgmEnabled(nextEnabled);
     setBgmTrack(nextTrack);
@@ -236,6 +240,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     setSfxVolume(nextSfxVolume);
     setBeatPauseSeconds(nextBeatPause);
     setCaptionPreset(nextCaptionPreset);
+    setFilmLook(nextLook);
 
     try {
       setSavingBgm(true);
@@ -254,6 +259,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           sfxVolume: nextSfxVolume,
           beatPauseSeconds: nextBeatPause,
           captionPreset: nextCaptionPreset,
+          look: nextLook,
         }),
       });
     } catch (err) {
@@ -313,7 +319,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
         .then((bData) => {
           if (bData.bgm) {
             setBgmEnabled(bData.bgm.enabled !== false);
-            setBgmTrack(bData.bgm.track || 'lofi');
+            setBgmTrack(bData.bgm.track || 'story');
             setBgmVolume(Number(bData.bgm.volume ?? 0.2));
           }
           if (bData.padStyle) {
@@ -327,11 +333,14 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           }
           if (bData.sfx) {
             setSfxEnabled(bData.sfx.enabled !== false);
-            setSfxTrack(bData.sfx.track || 'whoosh');
+            setSfxTrack(bData.sfx.track || 'smart');
             setSfxVolume(Number(bData.sfx.volume ?? 0.25));
           }
           if (bData.beatPauseSeconds !== undefined) {
             setBeatPauseSeconds(Number(bData.beatPauseSeconds));
+          }
+          if (bData.look === 'off' || bData.look === 'auto') {
+            setFilmLook(bData.look);
           }
           if (bData.captionPreset) {
             setCaptionPreset(bData.captionPreset);
@@ -716,8 +725,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400">
                   Select Music Mood
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   {[
+                    { id: 'story', label: 'Story-matched (mood per chapter)', icon: '🎼' },
                     { id: 'lofi', label: 'Chill Lo-Fi', icon: '☕' },
                     { id: 'ambient', label: 'Cinematic Ambient', icon: '🌌' },
                     { id: 'tech', label: 'Modern Tech', icon: '💻' },
@@ -738,7 +748,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-base">{preset.icon}</span>
-                          {preset.id !== 'none' && (
+                          {preset.id !== 'none' && preset.id !== 'story' && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -961,8 +971,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-1">
                 {/* SFX Preset Selector */}
                 <div className="md:col-span-2 space-y-2">
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {[
+                      { id: 'smart', label: 'Smart (by what’s on screen)', icon: '🎚️' },
                       { id: 'whoosh', label: 'Whoosh', icon: '💨' },
                       { id: 'swoosh', label: 'Deep Swoosh', icon: '🌊' },
                       { id: 'click', label: 'Tech Click', icon: '🖱️' },
@@ -1142,8 +1153,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
                   { id: 'none', label: 'Off', desc: 'No captions' },
-                  { id: 'vox', label: 'Vox Minimal', desc: 'White, gold highlight' },
-                  { id: 'social_pop', label: 'Social Pop', desc: 'Bold yellow, heavy outline' },
+                  { id: 'vox', label: 'Vox Minimal', desc: 'White, style-colour highlight' },
+                  { id: 'social_pop', label: 'Social Pop', desc: 'Bold capitals, the spoken word pops' },
                   { id: 'clean_news', label: 'Clean News', desc: 'Boxed, broadcast style' },
                 ].map((option) => {
                   const isSelected = captionPreset === option.id;
@@ -1162,6 +1173,37 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Film Look Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-4">
+              <div>
+                <span className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>🎞️</span> Film Look
+                </span>
+                <p className="text-[11px] text-zinc-400">
+                  A gentle colour grade matched to the video&apos;s style, so archive photos, stock footage and graphics feel like one film. Turning it off makes the final render faster.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-w-md">
+                {[
+                  { id: 'auto' as const, label: 'Matched to style', desc: 'Unified grade (recommended)' },
+                  { id: 'off' as const, label: 'Off', desc: 'Original colours, faster render' },
+                ].map((option) => (
+                  <div
+                    key={option.id}
+                    onClick={() => updateBgmConfig({ look: option.id })}
+                    className={`p-2.5 rounded-xl border flex flex-col transition cursor-pointer ${
+                      filmLook === option.id
+                        ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-md shadow-indigo-950'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                    }`}
+                  >
+                    <span className="text-xs font-medium leading-tight">{option.label}</span>
+                    <span className="text-[10px] text-zinc-400 mt-1">{option.desc}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

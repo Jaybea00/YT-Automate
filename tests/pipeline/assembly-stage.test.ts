@@ -395,13 +395,14 @@ describe('Assembly Stage Pipeline Tests', () => {
       'utf-8',
     );
     assert.ok(assContent.includes('Style: VoxMinimal'));
-    // Beat 1 captions start after beat 0's full clip (2.0s speech + 0.5s default pause), not at 2.0s
+    // Beat 1 captions start where its voice starts: beat 0's lead-in (0.2s), speech (2.0s) and
+    // landing pause (a short punchy line: 0.45s), then beat 1's own lead-in (0.2s)
     const beat1Line = assContent.split('\n').find((l) => l.includes('&}Ships'));
     const beat1Start = beat1Line?.match(/^Dialogue: 0,0:00:(\d+\.\d+),/)?.[1];
     assert.ok(beat1Start, 'Expected a caption line for beat 1');
     assert.ok(
-      Number(beat1Start) >= 2.4 && Number(beat1Start) <= 2.7,
-      `Beat 1 captions should start ~2.5s, got ${beat1Start}s`,
+      Number(beat1Start) >= 2.75 && Number(beat1Start) <= 2.95,
+      `Beat 1 captions should start ~2.85s, got ${beat1Start}s`,
     );
     assert.equal(db.videos[0].status, 'rendered');
   });

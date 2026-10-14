@@ -40,7 +40,17 @@ export interface GenerateChaptersOptions {
   units?: UnitTimingLike[];
   customTitles?: Record<number, string>;
   formatStyle?: 'dash' | 'space';
+  /** The story's parts: chapters start only on these beats (one chapter per beat otherwise). */
+  sections?: Array<{ start_beat: number; title: string }>;
+  /** Where each beat really starts in the finished video, by beat index (from assembly). */
+  beatStartMs?: Record<number, number>;
+  /** Pause around each beat (lead-in + tail), by beat index, for estimating before assembly. */
+  gapMs?: Record<number, number>;
 }
+
+/** YouTube ignores chapter lists with fewer than 3 chapters or any chapter under 10 seconds. */
+export const MIN_YOUTUBE_CHAPTERS = 3;
+export const MIN_CHAPTER_MS = 10_000;
 
 export interface ChapterGenerationResult {
   chapters: ChapterItem[];
@@ -148,6 +158,7 @@ function sanitizeTitle(str: string): string {
 export function generateYouTubeChapters(
   options: GenerateChaptersOptions,
 ): ChapterGenerationResult {
+  if (options.sections?.length) return sectionChapters(options);
   const { beats = [], units = [], customTitles = {}, formatStyle = 'dash' } = options;
 
   if (beats.length === 0) {
@@ -224,6 +235,73 @@ export function generateYouTubeChapters(
     totalDurationMs: cumulativeMs,
     totalDurationSeconds: Math.floor(cumulativeMs / 1000),
     hasMeasuredDurations: hasAnyMeasured,
+  };
+}
+
+/**
+ * Chapters from the story's sections. Start times are where each section's first beat really
+ * starts in the video (or an estimate including the pauses), the first is 0:00, and a chapter
+ * shorter than YouTube's 10-second minimum merges into the one before. With fewer than three
+ * chapters, the formatted text is empty, since YouTube would ignore it.
+ */
+function sectionChapters(options: GenerateChaptersOptions): ChapterGenerationResult {
+  const { beats = [], units = [], customTitles = {}, formatStyle = 'dash', sections = [], beatStartMs, gapMs = {} } = options;
+  const sorted = [...beats].sort((a, b) => a.index - b.index);
+  const measured = new Map(
+    units.filter((u) => typeof u.duration_ms === 'number' && u.duration_ms > 0).map((u) => [u.unit_index, u.duration_ms as number]),
+  );
+
+  // Start and length of every beat: exact when assembly reported them, estimated otherwise
+  const starts = new Map<number, number>();
+  let cursor = 0;
+  let hasMeasured = false;
+  for (const beat of sorted) {
+    const exact = beatStartMs?.[beat.index];
+    starts.set(beat.index, exact ?? cursor);
+    const voiceMs = measured.get(beat.index);
+    if (voiceMs !== undefined) hasMeasured = true;
+    cursor = (exact ?? cursor) + (voiceMs ?? (beat.duration_estimate_seconds ?? 5) * 1000) + (gapMs[beat.index] ?? 0);
+  }
+  const totalMs = cursor;
+  const requiresHours = totalMs >= 3600 * 1000;
+
+  const bySection = [...sections]
+    .sort((a, b) => a.start_beat - b.start_beat)
+    .map((s) => {
+      const beat = sorted[s.start_beat];
+      return beat ? { beat, title: (customTitles[beat.index] ?? '').trim() || s.title } : null;
+    })
+    .filter((s): s is { beat: ScriptBeatLike; title: string } => Boolean(s));
+
+  const chapters: ChapterItem[] = [];
+  bySection.forEach(({ beat, title }, i) => {
+    const startTimeMs = i === 0 ? 0 : starts.get(beat.index) ?? 0;
+    const prev = chapters[chapters.length - 1];
+    // Too short a chapter for YouTube: fold it into the one before
+    if (prev && startTimeMs - prev.startTimeMs < MIN_CHAPTER_MS) return;
+    chapters.push({
+      beatIndex: beat.index,
+      startTimeMs,
+      startTimeSeconds: Math.floor(startTimeMs / 1000),
+      timestamp: formatTimestamp(Math.floor(startTimeMs / 1000), requiresHours),
+      title,
+      durationMs: 0,
+      isMeasured: measured.has(beat.index) || beatStartMs?.[beat.index] !== undefined,
+    });
+  });
+  // The last chapter also needs 10 seconds
+  while (chapters.length > 1 && totalMs - chapters[chapters.length - 1].startTimeMs < MIN_CHAPTER_MS) chapters.pop();
+  chapters.forEach((c, i) => {
+    c.durationMs = (chapters[i + 1]?.startTimeMs ?? totalMs) - c.startTimeMs;
+  });
+
+  const delimiter = formatStyle === 'space' ? ' ' : ' - ';
+  return {
+    chapters,
+    formattedText: chapters.length >= MIN_YOUTUBE_CHAPTERS ? chapters.map((c) => `${c.timestamp}${delimiter}${c.title}`).join('\n') : '',
+    totalDurationMs: totalMs,
+    totalDurationSeconds: Math.floor(totalMs / 1000),
+    hasMeasuredDurations: hasMeasured,
   };
 }
 

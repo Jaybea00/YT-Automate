@@ -11,7 +11,9 @@ const execFileAsync = promisify(execFile);
 export type StillMotion = 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right';
 export const STILL_MOTIONS: StillMotion[] = ['zoom_in', 'pan_right', 'zoom_out', 'pan_left'];
 
-const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-an'];
+// JPEG stills and some sources are full-range; every clip is converted to (and tagged) TV range
+// so a joined track never inherits a full-range tag that skews the footage's contrast
+const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-r', String(FPS), '-an'];
 
 /**
  * Camera move for a still, as zoompan expressions over `frames` output frames. Stills are
@@ -38,7 +40,7 @@ async function stillClip(inputPath: string, frames: number, outputPath: string, 
     '[0:v]split=2[bg][fg];' +
     '[bg]scale=3840:2160:force_original_aspect_ratio=increase,crop=3840:2160,gblur=sigma=40,eq=brightness=-0.1[bgb];' +
     '[fg]scale=3840:2160:force_original_aspect_ratio=decrease[fgs];' +
-    `[bgb][fgs]overlay=(W-w)/2:(H-h)/2,${kenBurnsFilter(motion, frames)},setsar=1,format=yuv420p[v]`;
+    `[bgb][fgs]overlay=(W-w)/2:(H-h)/2,${kenBurnsFilter(motion, frames)},setsar=1,scale=out_range=tv,format=yuv420p[v]`;
   await execFileAsync(getFfmpegPath(), ['-y', '-i', inputPath, '-filter_complex', filter, '-map', '[v]', '-frames:v', String(frames), ...ENCODE, outputPath]);
 }
 
@@ -95,7 +97,7 @@ export async function overlayCaption(clipPath: string, overlayPng: string, frame
   const slide = `-70*(1-min(1,max(0,(t-${inAt})/${inLen})))`;
   const filter =
     `[1:v]format=rgba,fade=t=in:st=${inAt}:d=${inLen}:alpha=1${fadeOut}[cap];` +
-    `[0:v][cap]overlay=x='${slide}':y=0:eval=frame:shortest=1,format=yuv420p[v]`;
+    `[0:v][cap]overlay=x='${slide}':y=0:eval=frame:shortest=1,scale=out_range=tv,format=yuv420p[v]`;
   await execFileAsync(getFfmpegPath(), [
     '-y', '-i', clipPath, '-loop', '1', '-framerate', String(FPS), '-i', overlayPng,
     '-filter_complex', filter, '-map', '[v]', '-frames:v', String(frames), ...ENCODE, outputPath,

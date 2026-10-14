@@ -16,6 +16,8 @@ export interface ComposeShotBeatOptions {
   outputDir: string;
   renderContext: Omit<ShotRenderContext, 'beatIndex' | 'downloadDir'>;
   typedRenderers?: Partial<Record<ShotType, TypedShotRenderer>>;
+  /** Picture before and after the narration (from the video's pacing), built into the track. */
+  pacing?: { leadInSec: number; tailSec: number };
 }
 
 /** True when the user uploaded their own visual for the beat, which always takes precedence. */
@@ -45,6 +47,8 @@ export async function composeShotBeat(options: ComposeShotBeatOptions): Promise<
     audioDurationSec: audioDurationMs / 1000,
     outputDir,
     fallbackColor: renderContext.theme.background,
+    leadInSec: options.pacing?.leadInSec,
+    tailSec: options.pacing?.tailSec,
     renderShot: createShotRenderer(
       { ...renderContext, beatIndex: beat.index, downloadDir: path.join(outputDir, 'sources') },
       typedRenderers,
