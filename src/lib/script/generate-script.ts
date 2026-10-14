@@ -25,6 +25,10 @@ export const SHOT_TYPES = [
   'geo_map',
   'newspaper',
   'screen_recording',
+  'timeline',
+  'comparison',
+  'title',
+  'kinetic_text',
 ] as const;
 export type ShotType = (typeof SHOT_TYPES)[number];
 
@@ -47,6 +51,14 @@ export interface ShotPlan {
   quote?: { text: string; attribution: string };
   map?: { places: string[]; mode: 'route' | 'spread' | 'locate' };
   newspaper?: { outlet: string; date: string; headline: string };
+  timeline?: { events: Array<{ date: string; label: string }> };
+  comparison?: { title?: string; left: { value: string; label: string }; right: { value: string; label: string } };
+  /** Chapter card at a turn in the story. */
+  title_card?: { text: string; kicker?: string };
+  /** Words of the narration set as animated type, with a few emphasised. */
+  kinetic?: { phrase: string; emphasis: string[] };
+  /** Lower-third name caption over footage (stock/archive) of a named person or place. */
+  caption?: { name: string; detail?: string };
 }
 
 export interface ScriptBeat {

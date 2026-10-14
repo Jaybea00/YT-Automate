@@ -6,6 +6,7 @@ import { searchWikimediaCommons, downloadWikimediaAsset } from '../providers/sto
 import { searchArchiveOrg, downloadArchiveOrgAsset } from '../providers/stock/archive-org';
 import { searchNasa, downloadNasaAsset } from '../providers/stock/nasa';
 import { classifyVisualIntent, type VisualIntent } from './intent-classifier';
+import { isUnusableLicense } from '../utils/media-upload';
 
 export interface AggregateMediaOptions {
   query: string;
@@ -36,9 +37,11 @@ export async function aggregateMediaCandidates(
   const { intent, keywords } = classifyVisualIntent(text, query, explicitType);
   const candidates: MediaCandidate[] = [];
 
-  // Helper to dedupe by title or id
+  // Helper to dedupe by title or id; NonCommercial / NoDerivatives media can't be used on a
+  // monetised channel with the cropping and zooming the pipeline applies
   const addCandidates = (items: MediaCandidate[]) => {
     for (const item of items) {
+      if (isUnusableLicense(item.license)) continue;
       if (!candidates.some((c) => c.title === item.title || c.id === item.id)) {
         candidates.push(item);
       }
@@ -70,7 +73,7 @@ export async function aggregateMediaCandidates(
           provider: 'pixabay',
           mediaType: 'video',
           title: hit.tags || keywords,
-          thumbnailUrl: hit.pageUrl ? hit.url : file.url,
+          thumbnailUrl: hit.thumbnailUrl ?? '',
           downloadUrl: file.url,
           pageUrl: hit.pageUrl,
           duration: hit.duration,

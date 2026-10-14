@@ -16,9 +16,20 @@ export const ALLOWED_LICENSE_TYPES = [
   'public_domain',
   'cc0',
   'cc_by',
+  'cc_by_sa',
   'fair_use',
 ] as const;
 export type AllowedLicenseType = (typeof ALLOWED_LICENSE_TYPES)[number];
+
+/**
+ * Licenses a monetised channel can't use for edited footage: NonCommercial forbids monetised
+ * use, NoDerivatives forbids the cropping, zooming and cutting the pipeline applies.
+ */
+export function isUnusableLicense(raw?: string | null): boolean {
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+  return /(?:^|[\s/_-])(nc|nd)(?:[\s/_.-]|$)|by-nc|by-nd|by_nc|by_nd|noncommercial|non-commercial|noderiv|no-deriv/.test(lower);
+}
 
 /**
  * Normalizes an arbitrary license string (e.g. from Wikimedia, Archive.org, Pexels)
@@ -53,15 +64,16 @@ export function normalizeLicenseType(raw?: string | null): AllowedLicenseType {
     return 'public_domain';
   }
 
-  // CC BY variations
+  // ShareAlike must stay ShareAlike: it carries different obligations than plain CC BY
+  if (lower.includes('by-sa') || lower.includes('by_sa') || lower.includes('licenses/by-sa') || /cc[\s-]?by[\s-]sa/.test(lower)) {
+    return 'cc_by_sa';
+  }
+
+  // CC BY variations (NC/ND variants are filtered out before this via isUnusableLicense)
   if (
     lower.includes('cc by') ||
     lower.includes('cc-by') ||
     lower.includes('cc_by') ||
-    lower.includes('by-sa') ||
-    lower.includes('by_sa') ||
-    lower.includes('by-nc') ||
-    lower.includes('by-nd') ||
     lower.includes('attribution') ||
     lower.includes('licenses/by') ||
     lower.includes('/by/')

@@ -38,7 +38,16 @@ export const NewspaperSpecSchema = z.object({
 
 export type NewspaperSpec = z.infer<typeof NewspaperSpecSchema>;
 
-export type FinalVisualType = 'stock' | 'chart' | 'screen_recording' | 'uploaded' | 'archive' | 'geo_map' | 'newspaper';
+export type FinalVisualType =
+  | 'stock'
+  | 'chart'
+  | 'screen_recording'
+  | 'uploaded'
+  | 'archive'
+  | 'geo_map'
+  | 'newspaper'
+  /** A beat rendered from its planned shots */
+  | 'composite';
 
 export interface MediaCandidate {
   id: string | number;

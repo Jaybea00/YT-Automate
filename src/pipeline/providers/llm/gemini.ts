@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, type ResponseSchema } from '@google/generative-ai';
 import { z, type ZodType } from 'zod';
 import { ProviderError } from '../errors';
 import { mapHttpOrSdkError } from '../error-mapper';
-import type { LLMProvider, ProviderCallContext, Usage } from '../types';
+import type { LLMProvider, LlmImage, ProviderCallContext, Usage } from '../types';
 
 const FALLBACK_MODELS = [
   'gemini-3.5-flash-lite',
@@ -129,6 +129,7 @@ export class GeminiLlmProvider implements LLMProvider {
   readonly kind = 'llm' as const;
   readonly id: string;
   readonly requiresApiKey: boolean;
+  readonly supportsVision = true;
 
   constructor(id: string = 'gemini', requiresApiKey: boolean = true) {
     this.id = id;
@@ -183,9 +184,13 @@ export class GeminiLlmProvider implements LLMProvider {
   }
 
   async generateJson<T>(
-    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number },
+    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number; images?: LlmImage[] },
     ctx: ProviderCallContext,
   ): Promise<{ data: T; usage: Usage }> {
+    // Images follow the prompt as inline parts, in the order the prompt numbers them
+    const content = req.images?.length
+      ? [{ text: req.prompt }, ...req.images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } }))]
+      : req.prompt;
     const primaryModel = ctx.model || 'gemini-3.5-flash-lite';
     const modelsToTry = modelFallbackOrder(primaryModel);
 
@@ -209,14 +214,14 @@ export class GeminiLlmProvider implements LLMProvider {
 
         let result;
         try {
-          result = await buildModel().generateContent(req.prompt);
+          result = await buildModel().generateContent(content);
         } catch (schemaErr) {
           if (!responseSchema || !isSchemaRejection(schemaErr)) throw schemaErr;
           console.warn(
             `[GeminiLlmProvider] Model "${modelName}" rejected the response schema; retrying without it.`,
           );
           responseSchema = null;
-          result = await buildModel().generateContent(req.prompt);
+          result = await buildModel().generateContent(content);
         }
         const text = result.response.text();
         const usageMetadata = result.response.usageMetadata;

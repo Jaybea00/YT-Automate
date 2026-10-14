@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
+import { ShotEditor } from './shot-editor';
 
 interface VisualsPageProps {
   params: Promise<{ id: string }>;
@@ -1279,7 +1280,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                         />
                       </div>
 
-                      {/* Video Trim Controls */}
+                      {/* Video Trim Controls (not for beats cut from shots: a trim would move every cut off the narration) */}
+                      {asset.visual_type !== 'composite' && (
                       <div className="pt-2 border-t border-zinc-800/80 space-y-2.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
@@ -1344,8 +1346,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                           </div>
                         </div>
                       </div>
+                      )}
 
-                      {asset.source_url && (
+                      {asset.source_url && asset.visual_type !== 'composite' && (
                         <p className="text-xs text-zinc-400">
                           Source: <span className="text-zinc-300">{asset.source_url}</span>
                         </p>
@@ -1356,6 +1359,11 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                         </p>
                       )}
                     </div>
+                  )}
+
+                  {/* Shot-by-shot editor for beats composed from the director's shot plan */}
+                  {asset?.visual_type === 'composite' && (
+                    <ShotEditor videoId={id} beatIndex={index} onChanged={() => setCacheBuster(Date.now())} />
                   )}
 
                   {/* Alternative Media Candidates & 1-Click Swap Reel */}

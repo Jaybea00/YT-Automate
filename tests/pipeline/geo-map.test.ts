@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import {
-  extractGeoEntities,
-  buildAnimatedMapHtml,
-  executeGeoMapStep,
-} from '../../src/pipeline/visuals/geo-map-step';
+import { geoArea } from 'd3-geo';
+import { extractGeoEntities, executeGeoMapStep } from '../../src/pipeline/visuals/geo-map-step';
+import { loadCountries, resolvePlace, resolvePlaces } from '../../src/pipeline/visuals/maps/places';
+import { buildMapScene } from '../../src/pipeline/visuals/maps/map-scene';
+import { themeForStyle } from '../../src/pipeline/visuals/motion/theme';
 import { geocodeLocation } from '../../src/pipeline/visuals/geocoder';
 import { getVideoDurationMs } from '../../src/pipeline/utils/ffmpeg';
 
@@ -53,21 +53,29 @@ test('Geo-Data Extraction & Animated Map Generator Tests', async (t) => {
     assert.equal(empty, null);
   });
 
-  await t.test('3. buildAnimatedMapHtml generates valid Leaflet HTML with glowing markers', () => {
-    const html = buildAnimatedMapHtml({
-      origin: { lat: 29.76, lng: -95.36, displayName: 'Houston, TX' },
-      dest: { lat: 30.08, lng: -94.12, displayName: 'Beaumont, TX' },
-      isRoute: true,
-      label: 'Houston → Beaumont',
-      durationSeconds: 3,
-    });
+  await t.test('3. places resolve offline and build a self-contained animated map', async () => {
+    const places = await resolvePlaces(['Houston', 'Beaumont']);
+    assert.deepEqual(places.map((p) => p.kind), ['city', 'city']);
 
-    assert.ok(html.includes('leaflet.js'));
-    assert.ok(html.includes('pulse-ring'));
-    assert.ok(html.includes('29.76'));
-    assert.ok(html.includes('-95.36'));
-    assert.ok(html.includes('polyline'));
-    assert.ok(html.includes('flyToBounds'));
+    const usa = await resolvePlace('the USA');
+    assert.equal(usa?.kind, 'country');
+    assert.equal(usa?.countryId, 'United States of America');
+    assert.ok(usa && usa.lng < -80 && usa.lng > -110, 'framed on the lower 48, not averaged with Alaska');
+    assert.equal((await resolvePlace('Europe'))?.kind, 'continent');
+
+    const scene = buildMapScene({ places, mode: 'route', theme: themeForStyle('vox_explainer') });
+    const html = scene.page('data:image/jpeg;base64,');
+    assert.ok(scene.baseSvg.includes('class="land"'));
+    assert.ok(html.includes('window.__frame'));
+    assert.ok(html.includes('id="arc0"'), 'route draws an arc');
+    assert.ok(!/https?:\/\/(?!www\.w3\.org)/.test(html), 'no network resources');
+  });
+
+  await t.test('3b. no country shape covers the globe (winding errors in the source data are repaired)', () => {
+    for (const res of ['50m', '10m'] as const) {
+      const inverted = loadCountries(res).filter((c) => geoArea(c) > 2 * Math.PI);
+      assert.deepEqual(inverted.map((c) => c.properties.name), [], `${res} data`);
+    }
   });
 
   await t.test('4. executeGeoMapStep generates 1080p MP4 with Playwright and FFmpeg', async () => {

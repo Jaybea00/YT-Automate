@@ -201,9 +201,9 @@ export async function sourceVisualBeat(
       finalVisualType = 'geo_map';
       finalOutputPath = mapResult.outputPath;
       licenseType = 'public_domain';
-      licenseSource = 'openstreetmap';
-      licenseProofUrl = 'https://www.openstreetmap.org/copyright';
-      attributionText = 'OpenStreetMap contributors / CartoDB';
+      licenseSource = 'natural_earth';
+      licenseProofUrl = 'https://www.naturalearthdata.com/about/terms-of-use/';
+      attributionText = 'Map data: Natural Earth (public domain)';
     } else {
       fallbackOccurred = true;
       fallbackReason = mapResult.error || 'Geo map generation failed';
