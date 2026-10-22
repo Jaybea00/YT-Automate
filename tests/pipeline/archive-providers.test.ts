@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyVisualIntent } from '../../src/pipeline/visuals/intent-classifier';
-import { searchWikimediaCommons } from '../../src/pipeline/providers/stock/wikimedia';
+import { commonsThumbWidth, searchWikimediaCommons } from '../../src/pipeline/providers/stock/wikimedia';
 import { searchNasa } from '../../src/pipeline/providers/stock/nasa';
 import { searchArchiveOrg } from '../../src/pipeline/providers/stock/archive-org';
 import { aggregateMediaCandidates } from '../../src/pipeline/visuals/media-aggregator';
@@ -87,6 +87,38 @@ test('Multi-Source Open Archive & Candidate Pooling Tests', async (t) => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  await t.test('2b. TIFF scans download as Commons JPEG renderings at a standard width', async () => {
+    const originalFetch = globalThis.fetch;
+    const tiffPage = (pageid: number, width: number) => ({
+      pageid,
+      title: `File:Scan_${pageid}.tif`,
+      imageinfo: [
+        {
+          url: `https://upload.wikimedia.org/wikipedia/commons/a/ab/Scan_${pageid}.tif`,
+          thumburl: `https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Scan_${pageid}.tif/lossy-page1-960px-Scan_${pageid}.tif.jpg?utm_content=thumbnail`,
+          mime: 'image/tiff',
+          width,
+          height: 1200,
+        },
+      ],
+    });
+    try {
+      globalThis.fetch = async () =>
+        ({ ok: true, status: 200, json: async () => ({ query: { pages: { 1: tiffPage(1, 6000), 2: tiffPage(2, 1536) } } }) }) as any;
+
+      const candidates = await searchWikimediaCommons('scan', { limit: 5 });
+      const byId = Object.fromEntries(candidates.map((c) => [c.id, c.downloadUrl]));
+      assert.match(byId.wiki_1, /\/lossy-page1-1920px-Scan_1\.tif\.jpg\?/, 'large TIFFs use the 1920px rendering');
+      assert.match(byId.wiki_2, /\/lossy-page1-1280px-Scan_2\.tif\.jpg\?/, 'a non-standard width rounds down to one Commons serves');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(commonsThumbWidth(1536), 1280);
+    assert.equal(commonsThumbWidth(5000), 3840);
+    assert.equal(commonsThumbWidth(700), 960, 'never below 960');
   });
 
   await t.test('3. searchNasa parses NASA image and video library hits', async () => {

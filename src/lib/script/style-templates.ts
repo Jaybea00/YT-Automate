@@ -1,20 +1,11 @@
+import { STYLE_PACKS, type VideoStyle } from '@/lib/styles/packs';
+
 /**
- * One entry per supported value of videos.style (stored as text, so new styles need no migration).
- * Each template controls tone, pacing, and structure — the script
- * generator swaps only this prompt; everything downstream (TTS, assembly)
- * stays the same regardless of style.
+ * One script template per style pack (src/lib/styles/packs.ts, where styles are defined). Each
+ * controls tone, pacing and structure: the pack's voice plus the shared structure rules below.
  */
 
-export type VideoStyle =
-  | 'tech'
-  | 'cinematic'
-  | 'modernmba'
-  | 'listicle'
-  | 'story_driven'
-  | 'comparison'
-  | 'eli5'
-  | 'true_crime_pov'
-  | 'vox_explainer';
+export type { VideoStyle };
 
 export interface StyleTemplate {
   name: string;
@@ -76,115 +67,13 @@ Shape:
 }
 `.trim();
 
-export const STYLE_TEMPLATES: Record<VideoStyle, StyleTemplate> = {
-  tech: {
-    name: 'Tech Explainer',
-    label: 'Tech explainer (fast, Fireship-style)',
-    description: 'Fast-paced, punchy hook, rapid delivery with dry humor and technical clarity.',
-    systemPrompt: `You write fast-paced tech explainer scripts in the style of Fireship:
-punchy opening hook in the first 3 seconds, rapid-fire delivery, dry humor,
-technical accuracy without over-explaining, and a strong opinionated take by
-the end rather than a neutral summary. Assume the viewer already codes.
-Short sentences. No filler. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  cinematic: {
-    name: 'Cinematic Documentary',
-    label: 'Cinematic documentary (ColdFusion-style)',
-    description: 'Atmospheric pacing, descriptive depth, and thoughtful narrative build toward a payoff.',
-    systemPrompt: `You write cinematic documentary-style scripts in the style of ColdFusion:
-measured, atmospheric pacing, longer descriptive sentences, a sense of scale
-and consequence, framing the topic as a larger story about technology and
-society rather than a quick tutorial. Build tension toward a payoff.
-${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  modernmba: {
-    name: 'Business & Data Analysis',
-    label: 'Business/data analysis (modernmba-style)',
-    description: 'Structured around a thesis backed by hard data, financial metrics, and market dynamics.',
-    systemPrompt: `You write business/strategy analysis scripts in the style of Modern MBA:
-structured around a central thesis, backed by specific numbers and
-comparisons, walks through cause-and-effect business reasoning, ends with a
-clear takeaway or prediction. Favor charts and data visuals over b-roll
-wherever a claim can be shown as a number. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  listicle: {
-    name: 'Listicle / Countdown',
-    label: 'Listicle / countdown',
-    description: 'Brisk, numbered items with snappy justifications and high-retention pacing.',
-    systemPrompt: `You write countdown/listicle scripts (e.g. "Top 5", "Top 10").
-Open with a hook stating what the list is and why it matters, then count
-down (or up) through clearly numbered items, each with a short punchy
-justification. Keep pacing brisk between items — no long tangents per item.
-Close with a quick recap or a "which was your favorite" style beat.
-${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  story_driven: {
-    name: 'Story-Driven Deep Dive',
-    label: 'Story-driven deep dive',
-    description: 'Compelling narrative arc with setup, rising stakes, turning points, and resolution.',
-    systemPrompt: `You write narrative deep-dive scripts built around a single story with a
-clear arc: setup, rising complication, turning point, resolution. Use
-scene-setting detail and follow a chronological or cause-and-effect thread
-rather than a list of facts. Withhold the full picture early to create
-narrative pull toward the payoff. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  comparison: {
-    name: 'Comparison Breakdown',
-    label: 'Comparison / "X vs Y" breakdown',
-    description: 'Head-to-head analysis evaluating cost, capabilities, tradeoffs, and a definitive verdict.',
-    systemPrompt: `You write head-to-head comparison scripts ("X vs Y"). Establish both sides
-fairly before taking a position, structure the middle around clear
-comparison criteria (cost, performance, use case, etc. — whatever fits the
-topic), and end with a clear verdict or "it depends" framing backed by the
-criteria you walked through. Avoid strawmanning either side.
-${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  eli5: {
-    name: 'ELI5 / Beginner Explainer',
-    label: 'ELI5 / beginner explainer',
-    description: 'Accessible analogies, patient conversational tone, and step-by-step clarity with zero jargon.',
-    systemPrompt: `You write beginner-friendly explainer scripts. Assume zero prior knowledge.
-Use concrete analogies for abstract concepts, define any term before using
-it, build understanding incrementally (simple idea first, then add
-complexity), and keep sentences short. Warmth and patience in tone, never
-condescending. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  true_crime_pov: {
-    name: 'Investigative / POV',
-    label: 'True crime / POV explainer',
-    description: 'Suspenseful narrative delivery, atmospheric timeline reconstruction, and building dread.',
-    systemPrompt: `You write true-crime-style narrative scripts, told with a slow-building,
-suspenseful POV delivery: present tense or close narrative voice, deliberate
-pacing that withholds key details, atmospheric description of setting and
-timeline, and a sense of dread or tension building toward the reveal.
-Stick strictly to verifiable facts where the topic concerns real events —
-flag clearly in the text if any detail is disputed or unconfirmed rather
-than dramatizing it as fact. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-
-  vox_explainer: {
-    name: 'Vox Explainer',
-    label: 'Vox-style visual explainer',
-    description: 'One clear question, answered with evidence: charts, maps, archival proof, and a "here\'s why it matters" payoff.',
-    systemPrompt: `You write visual explainer scripts in the style of Vox and Johnny Harris.
-Open with a concrete, slightly puzzling observation and turn it into one clear
-question the whole video answers. Answer it like a reporter building a case:
-each beat adds one piece of evidence (a number, a map, a document, a quote, a
-historical moment) and says why it matters. Narrate *to* the visuals: refer to
-what the viewer is looking at ("look at this line", "this is London in 1931")
-so charts, maps, and documents carry the argument. Conversational, curious,
-plain-spoken, never academic; short sentences with an occasional longer one
-for rhythm. Zoom out near the end to the bigger pattern, then land on a payoff
-that answers the opening question. ${BEAT_STRUCTURE_INSTRUCTIONS}`,
-  },
-};
+/** Script templates for every style pack: the pack's voice, then the shared structure rules. */
+export const STYLE_TEMPLATES = Object.fromEntries(
+  Object.values(STYLE_PACKS).map((p) => [
+    p.id,
+    { name: p.name, label: p.label, description: p.description, systemPrompt: `${p.voice}\n${BEAT_STRUCTURE_INSTRUCTIONS}` },
+  ]),
+) as Record<VideoStyle, StyleTemplate>;
 
 /**
  * A style's voice without the full-script output format, for prompts that edit

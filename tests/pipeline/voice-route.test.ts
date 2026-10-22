@@ -4,6 +4,7 @@ import { handleVoiceRequest } from '../../src/app/api/videos/[id]/voice/route.ts
 import { createMockSupabase } from '../helpers/mock-supabase.ts';
 import { runJobUnit } from '../../src/pipeline/runner/unit-runner.ts';
 import { computeInputHash } from '../../src/pipeline/utils/hash.ts';
+import { beatsToScenes } from '../../src/pipeline/utils/mapper.ts';
 
 describe('POST /api/videos/[id]/voice (Idempotent Route & Retry Semantics)', () => {
   const sampleVideoId = 'vid-123-abc';
@@ -201,6 +202,83 @@ describe('POST /api/videos/[id]/voice (Idempotent Route & Retry Semantics)', () 
     assert.notEqual(json.jobId, finishedJobId);
     assert.equal(json.status, 'queued');
     assert.equal(json.resumed, false);
+    assert.equal(db.yt_jobs.length, 2);
+  });
+
+  it('adds missing stages to a finished job with the same script, reusing its voicing', async () => {
+    const finishedJobId = 'job-voiced-222';
+    const { scriptFingerprint } = beatsToScenes(approvedScriptJson.beats as never);
+    const finishedJob = {
+      id: finishedJobId,
+      video_id: sampleVideoId,
+      topic: 'Node.js Streams',
+      template: 'tech-explainer',
+      status: 'done',
+      stages: ['tts'],
+      script: { scenes: [] },
+      script_fingerprint: scriptFingerprint,
+      created_at: new Date(Date.now() - 50000).toISOString(),
+    };
+    const { supabase, db } = createMockSupabase({
+      videos: [{ id: sampleVideoId, title: 'Mastering Node.js Streams', status: 'rendered', script_json: approvedScriptJson }],
+      yt_jobs: [finishedJob],
+    });
+
+    const res = await handleVoiceRequest(
+      new Request(`http://localhost:3000/api/videos/${sampleVideoId}/voice`, { method: 'POST', body: JSON.stringify({ stages: ['tts', 'visuals'] }) }),
+      sampleVideoId,
+      supabase,
+    );
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.jobId, finishedJobId, 'the same job, so its voicing is reused');
+    assert.deepEqual(json.addedStages, ['visuals']);
+    assert.equal(db.yt_jobs.length, 1, 'no new job');
+    assert.equal(db.yt_jobs[0].status, 'queued');
+    assert.deepEqual(db.yt_jobs[0].stages, ['tts', 'visuals']);
+  });
+
+  it('fixes documentary pacing on a new job for a paced style, and none for others', async () => {
+    const make = async (style: string) => {
+      const { supabase, db } = createMockSupabase({
+        videos: [{ id: sampleVideoId, title: 'Doc', style, status: 'script_review', script_json: approvedScriptJson }],
+        yt_jobs: [],
+      });
+      const res = await handleVoiceRequest(
+        new Request(`http://localhost:3000/api/videos/${sampleVideoId}/voice`, { method: 'POST', body: JSON.stringify({ stages: ['tts', 'visuals'] }) }),
+        sampleVideoId,
+        supabase,
+      );
+      assert.equal(res.status, 201);
+      return db.yt_jobs[0].script as Record<string, unknown>;
+    };
+    assert.deepEqual((await make('sport')).narration_pacing, { speed: 0.9, sentencePauseSec: 0.35, beatPauseSec: 1 });
+    assert.equal((await make('vox_explainer')).narration_pacing, undefined);
+  });
+
+  it('still creates a new job when the script changed since the finished job', async () => {
+    const { supabase, db } = createMockSupabase({
+      videos: [{ id: sampleVideoId, title: 'Mastering Node.js Streams', status: 'rendered', script_json: approvedScriptJson }],
+      yt_jobs: [
+        {
+          id: 'job-old-333',
+          video_id: sampleVideoId,
+          topic: 'Node.js Streams',
+          template: 'tech-explainer',
+          status: 'done',
+          stages: ['tts'],
+          script: { scenes: [] },
+          script_fingerprint: 'an-older-script',
+          created_at: new Date(Date.now() - 50000).toISOString(),
+        },
+      ],
+    });
+    const res = await handleVoiceRequest(
+      new Request(`http://localhost:3000/api/videos/${sampleVideoId}/voice`, { method: 'POST', body: JSON.stringify({ stages: ['tts', 'visuals'] }) }),
+      sampleVideoId,
+      supabase,
+    );
+    assert.equal(res.status, 201);
     assert.equal(db.yt_jobs.length, 2);
   });
 

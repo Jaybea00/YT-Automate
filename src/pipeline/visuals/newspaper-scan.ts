@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { searchWikimediaCommons } from '../providers/stock/wikimedia';
+import { resizeCommonsThumb, searchWikimediaCommons } from '../providers/stock/wikimedia';
 import type { LLMProvider, LlmImage, ProviderCallContext } from '../providers/types';
 import { isUnusableLicense } from '../utils/media-upload';
 import { motionDocument } from './motion/frame-renderer';
@@ -79,13 +79,15 @@ async function fetchImage(url: string, maxBytes = 4_000_000): Promise<LlmImage |
 
 /**
  * A larger rendition of a Wikimedia thumbnail (the page is zoomed into, so resolution matters).
- * Thumbnail URLs carry their width ("/800px-Name.jpg"); originals smaller than that are returned
- * as they are.
+ * Thumbnail URLs carry their width ("/960px-Name.jpg", or "/lossy-page1-960px-Name.tif.jpg" for
+ * TIFF scans), and Commons only serves its standard widths, so `width` should be one of them.
+ * Originals no wider than that are returned as they are (TIFFs already as a JPEG rendering, see
+ * the Wikimedia provider).
  */
-export function largerWikimediaImage(candidate: MediaCandidate, width = 2400): string {
+export function largerWikimediaImage(candidate: MediaCandidate, width = 3840): string {
   const thumb = candidate.thumbnailUrl;
-  if (/\/thumb\//.test(thumb) && /\/\d+px-[^/]+$/.test(thumb) && (candidate.width ?? 0) > width) {
-    return thumb.replace(/\/(\d+)px-([^/]+)$/, `/${width}px-$2`);
+  if (/\/thumb\//.test(thumb) && /[/-]\d+px-[^/]+$/.test(thumb) && (candidate.width ?? 0) > width) {
+    return resizeCommonsThumb(thumb, width);
   }
   return candidate.downloadUrl || thumb;
 }

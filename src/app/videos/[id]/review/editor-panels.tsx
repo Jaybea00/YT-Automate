@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { BeatVariant, HookOption, ScriptReview } from '@/lib/script/script-editor';
 import { scriptTextSignature, estimateSpeechSeconds } from '@/lib/script/script-quality';
+import { narrationPaceFactor } from '@/lib/styles/packs';
 
 const BEAT_PAUSE_SECONDS = 0.5;
 const button =
@@ -25,8 +26,10 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 // Runtime meter
 // --------------------------------------------------------------------------
 
-export function RuntimeMeter({ beats, targetMinutes }: { beats: ScriptBeat[]; targetMinutes?: number }) {
-  const seconds = beats.reduce((s, b) => s + estimateSpeechSeconds(b.text), 0) + beats.length * BEAT_PAUSE_SECONDS;
+export function RuntimeMeter({ beats, targetMinutes, style }: { beats: ScriptBeat[]; targetMinutes?: number; style?: string | null }) {
+  // Documentary-paced styles speak slower and breathe between sentences
+  const pace = narrationPaceFactor(style);
+  const seconds = beats.reduce((s, b) => s + estimateSpeechSeconds(b.text) / pace, 0) + beats.length * BEAT_PAUSE_SECONDS;
   if (!targetMinutes) {
     return <span className="text-xs text-zinc-400">≈ {formatTime(seconds)} runtime</span>;
   }
@@ -35,7 +38,7 @@ export function RuntimeMeter({ beats, targetMinutes }: { beats: ScriptBeat[]; ta
   const tone =
     ratio < 0.9 || ratio > 1.1 ? 'text-amber-300 bg-amber-500/10 border-amber-500/30' : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30';
   return (
-    <span className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${tone}`} title="Narration at ~2.3 words/sec plus a 0.5s pause between beats">
+    <span className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${tone}`} title={pace < 1 ? `Documentary pace: ~${(2.3 * pace).toFixed(1)} words/sec including sentence pauses, plus a pause between beats` : 'Narration at ~2.3 words/sec plus a 0.5s pause between beats'}>
       ⏱ {formatTime(seconds)} of {formatTime(target)} target ({Math.round(ratio * 100)}%)
     </span>
   );

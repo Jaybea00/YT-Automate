@@ -4,6 +4,7 @@ import type { LLMProvider, ProviderCallContext } from '../providers/types';
 import { MOODS, MOOD_DESCRIPTIONS, tracksForMood, type Mood, type MusicTrack } from './music-library';
 import type { Section } from './pacing';
 import { scriptSignature } from './sections';
+import { STYLE_PACKS } from '@/lib/styles/packs';
 
 /**
  * Music that follows the story: each section (chapter) gets a mood, read from what it says, and
@@ -16,18 +17,8 @@ export interface SavedMusicPlan {
   signature: string;
 }
 
-/** A fallback mood per video style, when the LLM can't be asked. */
-const STYLE_MOODS: Record<string, Mood> = {
-  true_crime_pov: 'tense',
-  cinematic: 'mysterious',
-  story_driven: 'mysterious',
-  tech: 'curious',
-  modernmba: 'curious',
-  comparison: 'curious',
-  listicle: 'curious',
-  eli5: 'curious',
-  vox_explainer: 'curious',
-};
+/** A fallback mood per video style (from its style pack), when the LLM can't be asked. */
+const STYLE_MOODS: Record<string, Mood> = Object.fromEntries(Object.values(STYLE_PACKS).map((p) => [p.id, p.fallbackMood]));
 
 const MoodSchema = z.object({ sections: z.array(z.object({ index: z.number(), mood: z.enum(MOODS) })) });
 

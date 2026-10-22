@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { STYLE_TEMPLATES, VideoStyle } from '@/lib/script/style-templates';
+import { STYLE_GROUP_LABELS, STYLE_PACKS, type StyleGroup, type VideoStyle } from '@/lib/styles/packs';
 
 type CreationMode = 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt';
 
@@ -29,7 +29,10 @@ export default function NewVideoPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const styleKeys = Object.keys(STYLE_TEMPLATES) as VideoStyle[];
+  const styleGroups = (Object.keys(STYLE_GROUP_LABELS) as StyleGroup[]).map((group) => ({
+    group,
+    packs: Object.values(STYLE_PACKS).filter((p) => p.group === group),
+  }));
 
   async function handleFileUpload(
     e: React.ChangeEvent<HTMLInputElement>,
@@ -383,45 +386,39 @@ export default function NewVideoPage() {
               <label className="block text-sm font-medium text-zinc-200 mb-3">
                 Narration Tone & Pacing Template
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {styleKeys.map((key) => {
-                  const tmpl = STYLE_TEMPLATES[key];
-                  const isSelected = style === key;
-                  return (
-                    <div
-                      key={key}
-                      onClick={() => setStyle(key)}
-                      className={`p-3.5 rounded-xl border cursor-pointer transition flex flex-col justify-between ${
-                        isSelected
-                          ? 'border-indigo-500 bg-indigo-500/10'
-                          : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="font-semibold text-xs text-zinc-100 flex items-center gap-1.5">
-                          <span>
-                            {key === 'tech' && '⚡'}
-                            {key === 'cinematic' && '🎬'}
-                            {key === 'modernmba' && '📊'}
-                            {key === 'listicle' && '📋'}
-                            {key === 'story_driven' && '📖'}
-                            {key === 'comparison' && '⚖️'}
-                            {key === 'eli5' && '💡'}
-                            {key === 'true_crime_pov' && '🔍'}
-                            {key === 'vox_explainer' && '🧭'}
-                          </span>
-                          <span>{tmpl.name || tmpl.label}</span>
-                        </span>
-                        {isSelected && (
-                          <span className="text-indigo-400 font-bold text-xs bg-indigo-500/20 px-1.5 py-0.5 rounded">✓</span>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-zinc-400 leading-relaxed">
-                        {tmpl.description}
-                      </p>
+              <div className="space-y-5">
+                {styleGroups.map(({ group, packs }) => (
+                  <div key={group}>
+                    <span className="block text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">{STYLE_GROUP_LABELS[group]}</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {packs.map((pack) => {
+                        const isSelected = style === pack.id;
+                        return (
+                          <div
+                            key={pack.id}
+                            onClick={() => setStyle(pack.id as VideoStyle)}
+                            className={`p-3.5 rounded-xl border cursor-pointer transition flex flex-col justify-between ${
+                              isSelected
+                                ? 'border-indigo-500 bg-indigo-500/10'
+                                : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="font-semibold text-xs text-zinc-100 flex items-center gap-1.5">
+                                <span>{pack.icon}</span>
+                                <span>{pack.name}</span>
+                              </span>
+                              {isSelected && (
+                                <span className="text-indigo-400 font-bold text-xs bg-indigo-500/20 px-1.5 py-0.5 rounded">✓</span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-zinc-400 leading-relaxed">{pack.description}</p>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
 

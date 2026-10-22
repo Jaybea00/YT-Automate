@@ -141,6 +141,11 @@ export async function downloadCandidateAsset(
     return downloadArchiveOrgAsset(candidate.downloadUrl, targetPath, ctx?.signal);
   }
 
+  if (candidate.provider === 'unsplash') {
+    const { downloadUnsplashAsset } = await import('../providers/stock/unsplash');
+    return downloadUnsplashAsset(candidate, targetPath, ctx?.signal);
+  }
+
   if (candidate.provider === 'nasa') {
     return downloadNasaAsset(candidate.downloadUrl, targetPath, ctx?.signal);
   }

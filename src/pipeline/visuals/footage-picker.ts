@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ShotPlan } from '@/lib/script/generate-script';
 import { searchArchiveOrg } from '../providers/stock/archive-org';
 import { searchWikimediaCommons } from '../providers/stock/wikimedia';
+import { searchUnsplash } from '../providers/stock/unsplash';
 import type { LLMProvider, LlmImage, ProviderCallContext, StockProvider } from '../providers/types';
 import { isUnusableLicense } from '../utils/media-upload';
 import type { MediaCandidate } from './types';
@@ -88,6 +89,9 @@ export function stockQueryFor(query: string): string {
   return nouns.slice(0, 5).join(' ') || query;
 }
 
+/** Stock shots with fewer candidates than this from the stock library also search Unsplash. */
+const UNSPLASH_WHEN_FEWER_THAN = 8;
+
 const candidateKey = (c: MediaCandidate) => String(c.pageUrl || c.downloadUrl || c.id);
 
 export interface GatherOptions {
@@ -99,6 +103,8 @@ export interface GatherOptions {
   maxCandidates?: number;
   /** Second attempt after nothing relevant was found: broad phrasings only. */
   broad?: boolean;
+  /** For the broad attempt: short searches for the main subject, suggested by the vision check. */
+  queries?: string[];
 }
 
 /**
@@ -147,12 +153,27 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
 
   if (options.broad) {
     const archive = shot.visual_type === 'archive';
+    // Subject searches from the vision check ("container ship canal") beat trimmed query words
+    const suggested = (options.queries ?? []).map((q) => q.trim()).filter((q) => q.length >= 3).slice(0, 2);
+    if (suggested.length > 0) {
+      const [wiki, photos, ...stockHits] = await Promise.all([
+        safe(searchWikimediaCommons(suggested[0], { limit: 6 })),
+        // Modern photos suit b-roll only, never a historical shot
+        archive ? Promise.resolve([]) : safe(searchUnsplash(suggested[0], { limit: 5 })),
+        ...suggested.map((q) => stock(q)),
+      ]);
+      // Photos go in early: the stock library alone can fill every slot, crowding them out
+      const fromStock = [...(stockHits[0] ?? []).slice(0, 5), ...photos.slice(0, 4), ...stockHits.flat(), ...photos];
+      add(archive ? [...wiki, ...fromStock] : [...fromStock, ...wiki]);
+      if (out.length > 0) return out;
+    }
     const q = broadQueryFor(shot.visual_query, archive);
-    const [wiki, stockHits] = await Promise.all([
+    const [wiki, stockHits, photos] = await Promise.all([
       safe(searchWikimediaCommons(q, { limit: 6 })),
       stock(broadQueryFor(shot.visual_query, false)),
+      archive ? Promise.resolve([]) : safe(searchUnsplash(broadQueryFor(shot.visual_query, false), { limit: 5 })),
     ]);
-    add(archive ? [...wiki, ...stockHits] : [...stockHits, ...wiki]);
+    add(archive ? [...wiki, ...stockHits] : [...stockHits.slice(0, 5), ...photos.slice(0, 4), ...stockHits, ...photos, ...wiki]);
     return out;
   }
 
@@ -172,6 +193,8 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
   } else {
     add(await stock(variants[0] ?? shot.visual_query), maxCandidates - 3);
     if (out.length < maxCandidates - 3) add(await stock(stockQueryFor(shot.visual_query)), maxCandidates - 3);
+    // Unsplash's hourly allowance is small: ask it only when the stock library came back thin
+    if (out.length < UNSPLASH_WHEN_FEWER_THAN) add(await safe(searchUnsplash(stockQueryFor(shot.visual_query), { limit: 5 })), maxCandidates - 2);
     add(await safe(searchWikimediaCommons(variants[1] ?? variants[0] ?? shot.visual_query, { limit: 4 })));
   }
   return out;
@@ -201,7 +224,16 @@ const RatingSchema = z.object({
       reason: z.string(),
     }),
   ),
+  /** Short stock searches for the shot's main subject, used when no candidate fits. */
+  search_suggestions: z.array(z.string()).optional(),
 });
+
+export interface VisionRating {
+  /** Best first. */
+  ranked: RankedCandidate[];
+  /** Short searches for the shot's main subject ("container ship canal"). */
+  suggestions: string[];
+}
 /** The most a candidate can score without showing the person, place, or event the shot names. */
 const OFF_SUBJECT_CAP = 5;
 
@@ -256,6 +288,20 @@ export async function visionRank(
   llm: LLMProvider,
   ctx: ProviderCallContext,
 ): Promise<RankedCandidate[]> {
+  return (await visionRate(shot, candidates, llm, ctx)).ranked;
+}
+
+/**
+ * visionRank plus the LLM's short searches for the shot's main subject, for a retry when nothing
+ * fits. Historical shots are judged on every detail; b-roll on its main visible subject, so an
+ * aerial container ship can illustrate "a massive ship squeezing through the canal walls".
+ */
+export async function visionRate(
+  shot: ShotPlan,
+  candidates: MediaCandidate[],
+  llm: LLMProvider,
+  ctx: ProviderCallContext,
+): Promise<VisionRating> {
   if (!llm.supportsVision) throw new Error(`${llm.id} cannot see images`);
   const thumbs = await Promise.all(candidates.map((c) => fetchThumbnail(c.thumbnailUrl)));
   const shown = candidates.map((c, i) => ({ c, img: thumbs[i] })).filter((x) => x.img);
@@ -268,7 +314,7 @@ export async function visionRank(
   const prompt = `You are picking footage for one shot of a documentary.
 Shot: ${shot.visual_query}
 Narration heard over it: "${shot.covers}"
-${historical ? 'This is a HISTORICAL shot: it must look like a real photo or film from the period described.' : 'This is b-roll: it should clearly show the subject, in a style that fits the narration.'}
+${historical ? 'This is a HISTORICAL shot: it must look like a real photo or film from the period described.' : 'This is b-roll: judge it by the main visible subject of the shot and narration (the ship, the city, the machine, the people). Details in the shot description such as camera angle, weather, lighting or the exact setting are a bonus, not a requirement. A named place is part of the main subject, never a detail: for "Panama Canal locks", another canal or port is the wrong place.'}
 ${era ? `The story is set in ${era}: anything visibly from another era (modern devices, cars, clothing, printed dates) is wrong.` : ''}
 ${shot.caption?.name ? `It is captioned "${shot.caption.name}", so it must show that person or place.` : ''}
 
@@ -276,19 +322,23 @@ The images, in order:
 ${shown.map(({ c }, i) => `${i + 1}. ${c.mediaType === 'video' ? 'a film' : 'a photo'} titled "${String(c.title ?? '').slice(0, 120)}"${c.mediaType === 'video' ? ' (its thumbnail; old films often open on a title card, so judge what the film shows from the thumbnail and title together)' : ''}`).join('\n')}
 
 Rate each of the ${shown.length} images below (numbered 1 to ${shown.length} in order) from 0 to 10 for how well it would show this shot to a viewer:
-10 = exactly the subject; 7 = clearly the right subject or place; 4 = loosely related; 0 = unrelated or misleading.
+${historical
+    ? '10 = exactly the subject; 7 = clearly the right subject or place; 4 = loosely related; 0 = unrelated or misleading.'
+    : '10 = the main subject with the described details; 7 = clearly shows the main subject, even if the angle, setting or details differ; 4 = related, but the main subject is not shown; 0 = unrelated or misleading.'}
 If the shot names a specific person, place, building, or event, an image that doesn't show it scores at most 5, even when it is from the right period.
 Score low for: the wrong era (modern scenes in a historical shot), a different named person or place, watermarks or large text overlays, posters, book covers, pages of text, collages, or maps.
 era_ok: false if the image is clearly from the wrong period for this shot.
-subject_match: false if the shot names a specific person, place, building, or event and the image does not show it; true otherwise.
-Return one rating per image with its index (1-based).`;
+subject_match: false if the shot names a specific person, place, building, or event and the image does not show it (or you can't tell that it does); true otherwise.
+Return one rating per image with its index (1-based).
+search_suggestions: two short stock-library searches (2 to 3 plain words each) for the shot's main visible subject, for example "container ship canal". Include a name or year only when the shot is about that specific person, place or period.`;
 
   const { data } = await llm.generateJson(
     { prompt, schema: RatingSchema, images: shown.map((x) => x.img!), maxTokens: 1500 },
     ctx,
   );
   const byIndex = new Map(data.ratings.map((r) => [r.index, r]));
-  return shown
+  const suggestions = (data.search_suggestions ?? []).filter((s): s is string => typeof s === 'string');
+  const ranked = shown
     .map(({ c }, i) => {
       const r = byIndex.get(i + 1);
       let score = r ? r.score : 0;
@@ -299,6 +349,7 @@ Return one rating per image with its index (1-based).`;
       return { candidate: c, score, reason: r?.reason };
     })
     .sort((a, b) => b.score - a.score);
+  return { ranked, suggestions };
 }
 
 export interface PickFootageOptions extends GatherOptions {
@@ -314,13 +365,12 @@ export async function pickFootage(options: PickFootageOptions): Promise<{ ranked
   const candidates = await gatherCandidates(options);
   if (options.llmProvider?.supportsVision && options.llmCtx && candidates.length > 0) {
     try {
-      const ranked = (await visionRank(options.shot, candidates, options.llmProvider, options.llmCtx)).filter(
-        (r) => r.score >= MIN_RELEVANCE,
-      );
+      const first = await visionRate(options.shot, candidates, options.llmProvider, options.llmCtx);
+      const ranked = first.ranked.filter((r) => r.score >= MIN_RELEVANCE);
       if (ranked.length > 0) return { ranked, checked: true };
-      // Nothing showed the shot: one more try with the broadest phrasing
+      // Nothing showed the shot: one more try, searching for its main subject
       const seen = new Set([...(options.exclude ?? []), ...candidates.map(candidateKey)]);
-      const broad = await gatherCandidates({ ...options, exclude: seen, broad: true });
+      const broad = await gatherCandidates({ ...options, exclude: seen, broad: true, queries: first.suggestions });
       if (broad.length === 0) return { ranked: [], checked: true };
       const second = await visionRank(options.shot, broad, options.llmProvider, options.llmCtx);
       return { ranked: second.filter((r) => r.score >= MIN_RELEVANCE), checked: true };

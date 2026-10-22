@@ -236,9 +236,11 @@ export default function PipelineProgressPage() {
   async function handleStartVoicing() {
     setIsTriggering(true);
     try {
+      // Voicing and visuals together, as the review page starts them (the route defaults to voicing only)
       const res = await fetch(`/api/videos/${id}/voice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stages: ['tts', 'visuals'] }),
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));

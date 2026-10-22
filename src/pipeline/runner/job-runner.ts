@@ -13,7 +13,7 @@ import { findExistingBeatUpload } from '../utils/media-upload';
 import { checkAssemblyGate } from '../assembly/gate';
 import {
   renderBeatScene,
-  concatenateSceneClips,
+  joinSceneClips,
   probeClipDurationSec,
   computeSceneStartOffsetsSec,
 } from '../assembly/assemble-beat';
@@ -37,6 +37,7 @@ import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
 import { mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
 import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visual';
+import { saveRenderedRhythm } from '../visuals/rhythm-report';
 import { themeForStyle } from '../visuals/motion/theme';
 import { withWritingModel, type ScriptBeat } from '@/lib/script/generate-script';
 
@@ -369,7 +370,12 @@ export class JobRunner {
             Number(videoRow?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
           )
         : new Map<number, BeatPacing>();
-      const sharedRenderState = { usedSources: new Set<string>(), motionCounter: { next: 0 } };
+      const archiveLookOn = videoRow?.script_json?.archive_look !== 'off';
+      const sharedRenderState = {
+        usedSources: new Set<string>(),
+        motionCounter: { next: 0 },
+        ...(archiveLookOn ? { archiveLook: { count: { next: 0 } } } : {}),
+      };
 
       const outputDir = path.join(this.baseOutputDir, 'visuals');
       let hasFailure = false;
@@ -420,6 +426,8 @@ export class JobRunner {
                     shots: plannedBeat!.shots,
                     theme: theme.name,
                     composer: 'shots-v2-paced',
+                    // Switching the archive texture re-renders composed beats
+                    archiveLook: archiveLookOn ? 'on' : 'off',
                     leadInSec: pacing.get(scene.scene_number)?.leadInSec ?? 0,
                     tailSec: pacing.get(scene.scene_number)?.tailSec ?? 0,
                   }
@@ -503,6 +511,17 @@ export class JobRunner {
       if (hasFailure) {
         await this.updateStageStatus('visuals', 'failed', 'One or more visual beat units failed');
         throw new Error('Visuals stage failed: one or more units failed');
+      }
+
+      if (job.video_id) {
+        // Report only: a failure here never fails the stage
+        const rhythm = await saveRenderedRhythm(this.supabase, job.video_id).catch((err) => {
+          console.warn('[Visuals] Rhythm report failed:', err instanceof Error ? err.message : err);
+          return null;
+        });
+        if (rhythm) {
+          console.log(`[Visuals] Visual rhythm ${rhythm.score}/100 (${rhythm.risk} slideshow risk): ${rhythm.issues.length} issue(s)`);
+        }
       }
 
       await this.updateStageStatus('visuals', 'done');
@@ -1182,13 +1201,15 @@ export class JobRunner {
       // The joined beats are a working file; mastering writes the delivery file at the end
       let programPath = path.join(tempDir, `program_${Date.now()}.mp4`);
       const workingFiles: string[] = [programPath];
-      await concatenateSceneClips(sceneClipPaths, programPath, tempDir, {
+      const joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
         transition,
       });
 
-      // Where each beat really starts in the finished video (captions and chapters use it)
+      // Where each beat really starts in the finished video (captions, chapters and sound use it).
+      // Timed from how the beats were actually joined: a crossfade that fell back to cuts must
+      // not leave the captions running ahead by half a second per beat.
       const clipDurationsSec = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
-      const beatStartMs = computeSceneStartOffsetsSec(clipDurationsSec, transition).map((s) =>
+      const beatStartMs = computeSceneStartOffsetsSec(clipDurationsSec, joined.overlapSec > 0 ? transition : 'cut').map((s) =>
         Math.round(s * 1000),
       );
 

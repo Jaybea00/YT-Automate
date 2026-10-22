@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import type { ComposedShot } from '../visuals/shot-composer';
 import { readSidecar } from '../visuals/shot-editor';
+import { diagramRevealTimes } from '../visuals/motion/diagram';
 import { ensureSoundLibrary, soundPath, type SoundId } from './sfx';
 
 const execFileAsync = promisify(execFile);
@@ -84,6 +85,14 @@ export function shotCues(
       for (let i = 0; i < n; i++) cues.push({ at: 0.4 + (span * i) / n, sound: 'tick', gain: 0.55 });
       break;
     }
+    case 'diagram': {
+      // Each step appears when the narration reaches it (the same times the page uses)
+      cues.push({ at: 0, sound: 'whoosh', gain: 0.35 });
+      if (plan.diagram) {
+        for (const at of diagramRevealTimes(plan.diagram, plan.covers ?? '', d)) cues.push({ at, sound: 'tick', gain: 0.55 });
+      }
+      break;
+    }
     case 'comparison':
       cues.push({ at: 0.1, sound: 'whoosh', gain: 0.45 }, { at: clampMin(d * 0.35, 1.2), sound: 'whoosh', gain: 0.5 }, { at: clampMin(d * 0.35, 1.2) + 0.3, sound: 'tick', gain: 0.5 });
       break;
@@ -116,8 +125,10 @@ export function shotCues(
       break;
     }
     default:
-      // Footage: only a name caption sliding in gets a sound
+      // Footage: only a name caption sliding in, or an annotation ring drawing on, gets a sound
       if (shot.note?.includes('caption:')) cues.push({ at: 0.35, sound: 'whoosh', gain: 0.4 });
+      // annotated-photo.ts: the ring draws from pushStart + 75% of the push
+      if (shot.note?.includes('annotated:')) cues.push({ at: Math.min(0.5, d * 0.1) + Math.min(1.8, d * 0.35) * 0.75, sound: 'whoosh', gain: 0.45 });
   }
   return cues.filter((c) => c.at <= d);
 }

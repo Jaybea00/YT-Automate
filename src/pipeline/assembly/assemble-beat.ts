@@ -399,6 +399,16 @@ export async function renderBeatScene(options: RenderBeatSceneOptions): Promise<
   }
 }
 
+/** joinSceneClips, returning only the output path. */
+export async function concatenateSceneClips(
+  sceneClipPaths: string[],
+  outputPath: string,
+  tempDir: string,
+  options?: ConcatenateSceneClipsOptions,
+): Promise<string> {
+  return (await joinSceneClips(sceneClipPaths, outputPath, tempDir, options)).outputPath;
+}
+
 export interface ConcatenateSceneClipsOptions {
   transition?: TransitionType;
   transitionDuration?: number;
@@ -432,18 +442,106 @@ export function computeSceneStartOffsetsSec(
   return starts;
 }
 
+/** Crossfades join at most this many clips in one ffmpeg command (each input is a full 1080p decoder). */
+export const XFADE_GROUP_SIZE = 6;
+
 /**
- * Concatenates scene clips into a single final MP4:
- * - If transition is 'crossfade' or 'wipe': renders multi-clip xfade with acrossfade audio.
- * - If transition is 'cut', 'dip_black', or 'dip_white': uses lossless -c copy concat demuxer
- *   (since dip transitions are cleanly embedded in the scene clips).
+ * Crossfades clips in one ffmpeg command: each clip overlaps the next by `transSec`, picture and
+ * sound together. Durations are the clips' own (probed by the caller).
  */
-export async function concatenateSceneClips(
+async function xfadeClips(clipPaths: string[], durations: number[], transSec: number, xfadeType: string, outputPath: string): Promise<void> {
+  if (clipPaths.length === 1) {
+    await fs.copyFile(clipPaths[0], outputPath);
+    return;
+  }
+  const vFilters: string[] = [];
+  const aFilters: string[] = [];
+  let prevV = '0:v';
+  let prevA = '0:a';
+  let offset = durations[0] - transSec;
+  for (let i = 1; i < clipPaths.length; i++) {
+    const last = i === clipPaths.length - 1;
+    const outV = last ? 'vout' : `vtrans${i}`;
+    const outA = last ? 'aout' : `atrans${i}`;
+    vFilters.push(`[${prevV}][${i}:v]xfade=transition=${xfadeType}:duration=${transSec.toFixed(3)}:offset=${offset.toFixed(3)}[${outV}]`);
+    aFilters.push(`[${prevA}][${i}:a]acrossfade=d=${transSec.toFixed(3)}[${outA}]`);
+    prevV = outV;
+    prevA = outA;
+    offset += durations[i] - transSec;
+  }
+  await execFileAsync(
+    getFfmpegPath(),
+    [
+      '-y',
+      ...clipPaths.flatMap((p) => ['-i', p]),
+      '-filter_complex',
+      [...vFilters, ...aFilters].join(';'),
+      '-map', '[vout]',
+      '-map', '[aout]',
+      ...SCENE_VIDEO_ENCODE,
+      '-r', '30',
+      ...SCENE_AUDIO_ENCODE,
+      outputPath,
+    ],
+    { maxBuffer: 16 * 1024 * 1024 },
+  );
+}
+
+/**
+ * Crossfades any number of clips in groups of XFADE_GROUP_SIZE, then crossfades the groups the
+ * same way. Every clip still overlaps the next by `transSec` at the same moment as in a single
+ * pass, but only a handful of decoders run at once (one 29-clip command ran an 8 GB machine out
+ * of memory, and the video fell back to cuts while captions assumed crossfades).
+ */
+async function xfadeInGroups(
+  clipPaths: string[],
+  durations: number[],
+  transSec: number,
+  xfadeType: string,
+  outputPath: string,
+  tempDir: string,
+  level = 0,
+): Promise<void> {
+  if (clipPaths.length <= XFADE_GROUP_SIZE) {
+    await xfadeClips(clipPaths, durations, transSec, xfadeType, outputPath);
+    return;
+  }
+  const groupPaths: string[] = [];
+  const groupDurations: number[] = [];
+  try {
+    for (let start = 0; start < clipPaths.length; start += XFADE_GROUP_SIZE) {
+      const paths = clipPaths.slice(start, start + XFADE_GROUP_SIZE);
+      const durs = durations.slice(start, start + XFADE_GROUP_SIZE);
+      const groupPath = path.join(tempDir, `xfade_l${level}_g${groupPaths.length}.mp4`);
+      await xfadeClips(paths, durs, transSec, xfadeType, groupPath);
+      groupPaths.push(groupPath);
+      groupDurations.push(durs.reduce((a, b) => a + b, 0) - (durs.length - 1) * transSec);
+    }
+    await xfadeInGroups(groupPaths, groupDurations, transSec, xfadeType, outputPath, tempDir, level + 1);
+  } finally {
+    await Promise.all(groupPaths.map((p) => fs.unlink(p).catch(() => {})));
+  }
+}
+
+export interface JoinedScenes {
+  outputPath: string;
+  /** How much each clip actually overlaps the next: the crossfade length, or 0 when joined with cuts. */
+  overlapSec: number;
+}
+
+/**
+ * Joins scene clips into one MP4 and reports how, so captions, chapters and sound are timed from
+ * what really happened:
+ * - crossfade / wipe: clips overlap (in groups, see xfadeInGroups); if that fails, they are
+ *   joined with cuts instead and `overlapSec` is 0
+ * - cut, dip_black, dip_white: lossless stream-copy concat (dips are already in the clips)
+ */
+export async function joinSceneClips(
   sceneClipPaths: string[],
   outputPath: string,
   tempDir: string,
   options?: ConcatenateSceneClipsOptions,
-): Promise<string> {
+): Promise<JoinedScenes> {
   if (!sceneClipPaths || sceneClipPaths.length === 0) {
     throw new Error('No scene clips provided for concatenation');
   }
@@ -453,74 +551,20 @@ export async function concatenateSceneClips(
 
   if (sceneClipPaths.length === 1) {
     await fs.copyFile(sceneClipPaths[0], outputPath);
-    return outputPath;
+    return { outputPath, overlapSec: 0 };
   }
 
   const transition = options?.transition || 'cut';
 
   if (transition === 'crossfade' || transition === 'wipe') {
-    const ffmpegBin = getFfmpegPath();
-    const xfadeType = transition === 'wipe' ? 'wipeleft' : 'fade';
-
-    // Probe durations for accurate offset calculation
-    const durations = await Promise.all(
-      sceneClipPaths.map((p) => probeClipDurationSec(p)),
-    );
-
+    const durations = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
     const transSec = resolveTransitionSeconds(durations, options?.transitionDuration);
-
-    const inputArgs: string[] = [];
-    sceneClipPaths.forEach((p) => {
-      inputArgs.push('-i', p);
-    });
-
-    const vFilters: string[] = [];
-    const aFilters: string[] = [];
-    let prevV = '0:v';
-    let prevA = '0:a';
-    let currentOffset = durations[0] - transSec;
-
-    for (let i = 1; i < sceneClipPaths.length; i++) {
-      const nextV = `${i}:v`;
-      const nextA = `${i}:a`;
-      const outV = i === sceneClipPaths.length - 1 ? 'vout' : `vtrans${i}`;
-      const outA = i === sceneClipPaths.length - 1 ? 'aout' : `atrans${i}`;
-
-      vFilters.push(
-        `[${prevV}][${nextV}]xfade=transition=${xfadeType}:duration=${transSec.toFixed(3)}:offset=${currentOffset.toFixed(3)}[${outV}]`,
-      );
-      aFilters.push(
-        `[${prevA}][${nextA}]acrossfade=d=${transSec.toFixed(3)}[${outA}]`,
-      );
-
-      prevV = outV;
-      prevA = outA;
-      currentOffset = currentOffset + durations[i] - transSec;
-    }
-
-    const filterComplex = [...vFilters, ...aFilters].join(';');
-
-    const args = [
-      '-y',
-      ...inputArgs,
-      '-filter_complex',
-      filterComplex,
-      '-map',
-      '[vout]',
-      '-map',
-      '[aout]',
-      ...SCENE_VIDEO_ENCODE,
-      '-r',
-      '30',
-      ...SCENE_AUDIO_ENCODE,
-      outputPath,
-    ];
-
     try {
-      await execFileAsync(ffmpegBin, args);
-      return outputPath;
+      await xfadeInGroups(sceneClipPaths, durations, transSec, transition === 'wipe' ? 'wipeleft' : 'fade', outputPath, tempDir);
+      return { outputPath, overlapSec: transSec };
     } catch (err) {
-      console.warn('xfade concatenation failed, falling back to concat demuxer:', err);
+      const detail = err instanceof Error ? err.message.slice(-600) : String(err);
+      console.warn(`[Assembly] ${transition} join failed; joining with cuts instead (captions and chapters are timed for cuts): ${detail}`);
     }
   }
 
@@ -549,7 +593,7 @@ export async function concatenateSceneClips(
   try {
     await execFileAsync(ffmpegBin, concatArgs);
     await fs.unlink(concatListPath).catch(() => {});
-    return outputPath;
+    return { outputPath, overlapSec: 0 };
   } catch (err) {
     throw new Error(
       `FFmpeg concat demuxer failed: ${
