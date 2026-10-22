@@ -131,6 +131,54 @@ describe('Vision relevance check', () => {
     assert.equal(r.score, 5);
   });
 
+  it('judges b-roll by its main subject, but keeps historical shots strict', async () => {
+    mockNetwork();
+    const prompts: string[] = [];
+    const llm = mockVision([{ index: 1, score: 7, era_ok: true, subject_match: true, reason: 'container ship' }], prompts);
+    await visionRank(shot({ visual_type: 'stock', visual_query: 'massive container ship tight canal walls' }), [candidate('x')], llm, { apiKey: 'k' });
+    await visionRank(shot({ visual_type: 'archive', visual_query: 'Gatun Locks construction 1912' }), [candidate('y')], llm, { apiKey: 'k' });
+    assert.match(prompts[0], /main visible subject/);
+    assert.match(prompts[0], /7 = clearly shows the main subject, even if the angle, setting or details differ/);
+    assert.match(prompts[1], /HISTORICAL shot/);
+    assert.doesNotMatch(prompts[1], /are a bonus, not a requirement/);
+    assert.match(prompts[1], /named specific|names a specific person, place, building, or event/, 'named subjects stay capped');
+  });
+
+  it('retries with the subject searches the vision check suggests', async () => {
+    const urls = mockNetwork();
+    let calls = 0;
+    const llm: LLMProvider = {
+      kind: 'llm',
+      id: 'mock-vision',
+      supportsVision: true,
+      generateText: async () => ({ text: '', usage: {} }),
+      generateJson: async () => {
+        calls++;
+        // First rating: nothing fits, with suggestions. Second: the suggested search fits.
+        const data = calls === 1
+          ? { ratings: [{ index: 1, score: 3, era_ok: true, subject_match: true, reason: 'no ship' }], search_suggestions: ['container ship canal', 'cargo ship lock'] }
+          : { ratings: [{ index: 1, score: 8, era_ok: true, subject_match: true, reason: 'a ship in a canal' }] };
+        return { data: data as never, usage: {} };
+      },
+    };
+    const wikiHit = (id: string) => ({ pageid: id.length, title: `File:${id}.jpg`, imageinfo: [{ url: `https://img.test/${id}.jpg`, thumburl: `https://img.test/thumb/${id}.jpg`, mime: 'image/jpeg', width: 2000, height: 1200 }] });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      urls.push(url);
+      if (/thumb|\.jpg/.test(url)) return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), { headers: { 'content-type': 'image/jpeg' } });
+      const id = /container\+ship\+canal|container%20ship%20canal/.test(url) ? 'canal_ship' : 'waves';
+      return new Response(JSON.stringify({ query: { pages: { 1: wikiHit(id) } } }), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const picked = await pickFootage({
+      shot: shot({ visual_type: 'stock', visual_query: 'massive post panamax container ship tight squeeze canal walls concrete' }),
+      llmProvider: llm,
+      llmCtx: { apiKey: 'k' },
+    });
+    assert.ok(urls.some((u) => /gsrsearch=container(\+|%20)ship(\+|%20)canal/.test(u)), 'the suggested subject is searched');
+    assert.equal(picked.ranked[0]?.candidate.title, 'canal_ship.jpg');
+  });
+
   it('shows the narration as type when nothing relevant is found, never an unrelated clip', async () => {
     mockNetwork();
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'picker-'));
@@ -165,8 +213,15 @@ describe('Newspaper scans', () => {
       thumbnailUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/P.jpg/800px-P.jpg',
       downloadUrl: 'https://upload.wikimedia.org/wikipedia/commons/3/3d/P.jpg',
     });
-    assert.match(largerWikimediaImage(c), /\/2400px-P\.jpg$/);
+    assert.match(largerWikimediaImage(c), /\/3840px-P\.jpg$/, 'Commons only serves standard widths');
+    assert.equal(largerWikimediaImage({ ...c, width: 3000 }), c.downloadUrl, 'originals no wider than 3840 are used as they are');
     assert.equal(largerWikimediaImage({ ...c, width: 639 }), c.downloadUrl, 'small originals are used as they are');
+    const tiff = candidate('t', {
+      width: 6000,
+      thumbnailUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/T.tif/lossy-page1-960px-T.tif.jpg',
+      downloadUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/T.tif/lossy-page1-1920px-T.tif.jpg',
+    });
+    assert.match(largerWikimediaImage(tiff), /\/lossy-page1-3840px-T\.tif\.jpg$/, 'TIFF scans use the JPEG rendering');
   });
 
   it('never uses an unverified scan', async () => {

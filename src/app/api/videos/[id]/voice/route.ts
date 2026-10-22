@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { beatsToScenes } from '@/pipeline/utils/mapper';
+import { stylePack } from '@/lib/styles/packs';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkAssemblyGate } from '@/pipeline/assembly/gate';
@@ -221,7 +222,7 @@ export async function handleVoiceRequest(
     // 5. Check latest job for this video
     const { data: latestJob } = await supabase
       .from('yt_jobs')
-      .select('id, status, created_at, stages, script')
+      .select('id, status, created_at, stages, script, script_fingerprint')
       .eq('video_id', id)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -312,6 +313,48 @@ export async function handleVoiceRequest(
       );
     }
 
+    // Case B2: Latest job finished, but without some requested stages (e.g. it only voiced), and
+    // the script and voice are unchanged -> add the missing stages to that SAME job, so the next
+    // stage uses its completed voicing instead of a new job re-synthesizing every beat
+    if (latestJob && latestJob.status === 'done') {
+      const done = (latestJob.stages ?? []) as string[];
+      const missing = targetStages.filter((s) => !done.includes(s));
+      const { scriptFingerprint: currentFingerprint } = beatsToScenes(beats);
+      const previous = (latestJob.script ?? {}) as Record<string, unknown>;
+      const sameVoice =
+        (targetNarratorId === undefined || targetNarratorId === previous.narrator_id) &&
+        (targetVoiceId === undefined || targetVoiceId === previous.voice_id) &&
+        (targetTtsProviderConfigId === undefined || targetTtsProviderConfigId === previous.tts_provider_config_id);
+      if (missing.length > 0 && latestJob.script_fingerprint === currentFingerprint && sameVoice) {
+        const { error: extendError } = await supabase
+          .from('yt_jobs')
+          .update({
+            status: 'queued',
+            error: null,
+            stages: [...done, ...missing],
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', latestJob.id);
+
+        if (extendError) {
+          return NextResponse.json({ error: `Failed to extend job: ${extendError.message}` }, { status: 500 });
+        }
+
+        await supabase.from('videos').update({ status: 'voicing', error_message: null }).eq('id', id);
+
+        return NextResponse.json(
+          {
+            jobId: latestJob.id,
+            status: 'queued',
+            resumed: true,
+            addedStages: missing,
+            message: `Finished job extended with ${missing.join(', ')}; its completed stages are reused.`,
+          },
+          { status: 200 },
+        );
+      }
+    }
+
     // Case C: No job exists OR latest job was 'done' -> create a new job
     const { scenes, scriptFingerprint } = beatsToScenes(beats);
 
@@ -320,6 +363,9 @@ export async function handleVoiceRequest(
       visual_style: video.style,
       scenes,
     };
+    // Documentary pacing is fixed on the job, so the video keeps one pace even if the style changes
+    const pacing = stylePack(video.style)?.narration;
+    if (pacing) scriptData.narration_pacing = pacing;
     if (targetTtsProviderConfigId) {
       scriptData.tts_provider_config_id = targetTtsProviderConfigId;
     }

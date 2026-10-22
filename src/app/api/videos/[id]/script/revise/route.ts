@@ -61,7 +61,7 @@ export async function POST(
       // Revisions keep writing from the same researched facts
       research: video.script_json.research ?? null,
     });
-    const revisedScript = await planShots(supabase, rewritten, video.topic);
+    const revisedScript = await planShots(supabase, rewritten, video.topic, { style: video.style });
 
     // 3. Update script_json with new result (keeping stored render settings); status stays 'script_review'
     const { data: updatedVideo, error: updateError } = await supabase

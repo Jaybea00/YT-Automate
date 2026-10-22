@@ -5,6 +5,8 @@ import { overlayCaption } from './clips';
 import { normalizeLicenseType } from '../utils/media-upload';
 import { renderMapClip } from './maps/map-clip';
 import { documentZoomTemplate, findNewspaperScan, largerWikimediaImage } from './newspaper-scan';
+import { diagramRevealTimes, diagramTemplate } from './motion/diagram';
+import { fetchCommonsFile } from '../providers/stock/wikimedia';
 import { resolvePlaces } from './maps/places';
 import { FPS, FRAME_HEIGHT, FRAME_WIDTH, renderMotionClip } from './motion/frame-renderer';
 import type { MotionTheme } from './motion/theme';
@@ -79,14 +81,15 @@ const renderNewspaper: TypedShotRenderer = async (shot, slot, clipPath, ctx) => 
     try {
       const { candidate, box } = scan;
       const url = largerWikimediaImage(candidate);
-      const res = await fetch(url, { headers: { 'User-Agent': 'YT-Automation/1.0' }, signal: AbortSignal.timeout(60000) });
+      const res = await fetchCommonsFile(url, AbortSignal.timeout(60000));
       const bytes = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
       if (!bytes || bytes.length > MAX_SCAN_BYTES) throw new Error(`scan download failed (${res.status})`);
       const mime = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0];
       // The rendition keeps the original's aspect ratio
       const origW = candidate.width || 1000;
       const origH = candidate.height || 1400;
-      const width = /\/(\d+)px-[^/]+$/.test(url) ? Number(url.match(/\/(\d+)px-[^/]+$/)![1]) : origW;
+      const thumbWidth = url.match(/[/-](\d+)px-[^/]+$/);
+      const width = thumbWidth ? Number(thumbWidth[1]) : origW;
       const height = Math.round((origH * width) / origW);
       await renderMotionClip({
         html: documentZoomTemplate(ctx.theme, { imageUrl: `data:${mime};base64,${bytes.toString('base64')}`, width, height }, box, paper, 'Wikimedia Commons'),
@@ -135,7 +138,17 @@ const renderMap: TypedShotRenderer = async (shot, slot, clipPath, ctx) => {
 };
 
 /** Renderers for every motion-graphic shot type, matched to the video's theme. */
+/** Diagrams reveal each step as the narration reaches it, so they need the shot's length and words. */
+const renderDiagram: TypedShotRenderer = async (shot, slot, clipPath, ctx) => {
+  if (!shot.diagram) throw new Error('diagram shot has no spec');
+  const durationSec = slot.frames / FPS;
+  const times = diagramRevealTimes(shot.diagram, shot.covers, durationSec);
+  await renderMotionClip({ html: diagramTemplate(ctx.theme, shot.diagram, times), durationSec, outputPath: clipPath, browser: ctx.browser });
+  return { clipPath, renderedType: 'diagram', license: 'own_work', licenseSource: 'generated' };
+};
+
 export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
+  diagram: renderDiagram,
   geo_map: renderMap,
   chart: renderGraphic,
   stat: renderGraphic,

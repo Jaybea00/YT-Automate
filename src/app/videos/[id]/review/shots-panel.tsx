@@ -3,6 +3,8 @@
 import React from 'react';
 import type { ScriptBeat, ShotPlan, ShotType } from '@/lib/script/generate-script';
 import { SPEECH_WORDS_PER_SECOND } from '@/lib/script/script-quality';
+import { analyzeRhythm, planToRhythmShots } from '@/lib/script/visual-rhythm';
+import { stylePack } from '@/lib/styles/packs';
 
 const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; chip: string }> = {
   stock: { label: 'Stock', icon: '🎬', bar: 'bg-zinc-600', chip: 'text-zinc-300 border-zinc-700 bg-zinc-800/60' },
@@ -17,6 +19,7 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   comparison: { label: 'Compare', icon: '⚖️', bar: 'bg-lime-500/80', chip: 'text-lime-300 border-lime-500/30 bg-lime-500/10' },
   title: { label: 'Title', icon: '🔖', bar: 'bg-rose-500/80', chip: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
   kinetic_text: { label: 'Kinetic', icon: '🔤', bar: 'bg-violet-500/80', chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10' },
+  diagram: { label: 'Diagram', icon: '🧩', bar: 'bg-sky-400/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },
 };
 
 const shotSeconds = (shot: ShotPlan) => shot.word_count / SPEECH_WORDS_PER_SECOND;
@@ -37,6 +40,13 @@ function describeSpec(shot: ShotPlan): string {
   }
   if (shot.title_card) return `${shot.title_card.kicker ? `${shot.title_card.kicker} · ` : ''}${shot.title_card.text}`;
   if (shot.kinetic) return `"${shot.kinetic.phrase}"`;
+  if (shot.diagram) {
+    const steps = shot.diagram.steps.map((s) => s.label).join(shot.diagram.kind === 'breakdown' ? ' · ' : ' → ');
+    return `${shot.diagram.kind}${shot.diagram.title ? ` "${shot.diagram.title}"` : ''}: ${shot.diagram.center ? `${shot.diagram.center}: ` : ''}${steps}`;
+  }
+  if (shot.annotation) {
+    return `${shot.visual_query} · circle "${shot.annotation.target}" as ${shot.annotation.label}${shot.annotation.detail ? `, ${shot.annotation.detail}` : ''}`;
+  }
   if (shot.caption) return `${shot.visual_query} · caption: ${shot.caption.name}${shot.caption.detail ? `, ${shot.caption.detail}` : ''}`;
   return shot.visual_query;
 }
@@ -86,8 +96,11 @@ export function ShotPlanSummary({
   hasUnsavedEdits,
   onPlanMissing,
   onReplanAll,
+  style,
 }: {
   beats: ScriptBeat[];
+  /** The video's style, whose pack sets the graphics limit. */
+  style?: string | null;
   isPlanning: boolean;
   hasUnsavedEdits: boolean;
   onPlanMissing: () => void;
@@ -100,6 +113,10 @@ export function ShotPlanSummary({
     acc[s.visual_type] = (acc[s.visual_type] ?? 0) + 1;
     return acc;
   }, {});
+  // Live, so it follows edits; the planner already repaired what it could
+  const rhythm = shots.length ? analyzeRhythm(planToRhythmShots(beats), 'plan', [], stylePack(style)?.maxGraphicsShare) : null;
+  const rhythmTone =
+    rhythm?.risk === 'low' ? 'text-emerald-300' : rhythm?.risk === 'medium' ? 'text-amber-300' : 'text-red-300';
 
   const button =
     'px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed';
@@ -147,6 +164,23 @@ export function ShotPlanSummary({
             </span>
           ))}
         </div>
+      )}
+      {rhythm && (
+        <details className="text-zinc-400">
+          <summary className="cursor-pointer">
+            🎞️ Visual rhythm <span className={`font-semibold ${rhythmTone}`}>{rhythm.score}/100</span>
+            {' · '}
+            {rhythm.issues.length ? `${rhythm.issues.length} repetitive stretch${rhythm.issues.length === 1 ? '' : 'es'}` : 'varied throughout'}
+            {` · graphics ${Math.round(rhythm.graphicsShare * 100)}% of the video`}
+          </summary>
+          {rhythm.issues.length > 0 && (
+            <ul className="mt-1.5 space-y-1 list-disc pl-4 text-amber-200/90">
+              {rhythm.issues.map((issue, i) => (
+                <li key={i}>{issue.message}</li>
+              ))}
+            </ul>
+          )}
+        </details>
       )}
       {hasUnsavedEdits && missing > 0 && (
         <p className="text-zinc-500">Save your beat edits before planning shots.</p>

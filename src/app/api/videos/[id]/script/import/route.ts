@@ -65,7 +65,7 @@ export async function POST(
         topic: video.topic,
         style: video.style,
       });
-      newScript = await planShots(supabase, segmented, video.topic || video.title);
+      newScript = await planShots(supabase, segmented, video.topic || video.title, { style: video.style });
     } else {
       // mode === 'raw_paragraphs'
       if (!rawText || !rawText.trim()) {

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
 import { ShotEditor } from './shot-editor';
+import { RhythmPanel } from './rhythm-panel';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
 
 interface VisualsPageProps {
@@ -119,6 +120,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [captionPreset, setCaptionPreset] = useState<string>('none');
   // The style's colour grade at mastering ('auto') or none ('off', faster to render)
   const [filmLook, setFilmLook] = useState<'auto' | 'off'>('auto');
+  const [archiveLook, setArchiveLook] = useState<'auto' | 'off'>('auto');
 
   // Batch Uploader state
   const [showBatchUploader, setShowBatchUploader] = useState(false);
@@ -216,6 +218,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     beatPauseSeconds?: number;
     captionPreset?: string;
     look?: 'auto' | 'off';
+    archiveLook?: 'auto' | 'off';
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
     const nextTrack = updates.track !== undefined ? updates.track : bgmTrack;
@@ -231,6 +234,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextCaptionPreset =
       updates.captionPreset !== undefined ? updates.captionPreset : captionPreset;
     const nextLook = updates.look !== undefined ? updates.look : filmLook;
+    const nextArchiveLook = updates.archiveLook !== undefined ? updates.archiveLook : archiveLook;
 
     setBgmEnabled(nextEnabled);
     setBgmTrack(nextTrack);
@@ -244,6 +248,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     setBeatPauseSeconds(nextBeatPause);
     setCaptionPreset(nextCaptionPreset);
     setFilmLook(nextLook);
+    setArchiveLook(nextArchiveLook);
 
     try {
       setSavingBgm(true);
@@ -263,6 +268,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           beatPauseSeconds: nextBeatPause,
           captionPreset: nextCaptionPreset,
           look: nextLook,
+          archiveLook: nextArchiveLook,
         }),
       });
     } catch (err) {
@@ -344,6 +350,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           }
           if (bData.look === 'off' || bData.look === 'auto') {
             setFilmLook(bData.look);
+          }
+          if (bData.archiveLook === 'off' || bData.archiveLook === 'auto') {
+            setArchiveLook(bData.archiveLook);
           }
           if (bData.captionPreset) {
             setCaptionPreset(bData.captionPreset);
@@ -1208,6 +1217,37 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 ))}
               </div>
             </div>
+
+            {/* Archive Texture Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-4">
+              <div>
+                <span className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>📜</span> Archive Texture
+                </span>
+                <p className="text-[11px] text-zinc-400">
+                  Old photos become prints (border, tilt, shadow, stacked on the previous one); old film gets a gentle projector wobble and grain, with the occasional light leak. Modern stock footage is never touched. Applies to beats rendered after the change.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-w-md">
+                {[
+                  { id: 'auto' as const, label: 'On', desc: 'Archive feels deliberate (recommended)' },
+                  { id: 'off' as const, label: 'Off', desc: 'Archive shown as is, faster' },
+                ].map((option) => (
+                  <div
+                    key={option.id}
+                    onClick={() => updateBgmConfig({ archiveLook: option.id })}
+                    className={`p-2.5 rounded-xl border flex flex-col transition cursor-pointer ${
+                      archiveLook === option.id
+                        ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-md shadow-indigo-950'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                    }`}
+                  >
+                    <span className="text-xs font-medium leading-tight">{option.label}</span>
+                    <span className="text-[10px] text-zinc-400 mt-1">{option.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1219,6 +1259,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             void fetchVideoData();
           }}
         />
+
+        <RhythmPanel videoId={id} refreshKey={cacheBuster} />
 
         {/* Beat Cards List */}
         <div className="space-y-6">

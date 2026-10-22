@@ -4,6 +4,7 @@ import { resolveForStage } from '@/pipeline/providers/registry';
 import { getRetryDecision } from '@/pipeline/providers/errors';
 import type { LLMProvider, ProviderCallContext } from '@/pipeline/providers/types';
 import { STYLE_TEMPLATES, VideoStyle } from './style-templates';
+import { narrationPaceFactor } from '@/lib/styles/packs';
 import {
   TARGET_WORDS_PER_BEAT,
   applyResearchToBeats,
@@ -14,6 +15,7 @@ import {
 } from './script-quality';
 import type { ResearchDossier } from '@/lib/research/types';
 import type { ScriptReview } from './script-editor';
+import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
 
 export const SHOT_TYPES = [
@@ -29,8 +31,19 @@ export const SHOT_TYPES = [
   'comparison',
   'title',
   'kinetic_text',
+  'diagram',
 ] as const;
 export type ShotType = (typeof SHOT_TYPES)[number];
+
+/** Diagram limits, shared by the shot planner and the renderer. */
+export const DIAGRAM_LIMITS = {
+  minSteps: 2,
+  maxSteps: 5,
+  /** Seconds of narration each step needs to be read. */
+  secondsPerStep: 1.6,
+  maxLabelWords: 5,
+  maxDetailWords: 10,
+} as const;
 
 /**
  * One visual within a beat. Shots split the beat's narration into consecutive word ranges
@@ -57,8 +70,20 @@ export interface ShotPlan {
   title_card?: { text: string; kicker?: string };
   /** Words of the narration set as animated type, with a few emphasised. */
   kinetic?: { phrase: string; emphasis: string[] };
+  /** "How it works": steps in order (process), in a loop (cycle), or parts of one thing (breakdown, around `center`). */
+  diagram?: {
+    kind: 'process' | 'cycle' | 'breakdown';
+    title?: string;
+    center?: string;
+    steps: Array<{ label: string; detail?: string }>;
+  };
   /** Lower-third name caption over footage (stock/archive) of a named person or place. */
   caption?: { name: string; detail?: string };
+  /**
+   * On a photo (stock/archive): circle one part of it and label it, Vox style. `target` tells
+   * the vision model what to find ("the lock gates"); `label`/`detail` are shown.
+   */
+  annotation?: { target: string; label: string; detail?: string };
 }
 
 export interface ScriptBeat {
@@ -82,6 +107,8 @@ export interface GeneratedScript {
   research?: ResearchDossier;
   /** Latest script-doctor review, saved from the review page. */
   review?: ScriptReview;
+  /** Visual rhythm (slideshow risk) of the shot plan, and of the rendered visuals once made. */
+  rhythm?: { plan?: RhythmReport; render?: RhythmReport };
 }
 
 export const ScriptBeatSchema = z.object({
@@ -149,7 +176,7 @@ function researchSection(input: GenerateScriptInput): string {
 }
 
 export function buildUserPrompt(input: GenerateScriptInput): string {
-  const budget = wordBudgetForMinutes(input.targetMinutes);
+  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style));
   return input.revisionOf
     ? `Revise this existing script for the topic "${input.topic}" (target ~${input.targetMinutes} minutes).
 Requested changes: ${input.revisionOf.feedback}
@@ -256,7 +283,7 @@ export async function generateScript(
     return withResearch(best);
   }
 
-  const budget = wordBudgetForMinutes(input.targetMinutes);
+  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style));
   const distance = (s: GeneratedScript) => Math.abs(countScriptWords(s.beats) - budget.target);
   const inBudget = (s: GeneratedScript) => {
     const words = countScriptWords(s.beats);

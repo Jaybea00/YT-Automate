@@ -48,8 +48,12 @@ export function estimateSpeechSeconds(text: string): number {
   return Math.max(1, Math.round((countWords(text) / SPEECH_WORDS_PER_SECOND) * 10) / 10);
 }
 
-export function wordBudgetForMinutes(targetMinutes: number): WordBudget {
-  const target = Math.round(targetMinutes * 60 * SPEECH_WORDS_PER_SECOND);
+/**
+ * Words for a target runtime. `paceFactor` (below 1 for slower, documentary narration; see
+ * narrationPaceFactor in the style packs) keeps a paced style's video at its target length.
+ */
+export function wordBudgetForMinutes(targetMinutes: number, paceFactor = 1): WordBudget {
+  const target = Math.round(targetMinutes * 60 * SPEECH_WORDS_PER_SECOND * paceFactor);
   return {
     target,
     min: Math.round(target * (1 - LENGTH_TOLERANCE)),

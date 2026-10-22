@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import { BLUR_PAD_VIDEO_HOLD_FC } from '../assembly/assemble-beat';
 import { FPS } from './motion/frame-renderer';
+import { GATE_WEAVE_FILTER, printComposeFilter, textureOverlayFilter, type ArchiveTreatment } from './archive-look';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,15 +45,42 @@ async function stillClip(inputPath: string, frames: number, outputPath: string, 
   await execFileAsync(getFfmpegPath(), ['-y', '-i', inputPath, '-filter_complex', filter, '-map', '[v]', '-frames:v', String(frames), ...ENCODE, outputPath]);
 }
 
+/**
+ * An old photo as a print (see archive-look.ts): bordered, tilted, shadowed, over the previous
+ * print when there is one, then the camera move, grain and an optional light leak.
+ */
+async function archiveStillClip(inputPath: string, frames: number, outputPath: string, motion: StillMotion, look: ArchiveTreatment): Promise<void> {
+  const inputs = ['-i', inputPath];
+  if (look.underPath) inputs.push('-i', look.underPath);
+  // Input numbers: the photo, the print beneath (if any), then the grain
+  const grainIdx = look.underPath ? 2 : 1;
+  inputs.push('-stream_loop', '-1', '-i', look.textures.grain);
+  const filter =
+    `${printComposeFilter(look.tilt, Boolean(look.underPath))};` +
+    `[print]${kenBurnsFilter(motion, frames)},setsar=1[kb];` +
+    `${textureOverlayFilter('kb', 'tx', grainIdx, look.leak)};` +
+    '[tx]scale=out_range=tv,format=yuv420p[v]';
+  await execFileAsync(getFfmpegPath(), ['-y', ...inputs, '-filter_complex', filter, '-map', '[v]', '-frames:v', String(frames), ...ENCODE, outputPath]);
+}
+
 /** Video -> blurred-fill 16:9, starting at `startSec`, holding the last frame if it runs short. */
-async function videoClip(inputPath: string, frames: number, outputPath: string, startSec: number): Promise<void> {
+async function videoClip(inputPath: string, frames: number, outputPath: string, startSec: number, look?: ArchiveTreatment): Promise<void> {
   const seconds = frames / FPS;
-  const filter = BLUR_PAD_VIDEO_HOLD_FC.replace('[vout]', `,fps=${FPS}[vout]`);
+  let filter = BLUR_PAD_VIDEO_HOLD_FC.replace('[vout]', `,fps=${FPS}[vout]`);
+  const extra: string[] = [];
+  if (look) {
+    // Old film: gate weave and flicker, then grain (and a light leak) over it
+    extra.push('-stream_loop', '-1', '-i', look.textures.grain);
+    filter =
+      BLUR_PAD_VIDEO_HOLD_FC.replace('[vout]', `,fps=${FPS},${GATE_WEAVE_FILTER}[woven]`) +
+      `;${textureOverlayFilter('woven', 'tx', 1, look.leak)};[tx]scale=out_range=tv,format=yuv420p[vout]`;
+  }
   await execFileAsync(getFfmpegPath(), [
     '-y',
     ...(startSec > 0 ? ['-ss', startSec.toFixed(3)] : []),
     '-t', (seconds + 1).toFixed(3),
     '-i', inputPath,
+    ...extra,
     '-filter_complex', filter,
     '-map', '[vout]',
     '-frames:v', String(frames),
@@ -70,14 +98,17 @@ export interface FootageClipOptions {
   startSec?: number;
   /** Still only: which camera move. */
   motion?: StillMotion;
+  /** Archive texture for historical footage (see archive-look.ts); absent = plain. */
+  archiveLook?: ArchiveTreatment;
 }
 
 /** Renders a silent 1920x1080 clip of exactly `frames` frames from a photo or video. */
 export async function makeFootageClip(options: FootageClipOptions): Promise<string> {
-  const { inputPath, isVideo, frames, outputPath, startSec = 0, motion = 'zoom_in' } = options;
+  const { inputPath, isVideo, frames, outputPath, startSec = 0, motion = 'zoom_in', archiveLook } = options;
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   try {
-    if (isVideo) await videoClip(inputPath, frames, outputPath, startSec);
+    if (isVideo) await videoClip(inputPath, frames, outputPath, startSec, archiveLook);
+    else if (archiveLook) await archiveStillClip(inputPath, frames, outputPath, motion, archiveLook);
     else await stillClip(inputPath, frames, outputPath, motion);
     return outputPath;
   } catch (err) {

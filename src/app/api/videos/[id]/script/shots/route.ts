@@ -17,7 +17,7 @@ export async function handlePlanShots(req: Request, id: string, supabaseClient?:
 
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, topic, title, status, script_json')
+    .select('id, topic, title, style, status, script_json')
     .eq('id', id)
     .single();
 
@@ -31,6 +31,7 @@ export async function handlePlanShots(req: Request, id: string, supabaseClient?:
 
   const planned = await planShots(supabase, script, video.topic || video.title || 'Video', {
     onlyBeats: beatIndexes,
+    style: video.style,
   });
 
   const { error: updateError } = await supabase

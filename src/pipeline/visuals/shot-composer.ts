@@ -52,6 +52,12 @@ export interface RenderedShot {
   note?: string;
   /** Other candidates that passed the relevance check, offered as swaps in the shot editor. */
   alternatives?: ShotAlternative[];
+  /** The footage source shown (so the shot can be re-rendered at another length). */
+  chosen?: ShotAlternative;
+  /** Footage made from a still photo rather than moving video. */
+  still?: boolean;
+  /** Shows something other than planned because the plan couldn't be filled (e.g. no footage found). */
+  fallback?: boolean;
 }
 
 /** A footage candidate kept for swapping, with its relevance score when one was checked. */
@@ -95,6 +101,69 @@ export interface ComposeBeatOptions {
   leadInSec?: number;
   /** Picture after the narration ends; the last shot keeps moving through it instead of freezing. */
   tailSec?: number;
+  /**
+   * Re-renders a footage shot's source over a longer slot. When given, a shot that fell back
+   * (no footage found, or failed) is covered by its footage neighbour in the beat instead.
+   */
+  extendShot?: (neighbour: ComposedShot, slot: ShotSlot, clipPath: string) => Promise<RenderedShot>;
+}
+
+/** A footage shot held over a missing neighbour stays under this, so it doesn't drag. */
+export const MAX_EXTENDED_SHOT_SEC = 9;
+
+const isGap = (s: ComposedShot) => Boolean(s.fallback) || s.renderedType === 'color';
+const canCover = (s: ComposedShot | undefined, gap: ComposedShot): s is ComposedShot =>
+  Boolean(s && (s.renderedType === 'stock' || s.renderedType === 'archive') && s.chosen && !isGap(s)) &&
+  s!.frames + gap.frames <= Math.round(MAX_EXTENDED_SHOT_SEC * FPS);
+
+/**
+ * Lets footage cover the beat's gaps the way an editor would: a shot that fell back to a text
+ * card or plain background is merged into the footage shot before it (or else after it), whose
+ * source is re-rendered across both slots. Gaps without a footage neighbour, or where the merged
+ * shot would run longer than MAX_EXTENDED_SHOT_SEC, stay as they are.
+ */
+export async function coverGaps(
+  shots: ComposedShot[],
+  extend: NonNullable<ComposeBeatOptions['extendShot']>,
+  shotDir: string,
+  beatIndex: number,
+): Promise<ComposedShot[]> {
+  const out = [...shots];
+  for (let i = 0; i < out.length; i++) {
+    const gap = out[i];
+    if (!isGap(gap)) continue;
+    const n = canCover(out[i - 1], gap) ? i - 1 : canCover(out[i + 1], gap) ? i + 1 : -1;
+    if (n < 0) continue;
+    const neighbour = out[n];
+    const [first, second] = n < i ? [neighbour, gap] : [gap, neighbour];
+    const plan: ShotPlan = {
+      ...neighbour.plan,
+      covers: `${first.plan.covers} ${second.plan.covers}`.trim(),
+      word_start: first.plan.word_start,
+      word_count: first.plan.word_count + second.plan.word_count,
+    };
+    const slot: ShotSlot = { shot: plan, startSec: first.startSec, frames: first.frames + second.frames };
+    const at = Math.min(n, i);
+    try {
+      const rendered = await extend(neighbour, slot, path.join(shotDir, `shot_${at}_held.mp4`));
+      const why = gap.renderedType === 'color' ? 'it could not be rendered' : 'no footage was found for it';
+      out.splice(at, 2, {
+        ...rendered,
+        plannedType: neighbour.plannedType,
+        startSec: slot.startSec,
+        durationSec: slot.frames / FPS,
+        frames: slot.frames,
+        plan,
+        alternatives: neighbour.alternatives,
+        note: [rendered.note, `held over the next planned shot because ${why}`].filter(Boolean).join('; '),
+      });
+      console.log(`[ShotComposer] Beat ${beatIndex}: footage held over shot ${i} (${why}) instead of a ${gap.renderedType === 'color' ? 'plain background' : 'text card'}`);
+      i = at;
+    } catch (err) {
+      console.warn(`[ShotComposer] Beat ${beatIndex}: couldn't hold footage over shot ${i}: ${err instanceof Error ? err.message.slice(0, 160) : err}`);
+    }
+  }
+  return out;
 }
 
 export interface ComposedBeat {
@@ -132,7 +201,7 @@ export async function composeBeatTrack(options: ComposeBeatOptions): Promise<Com
   await fs.mkdir(shotDir, { recursive: true });
 
   const slots = padTimeline(computeShotTimeline(shots, words, audioDurationSec), leadInSec, tailSec);
-  const rendered: ComposedBeat['shots'] = [];
+  let rendered: ComposedBeat['shots'] = [];
   for (const [i, slot] of slots.entries()) {
     const clipPath = path.join(shotDir, `shot_${i}.mp4`);
     const base = { plannedType: slot.shot.visual_type, startSec: slot.startSec, durationSec: slot.frames / FPS, frames: slot.frames, plan: slot.shot };
@@ -145,6 +214,7 @@ export async function composeBeatTrack(options: ComposeBeatOptions): Promise<Com
       rendered.push({ ...base, clipPath, renderedType: 'color', error });
     }
   }
+  if (options.extendShot) rendered = await coverGaps(rendered, options.extendShot, shotDir, beatIndex);
 
   const trackPath = path.join(outputDir, `visuals_beat_${beatIndex}.mp4`);
   await concatClips(rendered.map((r) => r.clipPath), trackPath);

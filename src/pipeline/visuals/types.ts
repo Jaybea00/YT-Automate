@@ -57,6 +57,7 @@ export interface MediaCandidate {
     | 'archive_org'
     | 'nasa'
     | 'pexels'
+    | 'unsplash'
     | 'uploaded'
     | 'pollinations'
     | 'openai'

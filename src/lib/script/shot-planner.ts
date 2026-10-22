@@ -4,6 +4,7 @@ import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider, ProviderCallContext } from '@/pipeline/providers/types';
 import type { ResearchFact } from '@/lib/research/types';
 import {
+  DIAGRAM_LIMITS,
   SHOT_TYPES,
   withWritingModel,
   type GeneratedScript,
@@ -12,6 +13,29 @@ import {
   type ShotType,
 } from './generate-script';
 import { SPEECH_WORDS_PER_SECOND, STREET_LEVEL_PLACE, estimateSpeechSeconds, toStockQuery } from './script-quality';
+import {
+  DENSITY_EXEMPT,
+  DENSITY_WINDOW,
+  MAX_GRAPHICS_SHARE,
+  MAX_NON_FOOTAGE_RUN,
+  MAX_SAME_TYPE_IN_WINDOW,
+  MAX_SAME_TYPE_RUN,
+  MAX_TEXT_SHARE,
+  analyzeRhythm,
+  kindOf,
+  planToRhythmShots,
+  type RhythmIssue,
+  type RhythmRule,
+} from './visual-rhythm';
+import { stylePack } from '@/lib/styles/packs';
+
+const {
+  minSteps: MIN_DIAGRAM_STEPS,
+  maxSteps: MAX_DIAGRAM_STEPS,
+  secondsPerStep: SECONDS_PER_DIAGRAM_STEP,
+  maxLabelWords: MAX_DIAGRAM_LABEL_WORDS,
+  maxDetailWords: MAX_DIAGRAM_DETAIL_WORDS,
+} = DIAGRAM_LIMITS;
 
 /** Target on-screen time per shot; viewers expect the picture to change every 3-6 seconds. */
 const SECONDS_PER_SHOT = 4.5;
@@ -19,11 +43,11 @@ const MAX_SHOTS_PER_BEAT = 4;
 /** ~2.2s at narration pace; shorter cuts feel choppy on footage. */
 const MIN_WORDS_PER_SHOT = 5;
 const BEATS_PER_BATCH = 12;
-const GRAPHIC_TYPES = new Set<ShotType>(['chart', 'stat', 'quote', 'geo_map', 'newspaper', 'timeline', 'comparison', 'title', 'kinetic_text']);
-const MAX_SAME_GRAPHIC_IN_A_ROW = 2;
 /** Chapter cards mark real turns in the story; closer together they stop meaning anything. */
 const MIN_BEATS_BETWEEN_TITLES = 6;
 const MAX_TITLE_WORDS = 8;
+/** Annotated photos stay special: at least this many shots apart. */
+const MIN_SHOTS_BETWEEN_ANNOTATIONS = 3;
 const MAX_KINETIC_WORDS = 12;
 /** How far an on-screen figure may be from the spoken one (rounding: "about 381" vs 381.17). */
 const SPOKEN_FIGURE_TOLERANCE = 0.05;
@@ -52,7 +76,7 @@ export function shotCountForBeat(text: string): number {
 const DIRECTOR_SYSTEM = `You are the visual director of a premium documentary YouTube channel (think Vox, Johnny Harris, ColdFusion). For each narration beat you plan the shots the viewer sees.
 
 SHOTS
-- Each beat states how many shots it needs. Split its narration into exactly that many consecutive parts at natural phrase boundaries. "covers" is the exact words of that part, in order; together the parts cover the whole beat.
+- Each beat states how many shots it needs. Split its narration into exactly that many consecutive parts at natural phrase boundaries (a diagram may stand in for several, see below). "covers" is the exact words of that part, in order; together the parts cover the whole beat.
 - Cut on meaning: the chart appears on the words that state the number, the map when the places are named, the quote card when the quote is spoken.
 
 SHOT TYPES (fill the matching spec object; leave the others out)
@@ -68,7 +92,9 @@ SHOT TYPES (fill the matching spec object; leave the others out)
 - "comparison": two figures side by side. comparison = {title, left: {value, label}, right: {value, label}}, e.g. left {value: "3%", label: "unemployed in 1929"}. Values must be stated in the narration or research.
 - "title": a chapter card where the story turns to a new part. title_card = {text, kicker}; text at most ${MAX_TITLE_WORDS} words, kicker a short label like "Part two". Use rarely: at most once every ${MIN_BEATS_BETWEEN_TITLES} beats.
 - "kinetic_text": the narrator's own words set as bold animated type, for the single most important line of a passage. kinetic = {phrase, emphasis}; phrase is copied exactly from the shot's narration, at most ${MAX_KINETIC_WORDS} words; emphasis is 1-3 key words from it.
+- "diagram": how something works, step by step. diagram = {kind: "process"|"cycle"|"breakdown", title, center, steps: [{label, detail}]}. process = steps in order ("Ship enters the lock" -> "Gates close" -> "Lake water flows in" -> "Ship rises"); cycle = steps that repeat in a loop; breakdown = the parts of one thing, with center naming it. ${MIN_DIAGRAM_STEPS}-${MAX_DIAGRAM_STEPS} steps; label at most 5 words, detail at most 10; each step restates what the narration explains, in the order it says it. Needs about ${Math.round(SECONDS_PER_DIAGRAM_STEP * 2.3)} words of narration per step. Use for mechanisms and processes the viewer must understand, not for lists of facts. A diagram may take the place of up to 3 of the beat's shots: return fewer shots, with the diagram's covers spanning the whole passage it explains, so every step gets its own words.
 - Footage of a specific named person or place may carry caption = {name, detail}, a lower-third such as {name: "Herbert Hoover", detail: "U.S. President, 1929-33"}. Only names and details stated in the narration or research.
+- An archive or stock PHOTO where one part matters may carry annotation = {target, label, detail} instead of a caption: the camera pushes in, circles that part and labels it (the Vox look). target says what to find in the photo, e.g. "the lock gates" or "the man in the top hat"; label names it, e.g. "Gatun Locks"; detail is optional, e.g. "opened 1914". Best for structures, sites, machines, and one key person in a group. Label and detail must be stated in the narration or research. Use sparingly: at most one in every ${MIN_SHOTS_BETWEEN_ANNOTATIONS} shots.
 
 DATA INTEGRITY
 - Every value in a chart or stat must be a number stated in the beat's narration or its research facts. Never estimate, interpolate, or invent data points. If you only have one number, use "stat", not "chart".
@@ -113,6 +139,13 @@ const DirectorShotSchema = z.object({
   title_card: nullableObject({ text: z.string(), kicker: z.string().nullable().optional() }),
   kinetic: nullableObject({ phrase: z.string(), emphasis: z.array(z.string()) }),
   caption: nullableObject({ name: z.string(), detail: z.string().nullable().optional() }),
+  annotation: nullableObject({ target: z.string(), label: z.string(), detail: z.string().nullable().optional() }),
+  diagram: nullableObject({
+    kind: z.enum(['process', 'cycle', 'breakdown']),
+    title: z.string().nullable().optional(),
+    center: z.string().nullable().optional(),
+    steps: z.array(z.object({ label: z.string(), detail: z.string().nullable().optional() })),
+  }),
 });
 
 export const DirectorResponseSchema = z.object({
@@ -126,6 +159,7 @@ function buildBatchPrompt(
   beats: ScriptBeat[],
   facts: ResearchFact[],
   previousShotTypes: ShotType[],
+  styleNotes?: string,
 ): string {
   const factSection = facts.length
     ? `RESEARCH FACTS:\n${facts.map((f) => `${f.id}: ${f.claim}`).join('\n')}\n\n`
@@ -142,7 +176,10 @@ function buildBatchPrompt(
 
   return `Video topic: "${topic}"
 
-${factSection}${continuity}Plan the shots for these beats. Return {"beats": [{"index": ..., "shots": [...]}]} with one entry per beat.
+${styleNotes ? `STYLE NOTES (this kind of video):
+${styleNotes}
+
+` : ''}${factSection}${continuity}Plan the shots for these beats. Return {"beats": [{"index": ..., "shots": [...]}]} with one entry per beat.
 
 ${beatLines}`;
 }
@@ -377,13 +414,52 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
   switch (shot.visual_type) {
     case 'stock':
     case 'archive': {
-      if (!shot.caption) return shot;
-      // A caption naming someone the narration never names would be an unchecked claim
-      const name = shot.caption.name.trim();
-      if (!name || !isNamed(name)) return { ...shot, caption: null };
-      const detail = shot.caption.detail?.trim();
-      const detailOk = detail && groundValues(quantitiesIn(detail)) !== null && detail.split(/\s+/).length <= 8;
-      return { ...shot, caption: { name, detail: detailOk ? detail : null } };
+      const detailOf = (raw?: string | null) => {
+        const detail = raw?.trim();
+        return detail && groundValues(quantitiesIn(detail)) !== null && detail.split(/\s+/).length <= 8 ? detail : null;
+      };
+      let checked: DirectorShot = shot;
+      if (shot.caption) {
+        // A caption naming someone the narration never names would be an unchecked claim
+        const name = shot.caption.name.trim();
+        checked = name && isNamed(name) ? { ...checked, caption: { name, detail: detailOf(shot.caption.detail) } } : { ...checked, caption: null };
+      }
+      if (shot.annotation) {
+        // Same rule for the label; the target is only an instruction to the vision model
+        const label = shot.annotation.label.trim();
+        const target = shot.annotation.target.trim();
+        const ok = label && isNamed(label) && label.split(/\s+/).length <= 6 && target && target.split(/\s+/).length <= 10;
+        checked = ok
+          ? { ...checked, annotation: { target, label, detail: detailOf(shot.annotation.detail) } }
+          : { ...checked, annotation: null };
+      }
+      return checked;
+    }
+    case 'diagram': {
+      const spec = shot.diagram;
+      if (!spec) return footageFallback(beat, shot);
+      const wordCount = (s?: string | null) => (s ?? '').trim().split(/\s+/).filter(Boolean).length;
+      // A step must restate what the narration (or its research) explains: it shares a content
+      // word with it, loosely ("gates close" ~ "the gates shut", "fills" ~ "filling")
+      const groundWords = new Set(groundNorm.split(' ').filter((w) => w.length > 3));
+      const relates = (s: string) =>
+        normalizeText(s)
+          .split(' ')
+          .filter((w) => w.length > 3)
+          .some((w) => groundWords.has(w) || [...groundWords].some((g) => g.slice(0, 5) === w.slice(0, 5) && w.length >= 5));
+      const figuresOk = (s?: string | null) => !s || groundValues(quantitiesIn(s)) !== null;
+      const steps = spec.steps
+        .map((s) => ({ label: s.label.trim(), detail: s.detail?.trim() || null }))
+        .filter((s) => s.label && wordCount(s.label) <= MAX_DIAGRAM_LABEL_WORDS && relates(s.label) && figuresOk(s.label))
+        .map((s) => ({ label: s.label, detail: s.detail && wordCount(s.detail) <= MAX_DIAGRAM_DETAIL_WORDS && figuresOk(s.detail) ? s.detail : null }))
+        .slice(0, MAX_DIAGRAM_STEPS);
+      const center = spec.center?.trim() || null;
+      const title = spec.title?.trim() && wordCount(spec.title) <= MAX_TITLE_WORDS && figuresOk(spec.title) ? spec.title.trim() : null;
+      if (steps.length < MIN_DIAGRAM_STEPS) return footageFallback(beat, shot);
+      if (spec.kind === 'breakdown' && !(center && wordCount(center) <= MAX_DIAGRAM_LABEL_WORDS && relates(center))) {
+        return footageFallback(beat, shot);
+      }
+      return { ...shot, diagram: { kind: spec.kind, title, center: spec.kind === 'breakdown' ? center : null, steps } };
     }
     case 'timeline': {
       const events = (shot.timeline?.events ?? [])
@@ -474,30 +550,114 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
   }
 }
 
+/** When a plan has too many graphics, the lowest of these become footage first. */
+const GRAPHIC_KEEP_PRIORITY: Partial<Record<ShotType, number>> = {
+  kinetic_text: 0,
+  stat: 1,
+  comparison: 2,
+  quote: 3,
+  timeline: 4,
+  chart: 5,
+  title: 6,
+  diagram: 6,
+  newspaper: 7,
+  geo_map: 8,
+};
+/** Share-of-video rules need enough shots to mean anything. */
+const MIN_SHOTS_FOR_SHARE_RULES = 8;
+
+/** Number of trailing items matching `test`. */
+const trailing = <T>(items: T[], test: (item: T) => boolean) => {
+  let n = 0;
+  for (let i = items.length - 1; i >= 0 && test(items[i]); i--) n++;
+  return n;
+};
+
 /**
- * Downgrades the third-in-a-row graphic of the same type (across beats) to footage, and any
- * chapter card closer than MIN_BEATS_BETWEEN_TITLES beats to the previous one.
+ * Repairs the plan's visual rhythm across beats (see visual-rhythm.ts), turning the offending
+ * graphic into footage: a third graphic or text card in a row, a third of one type in a row, a
+ * type crowding one stretch, a chapter card too soon after the last, kinetic text beyond its
+ * share, and finally graphics beyond their share of screen time (least essential first).
+ * Returns the repaired beats and what was changed.
  */
-export function enforceShotVariety(beats: ScriptBeat[]): ScriptBeat[] {
-  let runType: ShotType | null = null;
-  let runLength = 0;
+export function repairRhythm(
+  beats: ScriptBeat[],
+  maxGraphicsShare: number = MAX_GRAPHICS_SHARE,
+): { beats: ScriptBeat[]; fixes: RhythmIssue[] } {
+  const fixes: RhythmIssue[] = [];
+  const totalShots = beats.reduce((n, b) => n + (b.shots?.length ?? 0), 0);
+  const shareRules = totalShots >= MIN_SHOTS_FOR_SHARE_RULES;
+  const allowedText = Math.max(1, Math.floor(totalShots * MAX_TEXT_SHARE));
+  const recent: ShotType[] = [];
+  let textCount = 0;
   let lastTitleBeat = -Infinity;
-  return beats.map((beat) => ({
+  let lastAnnotated = -Infinity;
+
+  const sequenced = beats.map((beat) => ({
     ...beat,
-    shots: beat.shots?.map((shot) => {
-      const sameRun = GRAPHIC_TYPES.has(shot.visual_type) && shot.visual_type === runType;
-      const titleTooSoon = shot.visual_type === 'title' && beat.index - lastTitleBeat < MIN_BEATS_BETWEEN_TITLES;
-      if ((sameRun && runLength >= MAX_SAME_GRAPHIC_IN_A_ROW) || titleTooSoon) {
-        runType = null;
-        runLength = 0;
-        return planAsFootage(beat, shot);
+    shots: beat.shots?.map((shot, i) => {
+      const type = shot.visual_type;
+      const kind = kindOf(type);
+      let problem: [RhythmRule, string] | null = null;
+      if (kind !== 'footage') {
+        const where = `Beat ${beat.index + 1}, shot ${i + 1}`;
+        const inWindow = recent.slice(-(DENSITY_WINDOW - 1)).filter((t) => t === type).length;
+        if (type === 'title' && beat.index - lastTitleBeat < MIN_BEATS_BETWEEN_TITLES) {
+          problem = ['type_density', `${where}: chapter card too soon after the last one`];
+        } else if (trailing(recent, (t) => t === type) >= MAX_SAME_TYPE_RUN) {
+          problem = ['same_type_run', `${where}: a third "${type}" in a row became footage`];
+        } else if (trailing(recent, (t) => kindOf(t) !== 'footage') >= MAX_NON_FOOTAGE_RUN) {
+          problem = ['non_footage_run', `${where}: a third graphic in a row ("${type}") became footage`];
+        } else if ((kind === 'graphic' || type === 'kinetic_text') && !DENSITY_EXEMPT.has(type) && inWindow >= MAX_SAME_TYPE_IN_WINDOW) {
+          problem = ['type_density', `${where}: too many "${type}" shots close together; this one became footage`];
+        } else if (shareRules && type === 'kinetic_text' && textCount >= allowedText) {
+          problem = ['text_overuse', `${where}: text card beyond the video's share became footage`];
+        }
       }
-      if (shot.visual_type === 'title') lastTitleBeat = beat.index;
-      runLength = sameRun ? runLength + 1 : 1;
-      runType = shot.visual_type;
+      if (problem) {
+        fixes.push({ rule: problem[0], beat: beat.index, shot: i, message: problem[1] });
+        const footage = planAsFootage(beat, shot);
+        recent.push(footage.visual_type);
+        return footage;
+      }
+      if (type === 'title') lastTitleBeat = beat.index;
+      if (kind === 'text') textCount++;
+      recent.push(type);
+      if (shot.annotation) {
+        // Too soon after the last annotated photo: keep the shot, drop the annotation
+        if (recent.length - 1 - lastAnnotated < MIN_SHOTS_BETWEEN_ANNOTATIONS) {
+          const plain: ShotPlan = { ...shot };
+          delete plain.annotation;
+          return plain;
+        }
+        lastAnnotated = recent.length - 1;
+      }
       return shot;
     }),
   }));
+
+  if (!shareRules) return { beats: sequenced, fixes };
+
+  // Too much of the video is graphics: turn the least essential into footage until it fits
+  const seconds = (s: ShotPlan) => s.word_count / SPEECH_WORDS_PER_SECOND;
+  const all = sequenced.flatMap((beat) => (beat.shots ?? []).map((shot, i) => ({ beat, i, shot })));
+  const total = all.reduce((n, x) => n + seconds(x.shot), 0);
+  let graphicSeconds = all.filter((x) => kindOf(x.shot.visual_type) !== 'footage').reduce((n, x) => n + seconds(x.shot), 0);
+  const candidates = all
+    .filter((x) => kindOf(x.shot.visual_type) !== 'footage')
+    .sort((a, b) => (GRAPHIC_KEEP_PRIORITY[a.shot.visual_type] ?? 5) - (GRAPHIC_KEEP_PRIORITY[b.shot.visual_type] ?? 5));
+  for (const x of candidates) {
+    if (total <= 0 || graphicSeconds / total <= maxGraphicsShare) break;
+    graphicSeconds -= seconds(x.shot);
+    fixes.push({ rule: 'graphics_share', beat: x.beat.index, shot: x.i, message: `Beat ${x.beat.index + 1}, shot ${x.i + 1}: "${x.shot.visual_type}" became footage to keep graphics under ${Math.round(maxGraphicsShare * 100)}% of the video` });
+    x.beat.shots![x.i] = planAsFootage(x.beat, x.shot);
+  }
+  return { beats: sequenced, fixes };
+}
+
+/** repairRhythm without the list of changes. */
+export function enforceShotVariety(beats: ScriptBeat[]): ScriptBeat[] {
+  return repairRhythm(beats).beats;
 }
 
 function toShotPlan(shot: DirectorShot & { word_start: number; word_count: number }): ShotPlan {
@@ -526,8 +686,19 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
     plan.title_card = { text: shot.title_card.text, kicker: shot.title_card.kicker ?? undefined };
   }
   if (shot.visual_type === 'kinetic_text' && shot.kinetic) plan.kinetic = shot.kinetic;
+  if (shot.visual_type === 'diagram' && shot.diagram) {
+    plan.diagram = {
+      kind: shot.diagram.kind,
+      title: shot.diagram.title ?? undefined,
+      center: shot.diagram.center ?? undefined,
+      steps: shot.diagram.steps.map((s) => ({ label: s.label, detail: s.detail ?? undefined })),
+    };
+  }
   if ((shot.visual_type === 'stock' || shot.visual_type === 'archive') && shot.caption) {
     plan.caption = { name: shot.caption.name, detail: shot.caption.detail ?? undefined };
+  }
+  if ((shot.visual_type === 'stock' || shot.visual_type === 'archive') && shot.annotation) {
+    plan.annotation = { target: shot.annotation.target, label: shot.annotation.label, detail: shot.annotation.detail ?? undefined };
   }
   return plan;
 }
@@ -551,6 +722,11 @@ function planAsFootage(beat: ScriptBeat, shot: ShotPlan): ShotPlan {
 export function fitGraphicsToTime(beat: ScriptBeat, shots: ShotPlan[]): ShotPlan[] {
   return shots.map((shot) => {
     const seconds = shot.word_count / SPEECH_WORDS_PER_SECOND;
+    if (shot.visual_type === 'diagram' && shot.diagram) {
+      const fits = Math.floor(seconds / SECONDS_PER_DIAGRAM_STEP);
+      if (fits < MIN_DIAGRAM_STEPS) return planAsFootage(beat, shot);
+      return fits < shot.diagram.steps.length ? { ...shot, diagram: { ...shot.diagram, steps: shot.diagram.steps.slice(0, fits) } } : shot;
+    }
     if (shot.visual_type === 'timeline' && shot.timeline) {
       const fits = Math.floor(seconds / SECONDS_PER_TIMELINE_EVENT);
       if (fits < 2) return planAsFootage(beat, shot);
@@ -580,6 +756,8 @@ export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts
 export interface PlanShotsOptions {
   /** Plan only these beat indexes (e.g. beats edited on the review page); others keep their shots. */
   onlyBeats?: number[];
+  /** The video's style: its pack adds director notes and sets the graphics limit. */
+  style?: string | null;
 }
 
 export async function planShots(
@@ -606,6 +784,8 @@ export async function planShotsWith(
   options: PlanShotsOptions = {},
 ): Promise<GeneratedScript> {
   const facts = script.research?.facts ?? [];
+  const pack = stylePack(options.style);
+  const maxGraphicsShare = pack?.maxGraphicsShare ?? MAX_GRAPHICS_SHARE;
   const planned = new Map<number, ShotPlan[]>();
   let previousTypes: ShotType[] = [];
   const toPlan = options.onlyBeats
@@ -618,7 +798,7 @@ export async function planShotsWith(
       const { data } = await llm.generateJson(
         {
           system: DIRECTOR_SYSTEM,
-          prompt: buildBatchPrompt(topic, batch, facts, previousTypes),
+          prompt: buildBatchPrompt(topic, batch, facts, previousTypes, pack?.directorNotes),
           schema: DirectorResponseSchema,
         },
         ctx,
@@ -634,10 +814,15 @@ export async function planShotsWith(
     previousTypes = batch.flatMap((b) => planned.get(b.index) ?? []).map((s) => s.visual_type).slice(-3);
   }
 
-  const beats = enforceShotVariety(
+  const { beats, fixes } = repairRhythm(
     script.beats.map((beat) => (planned.has(beat.index) ? { ...beat, shots: planned.get(beat.index) } : beat)),
+    maxGraphicsShare,
   );
+  const rhythm = analyzeRhythm(planToRhythmShots(beats), 'plan', fixes, maxGraphicsShare);
   const shotCount = [...planned.values()].reduce((n, shots) => n + shots.length, 0);
-  console.log(`[planShots] Planned ${shotCount} shots across ${planned.size}/${toPlan.length} beats`);
-  return { ...script, beats };
+  console.log(
+    `[planShots] Planned ${shotCount} shots across ${planned.size}/${toPlan.length} beats; rhythm ${rhythm.score}/100 (${fixes.length} fixed, ${rhythm.issues.length - fixes.length} remaining)`,
+  );
+  // A new plan makes any earlier render report stale
+  return { ...script, beats, rhythm: { plan: rhythm } };
 }

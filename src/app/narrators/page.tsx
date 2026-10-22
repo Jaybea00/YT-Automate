@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { PronunciationEditor } from './pronunciation-editor';
+import { STYLE_PACKS } from '@/lib/styles/packs';
 
 interface ProviderConfig {
   id: string;
@@ -30,17 +31,13 @@ function voiceSourceLabel(provider: string | null | undefined): string {
   return 'Synthetic voice';
 }
 
-const VIDEO_STYLES: Array<{ key: string; label: string; description: string; icon: string }> = [
-  { key: 'tech', label: 'Tech Explainer', description: 'Fast-paced, authoritative technical breakdown', icon: '💻' },
-  { key: 'cinematic', label: 'Cinematic Doc', description: 'Deep, atmospheric, dramatic storytelling', icon: '🎬' },
-  { key: 'modernmba', label: 'Business Analysis', description: 'Polished, strategic, corporate insight', icon: '📈' },
-  { key: 'listicle', label: 'Listicle / Fast Facts', description: 'Energetic, punchy, high-retention pacing', icon: '⚡' },
-  { key: 'story_driven', label: 'Story Driven', description: 'Immersive narrative with emotional arc', icon: '📖' },
-  { key: 'comparison', label: 'Head-to-Head', description: 'Balanced, analytical, objective comparison', icon: '⚖️' },
-  { key: 'eli5', label: 'Explain Like I\'m 5', description: 'Warm, approachable, simplified breakdown', icon: '💡' },
-  { key: 'true_crime_pov', label: 'True Crime POV', description: 'Dark, tense, suspenseful first-person atmosphere', icon: '🔍' },
-  { key: 'vox_explainer', label: 'Vox Explainer', description: 'Curious, conversational, evidence-driven', icon: '🧭' },
-];
+/** Every style pack, for the style-to-narrator defaults. */
+const VIDEO_STYLES: Array<{ key: string; label: string; description: string; icon: string }> = Object.values(STYLE_PACKS).map((p) => ({
+  key: p.id,
+  label: p.shortName,
+  description: p.tagline,
+  icon: p.icon,
+}));
 
 export default function NarratorsPage() {
   const [narrators, setNarrators] = useState<Narrator[]>([]);

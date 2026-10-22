@@ -5,7 +5,7 @@ import { loadWordTimings } from '../tts/word-timings';
 import { MOTION_RENDERERS } from './motion-shots';
 import { upsertVideoAssetProvenance } from './provenance';
 import { composeBeatTrack, summarizeLicenses } from './shot-composer';
-import { createShotRenderer, type ShotRenderContext, type TypedShotRenderer } from './shot-renderers';
+import { candidateFromAlternative, createShotRenderer, renderCandidateShot, type ShotRenderContext, type TypedShotRenderer } from './shot-renderers';
 
 export interface ComposeShotBeatOptions {
   supabase: SupabaseClient;
@@ -40,6 +40,7 @@ export async function composeShotBeat(options: ComposeShotBeatOptions): Promise<
   const timings = await loadWordTimings(audioPath);
   const words = timings && timings.text === beat.text ? timings.words : null;
 
+  const ctx = { ...renderContext, beatIndex: beat.index, downloadDir: path.join(outputDir, 'sources') };
   const composed = await composeBeatTrack({
     beatIndex: beat.index,
     shots: beat.shots ?? [],
@@ -49,10 +50,13 @@ export async function composeShotBeat(options: ComposeShotBeatOptions): Promise<
     fallbackColor: renderContext.theme.background,
     leadInSec: options.pacing?.leadInSec,
     tailSec: options.pacing?.tailSec,
-    renderShot: createShotRenderer(
-      { ...renderContext, beatIndex: beat.index, downloadDir: path.join(outputDir, 'sources') },
-      typedRenderers,
-    ),
+    renderShot: createShotRenderer(ctx, typedRenderers),
+    // Same source, longer slot; the caption (if any) comes from the merged plan
+    extendShot: (neighbour, slot, clipPath) =>
+      renderCandidateShot(slot.shot, slot, clipPath, ctx, candidateFromAlternative(neighbour.chosen!), {
+        score: neighbour.chosen?.score,
+        note: neighbour.note,
+      }),
   });
 
   const { license, attribution, sources } = summarizeLicenses(composed.shots);

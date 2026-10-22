@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript, GeneratedScript } from '@/lib/script/generate-script';
 import { VideoStyle } from '@/lib/script/style-templates';
+import { withStyleDefaults } from '@/lib/styles/packs';
 import { researchTopic } from '@/lib/research/research';
 import { planShots } from '@/lib/script/shot-planner';
 import {
@@ -89,7 +90,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: scriptJson,
+          script_json: withStyleDefaults(scriptJson, style),
           title: videoTopic,
         })
         .select()
@@ -138,7 +139,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: scriptJson,
+          script_json: withStyleDefaults(scriptJson, style),
           title: videoTopic,
         })
         .select()
@@ -188,12 +189,12 @@ export async function POST(req: Request) {
           topic: videoTopic,
           style,
         });
-        const generatedScript = await planShots(supabase, segmented, videoTopic);
+        const generatedScript = await planShots(supabase, segmented, videoTopic, { style });
 
         const { data: updatedVideo, error: updateError } = await supabase
           .from('videos')
           .update({
-            script_json: generatedScript,
+            script_json: withStyleDefaults(generatedScript, style),
             status: 'script_review',
             title: generatedScript.title_options[0] || videoTopic,
           })
@@ -268,13 +269,13 @@ export async function POST(req: Request) {
         targetMinutes: parsedTargetMinutes,
         research,
       });
-      const generatedScript = await planShots(supabase, writtenScript, topic.trim());
+      const generatedScript = await planShots(supabase, writtenScript, topic.trim(), { style });
 
       // 3. Update with script_json and status='script_review'
       const { data: updatedVideo, error: updateError } = await supabase
         .from('videos')
         .update({
-          script_json: generatedScript,
+          script_json: withStyleDefaults(generatedScript, style),
           status: 'script_review',
         })
         .eq('id', newVideo.id)

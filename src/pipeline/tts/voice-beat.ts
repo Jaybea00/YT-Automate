@@ -6,6 +6,7 @@ import { detectSilences, getAudioDurationMs } from '../utils/ffmpeg';
 import { deliveryForStyle } from './delivery';
 import { loadPronunciations } from './pronunciations';
 import { toSpeakableText, type Pronunciation } from './speakable';
+import { addSentencePauses } from './pauses';
 import {
   alignWordTimings,
   estimateWordTimings,
@@ -20,12 +21,24 @@ export interface TtsSetup {
   voiceId: string;
   direction?: string;
   pronunciations: Pronunciation[];
+  /** Documentary pacing fixed on the job when it was created (absent: the voice's normal pace). */
+  pacing?: { speed: number; sentencePauseSec: number };
 }
 
 interface JobVoiceFields {
   tts_provider_config_id?: string | null;
   voice_id?: string | null;
   voice_override?: string | null;
+  narration_pacing?: { speed?: unknown; sentencePauseSec?: unknown } | null;
+}
+
+/** The job's pacing, if valid; jobs created before pacing existed have none. */
+function jobPacing(script: JobVoiceFields): TtsSetup['pacing'] {
+  const p = script.narration_pacing;
+  const speed = Number(p?.speed);
+  const sentencePauseSec = Number(p?.sentencePauseSec);
+  if (!p || !(speed > 0.5 && speed <= 1.5) || !(sentencePauseSec >= 0 && sentencePauseSec <= 2)) return undefined;
+  return { speed, sentencePauseSec };
 }
 
 /**
@@ -49,6 +62,7 @@ export async function resolveTtsSetup(
     // the pace scripts are planned for, so plain narration is the default
     direction: resolved.options.styleDirection === true ? deliveryForStyle(job.template) : undefined,
     pronunciations: await loadPronunciations(),
+    pacing: jobPacing(script),
   };
 }
 
@@ -60,6 +74,8 @@ export function ttsUnitInput(setup: TtsSetup, narration: string): { spokenText: 
   const spokenText = toSpeakableText(narration, setup.pronunciations);
   const input: Record<string, unknown> = { text: spokenText, voiceId: setup.voiceId };
   if (setup.direction && setup.resolved.provider.supportsDirection) input.direction = setup.direction;
+  // Only paced jobs carry it, so other videos' voicing checkpoints are unchanged
+  if (setup.pacing) input.pacing = setup.pacing;
   return { spokenText, input };
 }
 
@@ -96,11 +112,25 @@ export async function voiceBeat(options: VoiceBeatOptions): Promise<UnitRunResul
     signal,
     execute: async () => {
       const synthesized = await provider.synthesize(
-        { text: spokenText, voiceId: setup.voiceId, format: 'mp3', direction: setup.direction },
+        { text: spokenText, voiceId: setup.voiceId, format: 'mp3', direction: setup.direction, speed: setup.pacing?.speed },
         ctx,
       );
       providerWords = synthesized.words;
-      return synthesized;
+      if (!setup.pacing?.sentencePauseSec || synthesized.mimeType?.includes('wav')) return synthesized;
+      // A breath after each sentence, placed from the voice's own word timings
+      try {
+        const paused = await addSentencePauses({
+          bytes: synthesized.bytes,
+          narration: spokenText,
+          providerWords: synthesized.words,
+          pauseSec: setup.pacing.sentencePauseSec,
+        });
+        providerWords = paused.providerWords;
+        return { ...synthesized, bytes: paused.bytes, words: paused.providerWords };
+      } catch (err) {
+        console.warn(`[voiceBeat] Beat ${unitIndex}: sentence pauses skipped (${err instanceof Error ? err.message.slice(0, 160) : err})`);
+        return synthesized;
+      }
     },
   });
 

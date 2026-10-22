@@ -8,8 +8,7 @@ import { MOTION_RENDERERS, renderTextCard } from './motion-shots';
 import { themeForStyle } from './motion/theme';
 import type { ComposedShot, ShotAlternative } from './shot-composer';
 import { replaceShot, type ComposedBeatRecord } from './shot-editor';
-import { renderCandidateShot, renderFootageShot, toAlternative, type ShotRenderContext } from './shot-renderers';
-import type { MediaCandidate } from './types';
+import { candidateFromAlternative, renderCandidateShot, renderFootageShot, toAlternative, type ShotRenderContext } from './shot-renderers';
 
 export type ShotEdit =
   /** Use one of the shot's alternatives, or a search result. */
@@ -20,7 +19,7 @@ export type ShotEdit =
   | { action: 'text' };
 
 async function editorContext(supabase: SupabaseClient, videoId: string, beat: ComposedBeatRecord, needsBrowser: boolean) {
-  const { data: video } = await supabase.from('videos').select('style').eq('id', videoId).maybeSingle();
+  const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
   const stock = await resolveForStage<StockProvider>('visuals', supabase).catch(() => null);
   const llm = await resolveForStage<LLMProvider>('script', supabase).catch(() => null);
   const browser: Browser | undefined = needsBrowser ? await chromium.launch({ headless: true }) : undefined;
@@ -36,21 +35,14 @@ async function editorContext(supabase: SupabaseClient, videoId: string, beat: Co
     // The beat's other shots are off limits, so a swap never repeats a neighbour
     usedSources: new Set(beat.shots.map((s) => s.sourceUrl).filter((u): u is string => Boolean(u))),
     motionCounter: { next: beat.beatIndex },
+    // A replaced archive shot gets the same texture as the rest of the video (no print beneath:
+    // its neighbours are already rendered)
+    ...(video?.script_json?.archive_look !== 'off' ? { archiveLook: { count: { next: beat.beatIndex } } } : {}),
   };
   return { ctx, close: async () => browser?.close().catch(() => {}) };
 }
 
-const asCandidate = (a: ShotAlternative): MediaCandidate => ({
-  id: a.id,
-  provider: a.provider as MediaCandidate['provider'],
-  mediaType: a.mediaType,
-  title: a.title,
-  thumbnailUrl: a.thumbnailUrl,
-  downloadUrl: a.downloadUrl,
-  pageUrl: a.pageUrl,
-  license: a.license,
-  attribution: a.attribution,
-});
+const asCandidate = candidateFromAlternative;
 
 /** Applies one edit to one shot of a composed beat. */
 export async function editShot(options: {

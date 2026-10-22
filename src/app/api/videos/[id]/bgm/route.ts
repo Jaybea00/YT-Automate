@@ -61,6 +61,7 @@ export async function handleGetBgm(
     beatPauseSeconds,
     captionPreset,
     look: video.script_json?.look === 'off' ? 'off' : 'auto',
+    archiveLook: video.script_json?.archive_look === 'off' ? 'off' : 'auto',
     presets: PRESET_TRACKS,
     sfxPresets: PRESET_SFX,
   });
@@ -89,6 +90,7 @@ export async function handlePostBgm(
   let beatPauseSeconds: number | undefined;
   let captionPreset: CaptionPreset | 'none' | undefined;
   let look: 'auto' | 'off' | undefined;
+  let archiveLook: 'auto' | 'off' | undefined;
 
   let sfxEnabled: boolean | undefined;
   let sfxTrack: string | undefined;
@@ -154,6 +156,7 @@ export async function handlePostBgm(
       captionPreset = body.captionPreset;
     }
     if (body.look === 'auto' || body.look === 'off') look = body.look;
+    if (body.archiveLook === 'auto' || body.archiveLook === 'off') archiveLook = body.archiveLook;
 
     if (body.sfxEnabled !== undefined) sfxEnabled = Boolean(body.sfxEnabled);
     if (body.sfxTrack) sfxTrack = String(body.sfxTrack);
@@ -203,6 +206,9 @@ export async function handlePostBgm(
   if (look !== undefined) {
     scriptJson.look = look;
   }
+  if (archiveLook !== undefined) {
+    scriptJson.archive_look = archiveLook;
+  }
 
   const currentSfx = scriptJson.sfx || {};
   scriptJson.sfx = {
@@ -249,6 +255,7 @@ export async function handlePostBgm(
     transition: scriptJson.transition || 'cut',
     captionPreset: scriptJson.captions?.preset || 'none',
     look: scriptJson.look === 'off' ? 'off' : 'auto',
+    archiveLook: scriptJson.archive_look === 'off' ? 'off' : 'auto',
   });
 }
 

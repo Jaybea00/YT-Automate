@@ -950,7 +950,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                     <span className="text-xs font-normal text-zinc-400">
                       ({editableBeats.length} beats)
                     </span>
-                    <RuntimeMeter beats={editableBeats} targetMinutes={video.target_minutes} />
+                    <RuntimeMeter beats={editableBeats} targetMinutes={video.target_minutes} style={video.style} />
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
                     Make direct inline adjustments to narration text. Save changes directly without re-running the LLM.
@@ -1008,6 +1008,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 hasUnsavedEdits={hasUnsavedEdits}
                 onPlanMissing={() => handlePlanShots(true)}
                 onReplanAll={() => handlePlanShots(false)}
+                style={video.style}
               />
               {shotPlanError && (
                 <div className="p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-200 text-xs">

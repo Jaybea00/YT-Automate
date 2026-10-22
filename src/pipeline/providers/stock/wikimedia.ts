@@ -17,6 +17,28 @@ interface CommonsPage {
   }>;
 }
 
+/** Image formats ffmpeg and the page renderer read directly. Others (mostly TIFF scans) use Commons' JPEG rendering. */
+const DIRECT_IMAGE_MIME = /^image\/(jpeg|png|webp|gif)$/;
+/** Width of the JPEG rendering fetched for TIFF and other formats that aren't read directly. */
+const RENDERED_IMAGE_WIDTH = 1920;
+/** The only thumbnail widths Commons serves; any other width gets HTTP 400. */
+export const COMMONS_THUMB_WIDTHS = [120, 250, 330, 500, 960, 1280, 1920, 3840] as const;
+
+/** The largest standard thumbnail width that doesn't exceed `max`, and at least 960. */
+export function commonsThumbWidth(max: number): number {
+  let width = 960;
+  for (const w of COMMONS_THUMB_WIDTHS) if (w <= max && w > width) width = w;
+  return width;
+}
+
+/**
+ * Changes the width in a Commons thumbnail URL. Thumbnails end in "/800px-Name.jpg", or for TIFF
+ * and other paged formats "/lossy-page1-800px-Name.tif.jpg".
+ */
+export function resizeCommonsThumb(thumbUrl: string, width: number): string {
+  return thumbUrl.replace(/([/-])\d+px-([^/]+)$/, `$1${width}px-$2`);
+}
+
 export interface WikimediaOptions {
   limit?: number;
   minWidth?: number;
@@ -106,6 +128,12 @@ export async function searchWikimediaCommons(
       const license = extmeta.LicenseShortName?.value || extmeta.UsageTerms?.value || 'Public domain / CC';
       const author = extmeta.Artist?.value?.replace(/<[^>]*>?/gm, '').trim() || 'Wikimedia Commons contributor';
 
+      // ffmpeg can't decode many TIFF scans (they come out 0x0), so fetch Commons' JPEG rendering instead
+      let downloadUrl = info.url as string;
+      if (!isVideo && !DIRECT_IMAGE_MIME.test(mime) && info.thumburl && /\/thumb\//.test(info.thumburl)) {
+        downloadUrl = resizeCommonsThumb(info.thumburl, commonsThumbWidth(width > 0 ? Math.min(width, RENDERED_IMAGE_WIDTH) : RENDERED_IMAGE_WIDTH));
+      }
+
       candidates.push({
         id: `wiki_${page.pageid || Math.random()}`,
         provider: 'wikimedia',
@@ -113,7 +141,7 @@ export async function searchWikimediaCommons(
         title: title.replace(/^File:/, ''),
         // Commons always returns url for an imageinfo request
         thumbnailUrl: (info.thumburl || info.url) as string,
-        downloadUrl: info.url as string,
+        downloadUrl,
         pageUrl: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(title)}`,
         width,
         height,
@@ -133,6 +161,20 @@ export async function searchWikimediaCommons(
 }
 
 /**
+ * Fetches a file from Wikimedia's media servers. They briefly answer 429 when many files are
+ * requested in a row, so a 429 is retried once after the wait they ask for (capped at 10 s).
+ */
+export async function fetchCommonsFile(url: string, signal?: AbortSignal): Promise<Response> {
+  const get = () => fetch(url, { headers: { 'User-Agent': 'YT-Automation/1.0 (https://github.com)' }, signal });
+  const res = await get();
+  if (res.status !== 429) return res;
+  const retryAfter = Number(res.headers.get('retry-after'));
+  const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 10) * 1000 : 3000;
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+  return get();
+}
+
+/**
  * Downloads a Wikimedia candidate directly to the target file.
  */
 export async function downloadWikimediaAsset(
@@ -141,10 +183,7 @@ export async function downloadWikimediaAsset(
   signal?: AbortSignal,
 ): Promise<string> {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  const res = await fetch(downloadUrl, {
-    headers: { 'User-Agent': 'YT-Automation/1.0 (https://github.com)' },
-    signal,
-  });
+  const res = await fetchCommonsFile(downloadUrl, signal);
 
   if (!res.ok) {
     throw new Error(`Failed to download Wikimedia media from ${downloadUrl} (HTTP ${res.status})`);
