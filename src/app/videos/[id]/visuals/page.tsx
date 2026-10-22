@@ -7,6 +7,7 @@ import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
 import { ShotEditor } from './shot-editor';
 import { RhythmPanel } from './rhythm-panel';
+import { NeedsCheckBar } from './needs-check-bar';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
 
 interface VisualsPageProps {
@@ -1259,6 +1260,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             void fetchVideoData();
           }}
         />
+
+        <NeedsCheckBar videoId={id} refreshKey={cacheBuster} onChanged={() => setCacheBuster(Date.now())} />
 
         <RhythmPanel videoId={id} refreshKey={cacheBuster} />
 

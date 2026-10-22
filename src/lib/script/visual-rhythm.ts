@@ -73,6 +73,8 @@ export interface RhythmShot {
   still?: boolean;
   /** Rendered as something other than planned because the plan couldn't be filled. */
   fallback?: boolean;
+  /** The fallback happened because the relevance check was unavailable, not because nothing fit. */
+  needsCheck?: boolean;
 }
 
 export interface RhythmIssue {
@@ -190,7 +192,14 @@ export function analyzeRhythm(
         rule: 'fallback',
         beat: s.beat,
         shot: s.shot,
-        message: kind === 'blank' ? `${at(s)}: couldn't be rendered (plain background)` : `${at(s)}: planned footage wasn't found, shown as ${s.type.replace('_', ' ')}`,
+        message:
+          kind === 'blank'
+            ? `${at(s)}: couldn't be rendered (plain background)`
+            : s.needsCheck
+              ? kind === 'footage'
+                ? `${at(s)}: footage was picked without a relevance check and may be unrelated; pick it again`
+                : `${at(s)}: footage couldn't be checked for relevance (Gemini limit), shown as ${s.type.replace('_', ' ')}; pick it again later`
+              : `${at(s)}: planned footage wasn't found, shown as ${s.type.replace('_', ' ')}`,
       });
     }
   });

@@ -61,7 +61,12 @@ export function chooseVideoStart(sourceSec: number, shotSec: number): number {
 }
 
 /** No candidate clearly showed the shot; showing something unrelated would be worse than none. */
-export class NoRelevantFootageError extends Error {}
+export class NoRelevantFootageError extends Error {
+  /** True when nothing was picked because the relevance check was unavailable (not because nothing fit). */
+  constructor(message: string, readonly needsCheck = false) {
+    super(message);
+  }
+}
 
 /**
  * Finds footage for a shot: searches with several phrasings of the shot's query, keeps only
@@ -79,7 +84,7 @@ export async function renderFootageShot(
   const query = options.query ?? shot.visual_query;
   const preferArchive = options.preferArchive ?? shot.visual_type === 'archive';
   const searchShot: ShotPlan = { ...shot, visual_query: query, visual_type: preferArchive ? 'archive' : 'stock' };
-  const { ranked, checked } = await pickFootage({
+  const { ranked, checked, unavailable } = await pickFootage({
     shot: searchShot,
     stockProvider: ctx.stockProvider,
     stockCtx: ctx.stockCtx,
@@ -88,6 +93,9 @@ export async function renderFootageShot(
     llmCtx: ctx.llmCtx,
   });
   if (ranked.length === 0) {
+    if (unavailable) {
+      throw new NoRelevantFootageError(`Relevance check unavailable for "${query}" (${unavailable.slice(0, 120)})`, true);
+    }
     throw new NoRelevantFootageError(
       checked ? `No candidate clearly shows "${query}"` : `No footage found for "${query}"`,
     );
@@ -258,8 +266,9 @@ export function createShotRenderer(
       if (!(err instanceof NoRelevantFootageError)) throw err;
       console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: ${err.message}; showing the narration as type instead`);
       const card = await renderTextCard(shot, slot, clipPath, ctx, [options.note, err.message].filter(Boolean).join('; '));
-      // Marked so the composer can let neighbouring footage cover it instead
-      return { ...card, fallback: true };
+      // Marked so the composer can let neighbouring footage cover it instead, and, when the check
+      // was unavailable, so the shot can be picked again once it's back
+      return { ...card, fallback: true, ...(err.needsCheck ? { needsCheck: true } : {}) };
     }
   };
 
