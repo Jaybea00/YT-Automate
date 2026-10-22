@@ -326,6 +326,7 @@ ${historical
     ? '10 = exactly the subject; 7 = clearly the right subject or place; 4 = loosely related; 0 = unrelated or misleading.'
     : '10 = the main subject with the described details; 7 = clearly shows the main subject, even if the angle, setting or details differ; 4 = related, but the main subject is not shown; 0 = unrelated or misleading.'}
 If the shot names a specific person, place, building, or event, an image that doesn't show it scores at most 5, even when it is from the right period.
+If the image clearly shows a specific team, club, brand or organisation (a crest, kit, logo, banner or caption) different from the one the shot or narration is about, score it at most 3 and set subject_match false: a rival club's trophy celebration misleads viewers.
 Score low for: the wrong era (modern scenes in a historical shot), a different named person or place, watermarks or large text overlays, posters, book covers, pages of text, collages, or maps.
 era_ok: false if the image is clearly from the wrong period for this shot.
 subject_match: false if the shot names a specific person, place, building, or event and the image does not show it (or you can't tell that it does); true otherwise.
@@ -355,28 +356,96 @@ search_suggestions: two short stock-library searches (2 to 3 plain words each) f
 export interface PickFootageOptions extends GatherOptions {
   llmProvider?: LLMProvider;
   llmCtx?: ProviderCallContext;
+  /** Overrides VISION_RETRY_DELAYS_MS (tests). */
+  retryDelaysMs?: number[];
 }
 
 /**
  * Candidates for a shot, best first. With vision, only candidates that clearly show the shot are
  * returned (possibly none); without it, every candidate in heuristic order.
  */
-export async function pickFootage(options: PickFootageOptions): Promise<{ ranked: RankedCandidate[]; checked: boolean }> {
+export async function pickFootage(options: PickFootageOptions): Promise<FootagePick> {
   const candidates = await gatherCandidates(options);
-  if (options.llmProvider?.supportsVision && options.llmCtx && candidates.length > 0) {
+  const llm = options.llmProvider;
+  const ctx = options.llmCtx;
+  if (!llm?.supportsVision || !ctx) {
+    // No vision model configured at all: title matching is the only ranking there is
+    return { ranked: heuristicRank(options.shot, candidates), checked: false };
+  }
+  if (candidates.length === 0) return { ranked: [], checked: true };
+
+  const retry = <T>(fn: () => Promise<T>) => withVisionRetries(fn, options.retryDelaysMs);
+  try {
+    const first = await retry(() => visionRate(options.shot, candidates, llm, ctx));
+    const ranked = first.ranked.filter((r) => r.score >= MIN_RELEVANCE);
+    if (ranked.length > 0) return { ranked, checked: true };
+    // Nothing showed the shot: one more try, searching for its main subject
+    const seen = new Set([...(options.exclude ?? []), ...candidates.map(candidateKey)]);
+    const broad = await gatherCandidates({ ...options, exclude: seen, broad: true, queries: first.suggestions });
+    if (broad.length === 0) return { ranked: [], checked: true };
+    const second = await retry(() => visionRank(options.shot, broad, llm, ctx));
+    return { ranked: second.filter((r) => r.score >= MIN_RELEVANCE), checked: true };
+  } catch (err) {
+    // Never fall back to title matching here: it put a bus on screen for "Golden Boy award" and a
+    // car for "Inter Milan". The shot is left for a later check instead.
+    const reason = err instanceof Error ? err.message.slice(0, 200) : String(err);
+    console.warn(`[FootagePicker] Relevance check unavailable (${reason}); the shot is marked "needs check"`);
+    return { ranked: [], checked: false, unavailable: reason };
+  }
+}
+
+export interface FootagePick {
+  ranked: RankedCandidate[];
+  /** True when the vision model judged the candidates (only relevant ones are returned). */
+  checked: boolean;
+  /** Set when a vision model is configured but couldn't be reached: nothing was picked, so the shot needs a later check. */
+  unavailable?: string;
+}
+
+// --------------------------------------------------------------------------
+// Relevance-check retries
+// --------------------------------------------------------------------------
+
+/** Waits before retrying a failed relevance check; rate limits usually clear within a minute. */
+export const VISION_RETRY_DELAYS_MS = [15_000, 45_000];
+/** After this many shots in a row lose the check even with retries, the model is treated as down... */
+const OUTAGE_AFTER_FAILURES = 2;
+/** ...for this long: shots are marked "needs check" at once instead of each waiting a minute. */
+const OUTAGE_PAUSE_MS = 10 * 60_000;
+const visionHealth = { consecutiveFailures: 0, pausedUntil: 0 };
+
+export function resetVisionHealth(): void {
+  visionHealth.consecutiveFailures = 0;
+  visionHealth.pausedUntil = 0;
+}
+
+/**
+ * Runs a relevance check, retrying after the given delays when it fails. A success clears the
+ * failure count; failing shot after shot pauses the checks for a while (a daily quota running out
+ * would otherwise cost every remaining shot a minute of waiting).
+ */
+export async function withVisionRetries<T>(fn: () => Promise<T>, delaysMs: number[] = VISION_RETRY_DELAYS_MS): Promise<T> {
+  if (Date.now() < visionHealth.pausedUntil) {
+    throw new Error(`relevance checks paused for ${Math.ceil((visionHealth.pausedUntil - Date.now()) / 60_000)} min after repeated failures`);
+  }
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
     try {
-      const first = await visionRate(options.shot, candidates, options.llmProvider, options.llmCtx);
-      const ranked = first.ranked.filter((r) => r.score >= MIN_RELEVANCE);
-      if (ranked.length > 0) return { ranked, checked: true };
-      // Nothing showed the shot: one more try, searching for its main subject
-      const seen = new Set([...(options.exclude ?? []), ...candidates.map(candidateKey)]);
-      const broad = await gatherCandidates({ ...options, exclude: seen, broad: true, queries: first.suggestions });
-      if (broad.length === 0) return { ranked: [], checked: true };
-      const second = await visionRank(options.shot, broad, options.llmProvider, options.llmCtx);
-      return { ranked: second.filter((r) => r.score >= MIN_RELEVANCE), checked: true };
+      const result = await fn();
+      visionHealth.consecutiveFailures = 0;
+      return result;
     } catch (err) {
-      console.warn(`[FootagePicker] Vision check unavailable (${err instanceof Error ? err.message.slice(0, 160) : err}); ranking by title`);
+      lastError = err;
+      if (attempt < delaysMs.length) {
+        console.warn(`[FootagePicker] Relevance check failed (${err instanceof Error ? err.message.slice(0, 120) : err}); retrying in ${Math.round(delaysMs[attempt] / 1000)} s`);
+        await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+      }
     }
   }
-  return { ranked: heuristicRank(options.shot, candidates), checked: false };
+  visionHealth.consecutiveFailures++;
+  if (visionHealth.consecutiveFailures >= OUTAGE_AFTER_FAILURES) {
+    visionHealth.pausedUntil = Date.now() + OUTAGE_PAUSE_MS;
+    console.warn(`[FootagePicker] Relevance checks keep failing; pausing them for ${OUTAGE_PAUSE_MS / 60_000} min (shots meanwhile are marked "needs check")`);
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

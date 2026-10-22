@@ -3,6 +3,7 @@ import type { ScriptBeat } from '@/lib/script/generate-script';
 import { SPEECH_WORDS_PER_SECOND } from '@/lib/script/script-quality';
 import { analyzeRhythm, kindOf, type RhythmReport, type RhythmShot } from '@/lib/script/visual-rhythm';
 import { readSidecar } from './shot-editor';
+import { shotNeedsCheck } from './shot-composer';
 import { stylePack } from '@/lib/styles/packs';
 
 /** A beat with one visual (no shot plan, or the user's upload) counts as one shot of this type. */
@@ -43,7 +44,8 @@ export async function computeRenderedRhythm(supabase: SupabaseClient, videoId: s
           seconds: s.durationSec,
           query: kindOf(s.renderedType) === 'footage' ? s.plan?.visual_query : undefined,
           still: s.still,
-          fallback: Boolean(s.fallback) || s.renderedType === 'color',
+          fallback: Boolean(s.fallback) || s.renderedType === 'color' || shotNeedsCheck(s),
+          needsCheck: shotNeedsCheck(s),
         });
       });
     } else if (asset) {
@@ -56,6 +58,34 @@ export async function computeRenderedRhythm(supabase: SupabaseClient, videoId: s
     }
   }
   return shots.length ? analyzeRhythm(shots, 'render', [], stylePack(video?.style)?.maxGraphicsShare) : null;
+}
+
+export interface NeedsCheckShot {
+  beatIndex: number;
+  shotIndex: number;
+  covers: string;
+}
+
+/**
+ * Shots picked while the relevance check was unavailable (e.g. the vision quota ran out), read
+ * from the beats' shot sidecars, in viewing order. Each can be picked again from the shot editor.
+ */
+export async function listNeedsCheck(supabase: SupabaseClient, videoId: string): Promise<NeedsCheckShot[]> {
+  const { data: assets } = await supabase
+    .from('video_assets')
+    .select('beat_index, visual_type, source_url')
+    .eq('video_id', videoId)
+    .eq('visual_type', 'composite')
+    .order('beat_index');
+  const out: NeedsCheckShot[] = [];
+  for (const asset of (assets ?? []) as Array<{ beat_index: number; source_url: string | null }>) {
+    if (!asset.source_url) continue;
+    const sidecar = await readSidecar(asset.source_url).catch(() => null);
+    sidecar?.shots.forEach((s, i) => {
+      if (shotNeedsCheck(s)) out.push({ beatIndex: asset.beat_index, shotIndex: i, covers: s.plan?.covers ?? '' });
+    });
+  }
+  return out;
 }
 
 /** Computes the rendered rhythm and saves it beside the plan's in script_json.rhythm. */

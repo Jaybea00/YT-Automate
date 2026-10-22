@@ -58,6 +58,8 @@ export interface RenderedShot {
   still?: boolean;
   /** Shows something other than planned because the plan couldn't be filled (e.g. no footage found). */
   fallback?: boolean;
+  /** Footage couldn't be checked for relevance (e.g. the vision model's quota ran out): pick again later. */
+  needsCheck?: boolean;
 }
 
 /** A footage candidate kept for swapping, with its relevance score when one was checked. */
@@ -106,6 +108,15 @@ export interface ComposeBeatOptions {
    * (no footage found, or failed) is covered by its footage neighbour in the beat instead.
    */
   extendShot?: (neighbour: ComposedShot, slot: ShotSlot, clipPath: string) => Promise<RenderedShot>;
+}
+
+/**
+ * True when a shot's footage was never checked for relevance: flagged by the renderer, or picked
+ * by title words alone ("unchecked relevance") by renders made before that fallback was removed.
+ */
+export function shotNeedsCheck(shot: Pick<RenderedShot, 'needsCheck' | 'note' | 'renderedType'>): boolean {
+  if (shot.needsCheck) return true;
+  return (shot.renderedType === 'stock' || shot.renderedType === 'archive') && /unchecked relevance/.test(shot.note ?? '');
 }
 
 /** A footage shot held over a missing neighbour stays under this, so it doesn't drag. */

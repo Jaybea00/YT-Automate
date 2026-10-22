@@ -14,6 +14,8 @@ interface EditorShot {
   attribution?: string | null;
   note?: string;
   error?: string;
+  /** The relevance check was unavailable when this shot was picked: pick again once it's back. */
+  needsCheck?: boolean;
   alternatives?: ShotAlternative[];
   plan: { visual_query: string; covers: string };
 }
@@ -31,6 +33,7 @@ const TYPE_LABEL: Record<string, { label: string; bar: string }> = {
   comparison: { label: 'Compare', bar: 'bg-lime-500/80' },
   title: { label: 'Title', bar: 'bg-rose-500/80' },
   kinetic_text: { label: 'Text', bar: 'bg-violet-500/80' },
+  diagram: { label: 'Diagram', bar: 'bg-sky-400/80' },
   color: { label: 'Blank', bar: 'bg-red-600/80' },
 };
 const typeLabel = (t: string) => TYPE_LABEL[t]?.label ?? t;
@@ -152,6 +155,8 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
           const fellBack = s.renderedType !== s.plannedType && !(s.plannedType === 'archive' && s.renderedType === 'stock');
           const pool = open[s.index] === 'search' ? results[s.index] ?? [] : s.alternatives ?? [];
           const isFootage = s.renderedType === 'stock' || s.renderedType === 'archive' || s.plannedType === 'stock' || s.plannedType === 'archive';
+          // Same rule as shotNeedsCheck: flagged, or picked by title alone by older renders
+          const unchecked = Boolean(s.needsCheck) || ((s.renderedType === 'stock' || s.renderedType === 'archive') && /unchecked relevance/.test(s.note ?? ''));
           return (
             <div key={s.index} className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden flex flex-col">
               <div className="relative aspect-video bg-black">
@@ -172,6 +177,11 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                 <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/80 text-zinc-200">
                   {typeLabel(s.renderedType)}
                 </span>
+                {unchecked && (
+                  <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/90 text-black">
+                    Needs check
+                  </span>
+                )}
                 {isBusy && (
                   <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-xs text-zinc-200 text-center px-4">
                     {isBusy}
@@ -184,6 +194,11 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                 <p className="text-zinc-500 font-mono">{s.plan.visual_query}</p>
                 {fellBack && (
                   <p className="text-amber-300">Planned as {typeLabel(s.plannedType)}, shown as {typeLabel(s.renderedType)}.</p>
+                )}
+                {unchecked && (
+                  <p className="text-amber-300">
+                    Footage couldn&apos;t be checked for relevance when this was made (usually the Gemini limit). Use Find another once it has reset.
+                  </p>
                 )}
                 {s.note && <p className="text-zinc-400">{s.note}</p>}
                 {s.error && <p className="text-red-400">Render failed: {s.error}</p>}
