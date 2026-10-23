@@ -3,6 +3,15 @@
 import React, { useEffect, useState, useRef, use } from 'react';
 import Link from 'next/link';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
+import { ChatPanel } from './chat-panel';
+import { SHORTCUTS, useStableCallback, useVibeditShortcuts } from './shortcuts';
+import { BeatPreviewButton } from './beat-preview';
+import { CaptionEditor } from './caption-editor';
+import { BulkFixes } from './bulk-fixes';
+import { VersionsPanel } from './versions-panel';
+import { AlternativeCard } from '../visuals/alternative-card';
+import { ShotEditor } from '../visuals/shot-editor';
+import { ReviewNotes } from './review-notes';
 
 interface VibeditPageProps {
   params: Promise<{ id: string }>;
@@ -44,6 +53,7 @@ interface VideoProgressData {
     script_json?: {
       beats?: ScriptBeat[];
       still_motion?: 'zoom' | 'static';
+      preview?: { renderedAt: string | null; error: string | null; only?: number[] };
     } | null;
   };
   job: {
@@ -218,6 +228,21 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
       setIsPlaying(true);
     }
   }
+
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  // After a chat edit or bulk fix: fresh thumbnails and data (stable, for the bulk poller's effect)
+  const refreshAfterEdit = useStableCallback(() => {
+    setCacheBuster(Date.now());
+    fetchVideoData();
+  });
+  useVibeditShortcuts({
+    video: () => videoRef.current,
+    beatCount: beats.length,
+    activeBeat: activeBeatIndex,
+    jumpToBeat: handleJumpToBeat,
+    toggleMode: () => setPlayerMode((m) => (m === 'master' ? 'beat' : 'master')),
+    toggleHelp: () => setShowShortcuts((s) => !s),
+  });
 
 
   async function handleRegenTts(index: number) {
@@ -442,6 +467,28 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
+      {showShortcuts && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setShowShortcuts(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white">⌨️ Keyboard shortcuts</h2>
+              <button onClick={() => setShowShortcuts(false)} className="text-zinc-400 hover:text-white text-sm">✕</button>
+            </div>
+            <table className="w-full text-xs">
+              <tbody>
+                {SHORTCUTS.map((s) => (
+                  <tr key={s.keys} className="border-t border-zinc-800">
+                    <td className="py-1.5 pr-3 font-mono text-indigo-300 whitespace-nowrap">{s.keys}</td>
+                    <td className="py-1.5 text-zinc-300">{s.does}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-zinc-500">They don&apos;t fire while you type in a box.</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Navigation Bar */}
       <header className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -469,6 +516,13 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowShortcuts((s) => !s)}
+            title="Keyboard shortcuts (?)"
+            className="px-2 py-1 rounded-lg bg-zinc-950/80 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-100"
+          >
+            ⌨️ Shortcuts
+          </button>
           {/* Still Image Motion Mode */}
           <div className="flex items-center gap-1 bg-zinc-950/80 border border-zinc-800 rounded-lg p-0.5" title="Still photo motion: Static keeps photos stationary, Zoom applies Ken Burns slow zoom">
             <span className="text-[10px] text-zinc-400 font-medium px-2">Photos:</span>
@@ -706,6 +760,22 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
               })}
             </div>
 
+            {/* Review notes pinned to moments */}
+            <ReviewNotes
+              videoId={id}
+              currentSec={currentTime}
+              totalSec={totalCalculatedDuration}
+              activeBeat={activeBeatIndex}
+              onSeek={(note) => {
+                if (playerMode === 'master' && videoRef.current) {
+                  videoRef.current.currentTime = note.atSec;
+                  setActiveBeatIndex(note.beat);
+                } else {
+                  handleJumpToBeat(note.beat);
+                }
+              }}
+            />
+
             {/* Quick Beat Selector Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-1">
               {beats.map((_, i) => (
@@ -724,6 +794,16 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
               ))}
             </div>
           </div>
+
+          <ChatPanel
+            videoId={id}
+            onApplied={refreshAfterEdit}
+            onJumpToBeat={handleJumpToBeat}
+          />
+
+          <BulkFixes videoId={id} onApplied={refreshAfterEdit} />
+
+          <VersionsPanel videoId={id} onRestored={refreshAfterEdit} onJumpToBeat={handleJumpToBeat} />
 
           {assemblyMsg && (
             <div className="p-3 bg-red-950/60 border border-red-800 rounded-xl text-xs text-red-200">
@@ -792,9 +872,18 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                     )}
                   </div>
 
-                  <span className="text-xs text-zinc-500 font-mono">
-                    {beatTimings[index]?.durSec.toFixed(1)}s
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {asset && (
+                      <BeatPreviewButton
+                        videoId={id}
+                        beatIndex={index}
+                        preview={data.video.script_json?.preview ?? null}
+                      />
+                    )}
+                    <span className="text-xs text-zinc-500 font-mono">
+                      {beatTimings[index]?.durSec.toFixed(1)}s
+                    </span>
+                  </div>
                 </div>
 
                 {/* Inline Script Edit & Single-Beat TTS Regen */}
@@ -823,6 +912,26 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                     className="w-full text-xs font-medium leading-relaxed bg-zinc-950/80 border border-zinc-800 rounded-xl p-3 text-zinc-200 focus:outline-none focus:border-indigo-500 transition resize-none"
                   />
                 </div>
+
+                {/* Caption editor (the active beat only) */}
+                {isActive && (
+                  <details className="group rounded-xl border border-zinc-800 bg-zinc-950/40">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">📝 Captions: fix words, highlight, line breaks</summary>
+                    <div className="px-3 pb-3">
+                      <CaptionEditor key={index} videoId={id} beatIndex={index} />
+                    </div>
+                  </details>
+                )}
+
+                {/* The beat's shots, each with its scored alternatives (composed beats) */}
+                {isActive && asset?.visual_type === 'composite' && (
+                  <details open className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">🎞️ Shots: swap, search, redo each one</summary>
+                    <div className="px-3 pb-3">
+                      <ShotEditor key={index} videoId={id} beatIndex={index} onChanged={refreshAfterEdit} />
+                    </div>
+                  </details>
+                )}
 
                 {/* Active Beat Visual Thumbnail Strip */}
                 {asset && (() => {
@@ -972,56 +1081,26 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                   {pool.length > 0 ? (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                       {pool.map((cand: MediaCandidate, cIdx: number) => {
-                        const isCurrent =
+                        const isCurrent = Boolean(
                           asset?.source_url?.includes(cand.downloadUrl) ||
-                          (asset?.attribution_text &&
-                            cand.attribution &&
-                            asset.attribution_text === cand.attribution);
-
+                            (asset?.attribution_text && cand.attribution && asset.attribution_text === cand.attribution),
+                        );
                         return (
-                          <div
+                          <AlternativeCard
                             key={cand.id || cIdx}
-                            className={`group relative rounded-xl overflow-hidden border bg-zinc-950 flex flex-col justify-between transition ${
-                              isCurrent
-                                ? 'border-emerald-500 ring-2 ring-emerald-500/30'
-                                : 'border-zinc-800 hover:border-indigo-500/60'
-                            }`}
-                          >
-                            <div className="relative aspect-video w-full bg-black overflow-hidden">
-                              {cand.thumbnailUrl ? (
-                                <img
-                                  src={cand.thumbnailUrl}
-                                  alt={cand.title}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                                />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[10px] text-zinc-600">
-                                  No thumb
-                                </div>
-                              )}
-                              <span className="absolute top-1 left-1 px-1 py-0.2 rounded text-[8px] font-bold uppercase bg-black/80 text-zinc-300">
-                                {cand.provider}
-                              </span>
-                            </div>
-
-                            <div className="p-1.5 space-y-1">
-                              <p className="text-[10px] text-zinc-300 font-medium truncate" title={cand.title}>
-                                {cand.title || 'Media candidate'}
-                              </p>
-                              <button
-                                type="button"
-                                disabled={isSwapping || !!isCurrent}
-                                onClick={() => handleSwapCandidate(index, cand)}
-                                className={`w-full py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
-                                  isCurrent
-                                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-800 cursor-default'
-                                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                                }`}
-                              >
-                                {isCurrent ? '✓ Active' : isSwapping ? '...' : '⚡ Swap'}
-                              </button>
-                            </div>
-                          </div>
+                            thumbnailUrl={cand.thumbnailUrl}
+                            title={cand.title}
+                            provider={cand.provider}
+                            isVideo={cand.mediaType === 'video'}
+                            videoUrl={cand.mediaType === 'video' ? cand.previewUrl || cand.downloadUrl : undefined}
+                            pageUrl={cand.pageUrl}
+                            license={cand.license}
+                            durationSec={cand.duration}
+                            current={isCurrent}
+                            disabled={isSwapping}
+                            onPick={() => handleSwapCandidate(index, cand)}
+                            pickLabel={isSwapping ? 'Swapping…' : 'Swap in'}
+                          />
                         );
                       })}
                     </div>

@@ -14,11 +14,13 @@ export async function handleAssemblyRequest(
 
   const supabase = supabaseClient ?? getSupabaseServerClient();
   // A quick low-resolution preview: the video's status and finished render stay as they are
-  const body = (await req.clone().json().catch(() => ({}))) as { draft?: boolean };
+  const body = (await req.clone().json().catch(() => ({}))) as { draft?: boolean; beats?: unknown };
   const draft = body?.draft === true;
+  // A preview may cover chosen beats only
+  const beats = Array.isArray(body?.beats) ? body.beats.filter((n): n is number => Number.isInteger(n) && n >= 0).slice(0, 50) : undefined;
 
   // The assembly gate (every beat needs an asset), then a pipeline job targeting ['assembly']
-  const result = await queueAssemblyJob(supabase, id, { draft });
+  const result = await queueAssemblyJob(supabase, id, { draft, beats });
   if (!result.ok) {
     return NextResponse.json(
       result.missingBeats

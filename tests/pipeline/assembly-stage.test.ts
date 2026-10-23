@@ -447,6 +447,52 @@ describe('Assembly Stage Pipeline Tests', () => {
     }
   });
 
+  it('5e. A preview of chosen beats renders only those beats', async () => {
+    const videoId = 'vid-beat-preview';
+    const jobId = 'job-beat-preview';
+    const { supabase, db } = createMockSupabase({
+      videos: [{ id: videoId, title: 'Beat preview', status: 'rendered', script_json: { beats: [{ index: 0, text: 'Beat 0 narration' }, { index: 1, text: 'Beat 1 narration' }] } }],
+      video_assets: [
+        { video_id: videoId, beat_index: 0, visual_type: 'uploaded', source_url: testImage },
+        { video_id: videoId, beat_index: 1, visual_type: 'uploaded', source_url: testImage },
+      ],
+      yt_jobs: [
+        {
+          id: jobId,
+          video_id: videoId,
+          topic: 'Beat preview',
+          template: 'tech-explainer',
+          status: 'running',
+          stages: ['assembly'],
+          script: {
+            draft: true,
+            preview_beats: [1],
+            scenes: [
+              { scene_number: 0, narration: 'Beat 0 narration', visual_prompt: 'p' },
+              { scene_number: 1, narration: 'Beat 1 narration', visual_prompt: 'p' },
+            ],
+          },
+        },
+      ],
+      yt_job_units: [
+        { job_id: jobId, stage: 'tts', unit_index: 0, status: 'done', output_path: testAudio1, duration_ms: 2000, input_hash: 'a' },
+        { job_id: jobId, stage: 'tts', unit_index: 1, status: 'done', output_path: testAudio2, duration_ms: 1500, input_hash: 'b' },
+      ],
+    });
+    try {
+      const out = await new JobRunner({ jobId, supabase, baseOutputDir: path.join(tempDir, 'job_beat_preview') }).runAssemblyStage();
+      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out]);
+      const duration = Number.parseFloat(stdout);
+      assert.ok(duration < 3, `only beat 1 (1.5 s of narration plus pauses), got ${duration}s`);
+      assert.deepEqual(db.yt_job_units.filter((u) => u.job_id === jobId && u.stage === 'assembly').map((u) => u.unit_index), [1]);
+      const video = db.videos.find((v) => v.id === videoId);
+      assert.deepEqual(video?.script_json?.preview?.only, [1]);
+      assert.equal(video?.status, 'rendered');
+    } finally {
+      await fs.rm(path.join(process.cwd(), 'storage', 'renders', videoId), { recursive: true, force: true });
+    }
+  });
+
   it('6. GET /api/videos/[id]/render serves video and supports HTTP 206 Range requests', async () => {
     const videoId = 'vid-render-route-test';
     const rendersDir = path.join(process.cwd(), 'storage', 'renders', videoId);

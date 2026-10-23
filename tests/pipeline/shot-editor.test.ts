@@ -113,6 +113,22 @@ describe('Shot editor', () => {
     const credit = db.writes.find((w) => w.visual_type === 'composite');
     assert.equal(credit?.license_type, 'cc_by_sa', 'the strictest license wins');
     assert.equal(credit?.attribution_text, 'Photographer X');
+
+    // A new search (the chat editor's "footage" change) becomes the shot's plan
+    const searched = await replaceShot({
+      supabase: db.client,
+      videoId: 'v1',
+      beat,
+      shotIndex: 1,
+      plan: { ...updated.plan, visual_type: 'archive', visual_query: 'dock strike 1926' },
+      render: async (slot, clipPath) => {
+        assert.equal(slot.shot.visual_query, 'dock strike 1926', 'rendered for the new search');
+        await makeColorClip('#22aa22', slot.frames, clipPath);
+        return { clipPath, renderedType: 'archive' };
+      },
+    });
+    assert.equal(searched.plan.visual_query, 'dock strike 1926');
+    assert.equal(JSON.parse(await fs.readFile(sidecarPath(trackPath), 'utf-8')).shots[1].plan.visual_query, 'dock strike 1926', 'kept for a later redo');
   });
 
   it('leaves the beat untouched when the replacement fails', async () => {
