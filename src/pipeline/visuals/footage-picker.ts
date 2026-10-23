@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { ShotPlan } from '@/lib/script/generate-script';
 import { archiveFilmFrame, searchArchiveOrg } from '../providers/stock/archive-org';
 import { searchNasa } from '../providers/stock/nasa';
+import { listLibrary, searchLibrary } from './clip-library';
+import * as fsp from 'node:fs/promises';
 import { searchWikimediaCommons } from '../providers/stock/wikimedia';
 import { searchUnsplash } from '../providers/stock/unsplash';
 import type { LLMProvider, LlmImage, ProviderCallContext, StockProvider } from '../providers/types';
@@ -186,6 +188,8 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
   }
 
   const variants = queryVariants(shot.visual_query);
+  // The creator's own library comes first: their footage, when it fits, beats anyone's
+  add(searchLibrary(`${shot.visual_query} ${shot.covers ?? ''}`, await listLibrary().catch(() => [])), 3);
   // NASA's public-domain film and photos, first in line for space subjects
   if (SPACE_SUBJECT.test(`${shot.visual_query} ${shot.covers ?? ''}`)) {
     const nasa = await safe(searchNasa(variants[0] ?? shot.visual_query, { limit: 6 }));
@@ -273,6 +277,11 @@ const OFF_SUBJECT_CAP = 5;
 
 async function fetchThumbnail(url: string): Promise<LlmImage | null> {
   if (!url) return null;
+  // Library clips keep their thumbnail on disk
+  if (!/^https?:/i.test(url)) {
+    const bytes = await fsp.readFile(url).catch(() => null);
+    return bytes && bytes.length <= MAX_THUMB_BYTES ? { mimeType: 'image/jpeg', data: bytes.toString('base64') } : null;
+  }
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'YT-Automation/1.0 (footage relevance check)' },

@@ -163,10 +163,13 @@ export async function renderCandidateShot(
   clipPath: string,
   ctx: ShotRenderContext,
   candidate: MediaCandidate,
-  options: { note?: string; captionShot?: ShotPlan; score?: number } = {},
+  options: { note?: string; captionShot?: ShotPlan; score?: number; startSec?: number } = {},
 ): Promise<RenderedShot> {
   const isVideo = candidate.mediaType === 'video';
-  const ext = isVideo ? '.mp4' : path.extname(new URL(candidate.downloadUrl).pathname).toLowerCase().replace(/[^.a-z]/g, '') || '.jpg';
+  const local = !/^https?:/i.test(candidate.downloadUrl);
+  const ext = isVideo
+    ? '.mp4'
+    : path.extname(local ? candidate.downloadUrl : new URL(candidate.downloadUrl).pathname).toLowerCase().replace(/[^.a-z]/g, '') || '.jpg';
   const hash = crypto.createHash('sha1').update(sourceKey(candidate)).digest('hex').slice(0, 16);
   const sourcePath = path.join(ctx.downloadDir, `${candidate.provider}_${hash}${ext}`);
   await downloadCandidateAsset(candidate, sourcePath, ctx.stockCtx, ctx.stockProvider);
@@ -211,9 +214,12 @@ export async function renderCandidateShot(
   let startSec = 0;
   if (isVideo) {
     const sourceSec = await probeClipDurationSec(sourcePath);
+    // A start the creator chose wins; otherwise the best seconds are found by looking
     startSec =
-      (await pickVideoSegment({ sourcePath, sourceSec, shotSec, shot, llm: ctx.llmProvider, llmCtx: ctx.llmCtx })) ??
-      chooseVideoStart(sourceSec, shotSec);
+      options.startSec !== undefined
+        ? Math.max(0, Math.min(options.startSec, Math.max(0, sourceSec - shotSec)))
+        : ((await pickVideoSegment({ sourcePath, sourceSec, shotSec, shot, llm: ctx.llmProvider, llmCtx: ctx.llmCtx })) ??
+          chooseVideoStart(sourceSec, shotSec));
   }
 
   // Historical shots from real archives get the archive texture; modern stock never does

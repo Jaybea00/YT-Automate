@@ -16,7 +16,9 @@ export type ShotEdit =
   /** Pick again, excluding what is there now (graphics re-render, footage re-searches). */
   | { action: 'redo' }
   /** Show the narration as animated type. */
-  | { action: 'text' };
+  | { action: 'text' }
+  /** The creator's own file (already saved on disk), with its licence and, for a video, an optional start. */
+  | { action: 'upload'; filePath: string; mediaType: 'video' | 'image'; license: string; attribution?: string | null; startSec?: number };
 
 async function editorContext(supabase: SupabaseClient, videoId: string, beat: ComposedBeatRecord, needsBrowser: boolean) {
   const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
@@ -70,6 +72,27 @@ export async function editShot(options: {
       beat,
       shotIndex,
       render: async (slot, clipPath) => {
+        if (edit.action === 'upload') {
+          const footagePlan = plan.visual_type === 'archive' || plan.visual_type === 'stock' ? plan : { ...plan, visual_type: 'stock' as const };
+          const rendered = await renderCandidateShot(
+            footagePlan,
+            slot,
+            clipPath,
+            ctx,
+            {
+              id: `upload_${path.basename(edit.filePath)}`,
+              provider: 'uploaded',
+              mediaType: edit.mediaType,
+              title: 'Your upload',
+              thumbnailUrl: '',
+              downloadUrl: edit.filePath,
+              license: edit.license,
+              attribution: edit.attribution ?? 'Your footage',
+            },
+            { note: 'uploaded by you', ...(edit.startSec !== undefined ? { startSec: edit.startSec } : {}) },
+          );
+          return { ...rendered, alternatives: current.alternatives };
+        }
         if (edit.action === 'text') {
           return { ...(await renderTextCard(plan, slot, clipPath, ctx, 'set as type by you')), alternatives: current.alternatives };
         }

@@ -6,6 +6,7 @@ import {
   autoMapFilesToBeats,
   AutoMapOptions,
 } from '@/lib/visuals/batch-mapper';
+import { SmartMatchPanel } from './smart-match-panel';
 
 export interface BatchUploaderProps {
   videoId: string;
@@ -584,6 +585,15 @@ export default function BatchVisualUploader({
               />
             </div>
           </div>
+
+          {/* Matching by content: files go to the shots they fit */}
+          <SmartMatchPanel
+            videoId={videoId}
+            files={items.map((i) => i.file)}
+            license={defaultLicense}
+            attribution={defaultAttribution}
+            onApplied={() => onBatchComplete?.()}
+          />
 
           {/* Global Provenance / License Defaults */}
           <div className="bg-zinc-950/40 border border-zinc-800/80 rounded-xl p-4 space-y-3">

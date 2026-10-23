@@ -123,6 +123,12 @@ export async function downloadCandidateAsset(
 ): Promise<string> {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
+  // The creator's own file, already on disk
+  if (candidate.provider === 'uploaded' && !/^https?:/i.test(candidate.downloadUrl)) {
+    await fs.copyFile(candidate.downloadUrl, targetPath);
+    return targetPath;
+  }
+
   if (candidate.provider === 'pollinations' || candidate.provider === 'openai') {
     const { downloadAndSaveAiImage } = await import('./ai-image-step');
     return downloadAndSaveAiImage(candidate, targetPath);
