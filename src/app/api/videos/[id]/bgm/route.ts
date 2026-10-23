@@ -36,12 +36,18 @@ export async function handleGetBgm(
     track: video.bgm_track || video.script_json?.bgm?.track || 'story',
     volume: Number(video.bgm_volume ?? video.script_json?.bgm?.volume ?? 0.2),
     customUrl: video.bgm_custom_url || video.script_json?.bgm?.customUrl || null,
+    // Swells into reveals, silence before key lines, stings at chapter changes
+    accents: video.script_json?.bgm?.accents !== false,
   };
 
   const sfx = {
     enabled: video.script_json?.sfx?.enabled !== false,
     track: video.script_json?.sfx?.track || 'smart',
     volume: Number(video.script_json?.sfx?.volume ?? 0.25),
+    // Real sounds on the words that describe them (with Smart)
+    narration: video.script_json?.sfx?.narration !== false,
+    // The style's real recordings for on-screen effects (with Smart)
+    palette: video.script_json?.sfx?.palette !== false,
   };
 
   const padStyle = (video.script_json?.pad_style || 'blur') as 'blur' | 'black';
@@ -64,6 +70,8 @@ export async function handleGetBgm(
     archiveLook: video.script_json?.archive_look === 'off' ? 'off' : 'auto',
     presets: PRESET_TRACKS,
     sfxPresets: PRESET_SFX,
+    soundMoments: video.script_json?.sound_moments?.moments ?? null,
+    soundBeds: video.script_json?.sound_moments?.beds ?? null,
   });
 }
 
@@ -95,6 +103,9 @@ export async function handlePostBgm(
   let sfxEnabled: boolean | undefined;
   let sfxTrack: string | undefined;
   let sfxVolume: number | undefined;
+  let sfxNarration: boolean | undefined;
+  let sfxPalette: boolean | undefined;
+  let musicAccents: boolean | undefined;
 
   if (contentType.includes('multipart/form-data')) {
     const formData = await req.formData();
@@ -161,7 +172,11 @@ export async function handlePostBgm(
     if (body.sfxEnabled !== undefined) sfxEnabled = Boolean(body.sfxEnabled);
     if (body.sfxTrack) sfxTrack = String(body.sfxTrack);
     if (body.sfxVolume !== undefined) sfxVolume = parseFloat(String(body.sfxVolume));
+    if (body.sfxNarration !== undefined) sfxNarration = Boolean(body.sfxNarration);
+    if (body.sfxPalette !== undefined) sfxPalette = Boolean(body.sfxPalette);
+    if (body.musicAccents !== undefined) musicAccents = Boolean(body.musicAccents);
     if (body.sfx) {
+      if (body.sfx.narration !== undefined) sfxNarration = Boolean(body.sfx.narration);
       if (body.sfx.enabled !== undefined) sfxEnabled = Boolean(body.sfx.enabled);
       if (body.sfx.track) sfxTrack = String(body.sfx.track);
       if (body.sfx.volume !== undefined) sfxVolume = parseFloat(String(body.sfx.volume));
@@ -187,6 +202,7 @@ export async function handlePostBgm(
     track,
     volume,
     customUrl,
+    accents: musicAccents !== undefined ? musicAccents : scriptJson.bgm?.accents !== false,
   };
   if (padStyle) {
     scriptJson.pad_style = padStyle;
@@ -215,6 +231,8 @@ export async function handlePostBgm(
     enabled: sfxEnabled !== undefined ? sfxEnabled : currentSfx.enabled !== false,
     track: sfxTrack || currentSfx.track || 'smart',
     volume: sfxVolume !== undefined ? sfxVolume : currentSfx.volume ?? 0.25,
+    narration: sfxNarration !== undefined ? sfxNarration : currentSfx.narration !== false,
+    palette: sfxPalette !== undefined ? sfxPalette : currentSfx.palette !== false,
   };
 
   // 2. Update videos table

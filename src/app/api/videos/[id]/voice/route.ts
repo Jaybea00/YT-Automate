@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { beatsToScenes } from '@/pipeline/utils/mapper';
-import { stylePack } from '@/lib/styles/packs';
+import { stylePack, dramaticPauseSec } from '@/lib/styles/packs';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkAssemblyGate } from '@/pipeline/assembly/gate';
@@ -366,6 +366,8 @@ export async function handleVoiceRequest(
     // Documentary pacing is fixed on the job, so the video keeps one pace even if the style changes
     const pacing = stylePack(video.style)?.narration;
     if (pacing) scriptData.narration_pacing = pacing;
+    // Pacing marks ("…") get a real pause; fixed on the job like the pacing
+    scriptData.dramatic_pause_sec = dramaticPauseSec(video.style);
     if (targetTtsProviderConfigId) {
       scriptData.tts_provider_config_id = targetTtsProviderConfigId;
     }

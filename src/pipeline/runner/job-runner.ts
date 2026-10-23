@@ -24,8 +24,11 @@ import { ensureSections } from '../assembly/sections';
 import { readSidecar } from '../visuals/shot-editor';
 import { captionZonesFromTracks, loadCaptionWords } from '../assembly/caption-sources';
 import { applySoundDesign, planSoundCues } from '../assembly/sound-design';
+import { narrationSoundCues } from '../assembly/narration-sounds';
+import { applyPalette } from '../assembly/palettes';
 import { ensureMusicPlan, musicCredits, pickMusic } from '../assembly/music-plan';
 import { buildMusicBed } from '../assembly/music-bed';
+import { accentExpression, accentTimes, ensureMusicMoments, stingPath } from '../assembly/music-accents';
 import { lookFilter } from '../assembly/look';
 import { runFinalQualityCheck, type QualityReport } from '../assembly/final-check';
 import { generateMetadata, type VideoMetadata } from '../publish/metadata';
@@ -1309,6 +1312,36 @@ export class JobRunner {
         }
 
         if (bgmTrackPath) {
+          // Music that hits moments: swells into reveals, silence before key lines, stings at chapter changes
+          let accentExpr: string | undefined;
+          let sting: { path: string; atSec: number[] } | undefined;
+          if (videoId && videoRecord?.script_json?.bgm?.accents !== false) {
+            try {
+              const beatsForMusic = sceneBeatIndexes.map((beatIndex, pos) => ({
+                index: beatIndex,
+                text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+              }));
+              const plan = await ensureMusicMoments(this.supabase, videoId, beatsForMusic.filter((b) => b.text.trim()));
+              const voices = Object.fromEntries(
+                sceneBeatIndexes.map((beatIndex, pos) => {
+                  const start = beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0);
+                  return [beatIndex, { startMs: start, endMs: start + (ttsMap.get(beatIndex)?.duration_ms ?? 0) }];
+                }),
+              );
+              const chapterChangesMs = sections
+                .slice(1)
+                .map((s) => beatStartMs[sceneBeatIndexes.indexOf(s.start_beat)])
+                .filter((ms): ms is number => typeof ms === 'number' && ms > 0);
+              const accents = accentTimes(plan, voices, chapterChangesMs);
+              accentExpr = accentExpression(accents);
+              if (accents.stingsSec.length) sting = { path: await stingPath(), atSec: accents.stingsSec };
+              console.log(
+                `[Assembly] Music accents: ${accents.swellsSec.length} swell(s), ${accents.drops.length} silence(s), ${accents.stingsSec.length} sting(s)`,
+              );
+            } catch (accentErr) {
+              console.warn('[Assembly] Music accents skipped:', accentErr instanceof Error ? accentErr.message.slice(0, 200) : accentErr);
+            }
+          }
           const withMusicPath = path.join(tempDir, `program_music_${Date.now()}.mp4`);
           workingFiles.push(withMusicPath);
           await applyBackgroundMusic({
@@ -1316,6 +1349,8 @@ export class JobRunner {
             bgmPath: bgmTrackPath,
             outputPath: withMusicPath,
             volume: bgmVolume,
+            accentExpression: accentExpr,
+            sting,
           });
           programPath = withMusicPath;
         }
@@ -1324,19 +1359,48 @@ export class JobRunner {
       // 6b+. Smart sound design: effects placed by what's on screen, laid over voice and music
       // (after the music, so the music ducks for the voice only)
       if (sfxEnabled && sfxTrack === 'smart') {
-        const cues = await planSoundCues(
+        const shotCuesPlanned = await planSoundCues(
           sceneBeatIndexes.map((b, pos) => ({
             sceneStartMs: beatStartMs[pos],
             trackPath: trackByBeat.get(b) ?? null,
             opensSection: pacingPlan.get(b)?.dipIn ?? false,
           })),
         );
-        if (cues.length > 0) {
+        // Real sounds on the words that describe them ("fires two shots") and ambience beds; never blocks assembly
+        const narrationPlanned =
+          !videoId || videoRecord?.script_json?.sfx?.narration === false
+            ? { cues: [], beds: [] }
+            : await narrationSoundCues({
+                supabase: this.supabase,
+                videoId,
+                style: videoRecord?.style,
+                beats: sceneBeatIndexes.map((beatIndex, pos) => ({
+                  index: beatIndex,
+                  text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+                  audioPath: ttsMap.get(beatIndex)?.output_path,
+                  voiceStartMs: beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0),
+                  sceneStartMs: beatStartMs[pos],
+                  sceneEndMs: beatStartMs[pos] + Math.round((clipDurationsSec[pos] ?? 0) * 1000),
+                })),
+              }).catch((err) => {
+                console.warn('[Assembly] Narration sounds skipped:', err instanceof Error ? err.message.slice(0, 200) : err);
+                return { cues: [], beds: [] };
+              });
+        // The style's real recordings for on-screen effects, where available
+        const shotCuesVoiced =
+          videoRecord?.script_json?.sfx?.palette === false
+            ? shotCuesPlanned
+            : await applyPalette(shotCuesPlanned, videoRecord?.style).catch(() => shotCuesPlanned);
+        const cues = [...shotCuesVoiced, ...narrationPlanned.cues].sort((a, b) => a.atMs - b.atMs);
+        if (cues.length > 0 || narrationPlanned.beds.length > 0) {
           const withSfxPath = path.join(tempDir, `program_sfx_${Date.now()}.mp4`);
           workingFiles.push(withSfxPath);
-          await applySoundDesign({ videoPath: programPath, outputPath: withSfxPath, cues, volume: sfxVolume });
+          await applySoundDesign({ videoPath: programPath, outputPath: withSfxPath, cues, beds: narrationPlanned.beds, volume: sfxVolume });
           programPath = withSfxPath;
-          console.log(`[Assembly] Sound design: ${cues.length} effects placed`);
+          const real = shotCuesVoiced.filter((c) => c.file).length;
+          console.log(
+            `[Assembly] Sound design: ${cues.length} effects placed (${narrationPlanned.cues.length} on the narration, ${real} real recordings for on-screen effects), ${narrationPlanned.beds.length} ambience bed(s)`,
+          );
         }
       }
 

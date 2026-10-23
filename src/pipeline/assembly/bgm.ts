@@ -15,6 +15,10 @@ export interface ApplyBgmOptions {
   duckingRatio?: number; // compression ratio when voice speaks, default 4
   attackMs?: number; // ducking attack time in ms, default 50
   releaseMs?: number; // ducking release time in ms, default 400
+  /** Swells and silences, as a per-frame volume expression (see music-accents.ts). */
+  accentExpression?: string;
+  /** A sting recording and where it plays (chapter changes), in seconds. */
+  sting?: { path: string; atSec: number[] };
 }
 
 export const PRESET_TRACKS = [
@@ -183,6 +187,8 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     duckingRatio = 4,
     attackMs = 50,
     releaseMs = 400,
+    accentExpression,
+    sting,
   } = options;
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -202,9 +208,22 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
 
   // The voice [0:a] is split: one copy is heard, the other drives the ducking. Sidechain inputs
   // must not be reused as mix inputs, and amix's default normalisation would halve the voice.
+  const accent = accentExpression && accentExpression !== '1' ? `,volume='${accentExpression}':eval=frame` : '';
+  const stings = sting?.atSec.filter((t) => t > 0 && (programSec <= 0 || t < programSec)) ?? [];
+  // Stings sit a little above the music and go through the same ducking
+  const stingGain = Math.min(1, safeVolume * 3);
+  const stingChain = stings.length
+    ? [
+        `[2:a]asplit=${stings.length}${stings.map((_, i) => `[st${i}]`).join('')}`,
+        ...stings.map((t, i) => `[st${i}]adelay=${Math.round(t * 1000)}:all=1,volume=${stingGain.toFixed(2)},aformat=sample_rates=48000:channel_layouts=stereo[sd${i}]`),
+        `[bgm0]aformat=sample_rates=48000:channel_layouts=stereo[bgm0s]`,
+        `[bgm0s]${stings.map((_, i) => `[sd${i}]`).join('')}amix=inputs=${stings.length + 1}:duration=first:dropout_transition=0:normalize=0[bgm]`,
+      ]
+    : ['[bgm0]anull[bgm]'];
   const filterGraph = [
     `[0:a]asplit=2[voice][key]`,
-    `[1:a]volume=${safeVolume.toFixed(2)}${fades}[bgm]`,
+    `[1:a]volume=${safeVolume.toFixed(2)}${accent}${fades}[bgm0]`,
+    ...stingChain,
     `[bgm][key]sidechaincompress=threshold=${duckingThreshold}:ratio=${duckingRatio}:attack=${attackMs}:release=${releaseMs}[ducked_bgm]`,
     `[voice][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`,
   ].join(';');
@@ -217,6 +236,7 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     '-1',
     '-i',
     bgmPath,
+    ...(stings.length ? ['-i', sting!.path] : []),
     '-filter_complex',
     filterGraph,
     '-map',
