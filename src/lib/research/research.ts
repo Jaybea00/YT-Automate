@@ -23,12 +23,13 @@ export async function planWikipediaQueries(
   llm: LLMProvider,
   ctx: ProviderCallContext,
   topic: string,
+  focus?: string,
 ): Promise<string[]> {
   try {
     const { data } = await llm.generateJson(
       {
         system: 'You plan encyclopedia research for documentary scripts.',
-        prompt: `Topic: "${topic}"
+        prompt: `Topic: "${topic}"${focus ? `\nThe creator's notes on what the video covers:\n${focus}` : ''}
 Give 4-5 Wikipedia search queries that together cover every part of this topic: the main subject, its background or causes, its consequences, and each place, person, or organization the topic names.
 Write each query the way a Wikipedia article title is written (e.g. "Great Depression in the United Kingdom", "Black Tuesday", "Smoot-Hawley Tariff Act"), not as a question or phrase. Return {"queries": [...]}.`,
         schema: QueriesSchema,
@@ -109,15 +110,21 @@ ${corpus}`,
   return { facts, sources: sources.filter((s) => cited.has(s.id)) };
 }
 
+/** How much of a brief guides research; the opening usually says what the video is about. */
+const RESEARCH_FOCUS_CHARS = 2500;
+
 /**
- * Builds a fact dossier for a topic before the script is written.
+ * Builds a fact dossier for a topic before the script is written. A brief, when given,
+ * steers what gets researched.
  * Uses Google Search grounding when the script provider is Gemini and the key allows it,
  * otherwise Wikipedia. Never throws: if research fails the script is written without it.
  */
 export async function researchTopic(
   supabase: SupabaseClient,
   topic: string,
+  brief?: string | null,
 ): Promise<ResearchDossier | null> {
+  const focus = brief?.trim() ? brief.trim().slice(0, RESEARCH_FOCUS_CHARS) : undefined;
   try {
     const resolved = await resolveForStage<LLMProvider>('script', supabase);
     const { provider: llm, ctx } = resolved;
@@ -125,7 +132,7 @@ export async function researchTopic(
 
     if (resolved.providerId === 'gemini' && ctx.apiKey) {
       try {
-        const grounded = await researchWithGoogleSearch(ctx.apiKey, ctx.model || 'gemini-3.5-flash-lite', topic);
+        const grounded = await researchWithGoogleSearch(ctx.apiKey, ctx.model || 'gemini-3.5-flash-lite', topic, focus);
         if (grounded.facts.length >= MIN_FACTS) {
           return { topic, provider: 'google_search', createdAt, ...grounded };
         }
@@ -137,7 +144,7 @@ export async function researchTopic(
       }
     }
 
-    const queries = await planWikipediaQueries(llm, ctx, topic);
+    const queries = await planWikipediaQueries(llm, ctx, topic, focus);
     const candidates = await gatherWikipediaCandidates(queries);
     const articles = await fetchWikipediaArticles(await selectArticles(llm, ctx, topic, candidates));
     console.log(`[research] Wikipedia queries: ${queries.join(' | ')} -> ${articles.map((a) => a.title).join(', ')}`);

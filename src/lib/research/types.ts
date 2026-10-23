@@ -15,7 +15,7 @@ export interface ResearchFact {
 export interface ResearchDossier {
   topic: string;
   /** Where the sources came from. */
-  provider: 'wikipedia' | 'google_search';
+  provider: 'wikipedia' | 'google_search' | 'brief';
   createdAt: string;
   sources: ResearchSource[];
   facts: ResearchFact[];

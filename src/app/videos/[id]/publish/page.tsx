@@ -19,7 +19,31 @@ interface PublishData {
   shorts: Array<{ n: number; title: string; hook: string; startSec: number; endSec: number }>;
   edited: boolean;
   metadataGeneratedAt: string | null;
+  /** 'short' when this video is a native Short made from a long video. */
+  format: 'short' | null;
+  parentVideoId: string | null;
+  nativeShorts: Array<{
+    id: string;
+    title: string;
+    hook: string;
+    angle: string;
+    promise: string;
+    video_id?: string;
+    status: string | null;
+  }>;
 }
+
+const STATUS_LABEL: Record<string, string> = {
+  scripting: 'Writing…',
+  script_review: 'Script ready to review',
+  voicing: 'Voicing',
+  sourcing: 'Visuals',
+  assembling: 'Assembling',
+  rendered: 'Rendered',
+  published: 'Published',
+  failed: 'Failed',
+  deleted: 'Deleted',
+};
 
 const TITLE_IDEAL = 60;
 const TAGS_MAX = 500;
@@ -114,6 +138,22 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
     return key;
   };
 
+  // Writing a Short takes a while; the response carries the updated view and the new video's id
+  const makeShort = async (ideaId: string) => {
+    setBusy('Writing the Short and creating its video… (a minute or two)');
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${id}/publish/native-shorts/${ideaId}`, { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Something went wrong');
+      apply(body.view);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const tags = tagsText.split(',').map((t) => t.trim()).filter(Boolean);
   const dirty = data && (title !== data.title || description !== data.description || tags.join(',') !== data.tags.join(','));
   const save = () =>
@@ -146,6 +186,17 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
           </a>
         </div>
 
+        {data.format === 'short' && (
+          <div className="px-4 py-3 rounded-xl bg-red-950/30 border border-red-800/60 text-red-100 text-sm">
+            This is a native Short. &quot;Render vertical Short&quot; below turns the whole video into one 9:16 Short.
+            {data.parentVideoId && (
+              <>
+                {' '}
+                <Link href={`/videos/${data.parentVideoId}/publish`} className="underline text-red-300">Back to the full video</Link>
+              </>
+            )}
+          </div>
+        )}
         {busy && <div className="px-4 py-2 rounded-xl bg-indigo-950/60 border border-indigo-800 text-indigo-200 text-sm">{busy}</div>}
         {error && <div className="px-4 py-2 rounded-xl bg-red-950/60 border border-red-800 text-red-200 text-sm">{error}</div>}
         {!data.rendered && (
@@ -298,10 +349,22 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
             <button
               type="button"
               disabled={Boolean(busy) || !data.hasTimeline}
-              onClick={() => run('shorts', 'Choosing moments and cutting Shorts… (a few minutes)', `/api/videos/${id}/publish/shorts`)}
+              onClick={() =>
+                run(
+                  'shorts',
+                  data.format === 'short' ? 'Rendering the vertical Short… (a few minutes)' : 'Choosing moments and cutting Shorts… (a few minutes)',
+                  `/api/videos/${id}/publish/shorts`,
+                )
+              }
               className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium disabled:opacity-50"
             >
-              {data.shorts.length ? '↻ Re-cut Shorts' : '✂ Create Shorts'}
+              {data.format === 'short'
+                ? data.shorts.length
+                  ? '↻ Render again'
+                  : '▮ Render vertical Short'
+                : data.shorts.length
+                  ? '↻ Re-cut Shorts'
+                  : '✂ Create Shorts'}
             </button>
           }
         >
@@ -325,10 +388,66 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
             </div>
           ) : (
             <p className="text-sm text-zinc-500 italic">
-              Cut 2-3 vertical Shorts from the strongest moments, captioned, with a pointer to the full video.
+              {data.format === 'short'
+                ? 'Render this Short as a vertical 9:16 video with big captions and its hook banner.'
+                : 'Cut 2-3 vertical Shorts from the strongest moments, captioned, with a pointer to the full video.'}
             </p>
           )}
         </Card>
+
+        {data.format !== 'short' && (
+          <Card
+            title={`Native Shorts (${data.nativeShorts.length})`}
+            actions={
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => run('native', 'Drafting Short ideas…', `/api/videos/${id}/publish/native-shorts`)}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium disabled:opacity-50"
+              >
+                {data.nativeShorts.length ? '↻ New ideas' : '✍ Write native Shorts'}
+              </button>
+            }
+          >
+            {data.nativeShorts.length ? (
+              <ul className="space-y-3">
+                {data.nativeShorts.map((s) => (
+                  <li key={s.id} className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="text-sm text-zinc-100 font-semibold">{s.title}</p>
+                      {s.video_id ? (
+                        <Link
+                          href={`/videos/${s.video_id}/${s.status === 'rendered' || s.status === 'published' ? 'publish' : 'review'}`}
+                          className="text-[11px] text-indigo-300 hover:text-indigo-200 underline"
+                        >
+                          {STATUS_LABEL[s.status ?? ''] ?? s.status} · Open Short →
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={Boolean(busy)}
+                          onClick={() => makeShort(s.id)}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
+                        >
+                          Make this Short
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-300">Hook: “{s.hook}”</p>
+                    <p className="text-xs text-zinc-500 italic">
+                      {s.angle} · {s.promise}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-zinc-500 italic">
+                Shorts written for the Shorts feed, each with its own hook, instead of clips of this video. Each one you pick becomes a
+                small video of about 50 seconds that goes through script review, voice, visuals and assembly, then renders vertical.
+              </p>
+            )}
+          </Card>
+        )}
 
         <Card title="Subtitles">
           <div className="flex gap-2">

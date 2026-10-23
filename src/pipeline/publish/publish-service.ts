@@ -10,9 +10,13 @@ import type { LLMProvider } from '../providers/types';
 import { buildDescriptionCredits } from '../utils/credits';
 import { readTimeline, type VideoTimeline } from '../utils/timeline';
 import { themeForStyle } from '../visuals/motion/theme';
-import { composeDescription, generateMetadata, type VideoMetadata } from './metadata';
+import { composeDescription, descriptionSources, generateMetadata, type VideoMetadata } from './metadata';
+import { chosenPackage, type Packaging } from '@/lib/script/packaging-types';
+import { createNativeShort, draftShortIdeas, type NativeShorts } from '@/lib/script/native-shorts';
+import type { VideoStyle } from '@/lib/script/style-templates';
+import type { ResearchDossier } from '@/lib/research/types';
 import { generateThumbnails, rendersDir } from './publish-assets';
-import { fallbackShortPlans, planShorts, renderShort, type ShortClip } from './shorts';
+import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, type ShortClip } from './shorts';
 import { subtitlesForVideo } from './subtitle-files';
 import type { Thumbnail } from './thumbnails';
 
@@ -32,6 +36,8 @@ export interface PublishState {
   thumbnails?: Thumbnail[] | null;
   shorts?: ShortClip[] | null;
   edits?: PublishEdits;
+  /** Native Short ideas for this long video, and the mini videos made from them. */
+  native_shorts?: NativeShorts | null;
 }
 
 interface VideoRow {
@@ -41,13 +47,31 @@ interface VideoRow {
   style: string | null;
   status: string | null;
   script_json: (Record<string, unknown> & {
-    beats?: Array<{ text: string }>;
+    beats?: Array<{ text: string; fact_ids?: string[] }>;
     publish?: PublishState;
     formatted_chapters?: string;
     music_credits?: string[];
     sections?: { sections?: Array<{ start_beat: number; title: string }> };
-    research?: { facts?: Array<{ claim: string }> };
+    research?: { facts?: Array<{ id: string; claim: string; sourceIds: string[] }>; sources?: Array<{ id: string; title: string; url: string }> };
+    brief?: string;
+    brief_extras?: { title_ideas?: string[]; thumbnail_ideas?: string[]; sources?: string[] };
+    packaging?: Packaging;
+    format?: 'short';
+    short?: { parent_video_id: string; hook_banner: string };
   }) | null;
+}
+
+/** Title ideas for Publish: the packaged title the script was written to, then the brief's ideas. */
+function creatorTitles(sj: NonNullable<VideoRow['script_json']>): string[] {
+  const pkg = chosenPackage(sj.packaging);
+  return [...(pkg ? [pkg.title] : []), ...(sj.brief_extras?.title_ideas ?? [])];
+}
+
+/** Thumbnail ideas: the packaged thumbnail concept, then the brief's wishes. */
+function creatorThumbnailIdeas(sj: NonNullable<VideoRow['script_json']>): string[] {
+  const pkg = chosenPackage(sj.packaging);
+  const concept = pkg?.thumbnail_image ? `${pkg.thumbnail_image}${pkg.thumbnail_text ? `, text "${pkg.thumbnail_text}"` : ''}` : null;
+  return [...(concept ? [concept] : []), ...(sj.brief_extras?.thumbnail_ideas ?? [])];
 }
 
 export async function loadVideo(supabase: SupabaseClient, videoId: string): Promise<VideoRow | null> {
@@ -79,9 +103,16 @@ export async function publishView(supabase: SupabaseClient, video: VideoRow) {
   const { data: assets } = await supabase.from('video_assets').select('license_type, attribution_text').eq('video_id', video.id);
   const credits = buildDescriptionCredits(Array.isArray(sj.music_credits) ? sj.music_credits : [], assets ?? []);
   const generatedDescription = meta
-    ? composeDescription({ hook: meta.hook, summary: meta.summary, chapters: sj.formatted_chapters, credits, hashtags: meta.hashtags })
+    ? composeDescription({ hook: meta.hook, summary: meta.summary, chapters: sj.formatted_chapters, sources: descriptionSources(sj), credits, hashtags: meta.hashtags })
     : '';
   const rendered = await fsp.stat(finalVideoPath(video.id)).then((s) => s.size > 0).catch(() => false);
+  // Where each native Short's mini video has got to
+  const ideas = publish.native_shorts?.ideas ?? [];
+  const childIds = ideas.map((i) => i.video_id).filter((v): v is string => Boolean(v));
+  const { data: children } = childIds.length
+    ? await supabase.from('videos').select('id, status').in('id', childIds)
+    : { data: [] as Array<{ id: string; status: string }> };
+  const childStatus = new Map((children ?? []).map((c: { id: string; status: string }) => [c.id, c.status]));
   return {
     videoId: video.id,
     rendered,
@@ -98,6 +129,9 @@ export async function publishView(supabase: SupabaseClient, video: VideoRow) {
     shorts: (publish.shorts ?? []).map((s, i) => ({ n: i + 1, title: s.title, hook: s.hook, startSec: s.startSec, endSec: s.endSec })),
     edited: Boolean(edits.title || edits.description || edits.tags),
     metadataGeneratedAt: meta?.generatedAt ?? null,
+    format: sj.format ?? null,
+    parentVideoId: sj.short?.parent_video_id ?? null,
+    nativeShorts: ideas.map((i) => ({ ...i, status: i.video_id ? (childStatus.get(i.video_id) ?? 'deleted') : null })),
   };
 }
 
@@ -118,6 +152,7 @@ export async function regenerateMetadata(supabase: SupabaseClient, video: VideoR
     narration: (sj.beats ?? []).map((b) => b.text),
     sectionTitles: sj.sections?.sections?.map((s) => s.title) ?? [],
     facts: (sj.research?.facts ?? []).map((f) => f.claim),
+    creatorTitles: creatorTitles(sj),
     llm: llm.provider,
     ctx: withWritingModel(llm.ctx, llm.options),
   });
@@ -141,10 +176,46 @@ export async function regenerateThumbnails(supabase: SupabaseClient, video: Vide
     title: title || sj.publish?.edits?.title || sj.publish?.metadata?.titles[0]?.text || video.title || '',
     topic: video.topic ?? '',
     narration: (sj.beats ?? []).map((b) => b.text).join(' '),
+    creatorIdeas: creatorThumbnailIdeas(sj),
     theme: themeForStyle(video.style),
     llm: await scriptLlm(supabase),
   });
   await savePublish(supabase, video.id, { thumbnails });
+}
+
+/** Drafts native Short ideas from the finished long video. */
+export async function draftNativeShorts(supabase: SupabaseClient, video: VideoRow): Promise<void> {
+  if (video.script_json?.format === 'short') throw new Error('This is already a Short');
+  const beats = (video.script_json?.beats ?? []).map((b, i) => ({ index: i, text: b.text }));
+  const ideas = await draftShortIdeas(supabase, video.topic ?? '', beats);
+  await savePublish(supabase, video.id, { native_shorts: { generatedAt: new Date().toISOString(), ideas } });
+}
+
+/** Writes one native Short and creates its mini video; returns the new video's id. */
+export async function makeNativeShort(supabase: SupabaseClient, video: VideoRow, ideaId: string): Promise<string> {
+  const sj = video.script_json ?? {};
+  const idea = sj.publish?.native_shorts?.ideas.find((i) => i.id === ideaId);
+  if (!idea) throw new Error('Short idea not found; draft the ideas again');
+  if (idea.video_id) return idea.video_id;
+  const childId = await createNativeShort(
+    supabase,
+    {
+      id: video.id,
+      style: (video.style ?? 'story_driven') as VideoStyle,
+      research: (sj.research as ResearchDossier | undefined) ?? null,
+      beats: (sj.beats ?? []).map((b, i) => ({ index: i, text: b.text })),
+    },
+    idea,
+  );
+  // Re-read: drafting took a while and other publish edits may have landed
+  const latest = await loadVideo(supabase, video.id);
+  const current = latest?.script_json?.publish?.native_shorts;
+  if (current) {
+    await savePublish(supabase, video.id, {
+      native_shorts: { ...current, ideas: current.ideas.map((i) => (i.id === ideaId ? { ...i, video_id: childId } : i)) },
+    });
+  }
+  return childId;
 }
 
 export async function createShorts(supabase: SupabaseClient, video: VideoRow): Promise<void> {
@@ -153,12 +224,20 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow): P
   const beats = (sj.beats ?? []).map((b, i) => ({ index: i, text: b.text }));
   const title = sj.publish?.edits?.title || sj.publish?.metadata?.titles[0]?.text || video.title || '';
   const llm = await scriptLlm(supabase);
-  let plans = llm
+  // A native Short is vertical as a whole: one Short covering every beat
+  const whole = sj.format === 'short' && timeline.beats.length
+    ? normalizeShortPlans(
+        [{ startBeat: timeline.beats[0].index, endBeat: timeline.beats[timeline.beats.length - 1].index, title, hook: sj.short?.hook_banner || title }],
+        timeline,
+      )
+    : null;
+  if (whole && whole.length === 0) throw new Error('This Short is outside 20-59 seconds; shorten or lengthen its script and re-voice it');
+  let plans = whole ?? (llm
     ? await planShorts({ beats, timeline, topic: video.topic ?? '', llm: llm.provider, ctx: llm.ctx }).catch((err) => {
         console.warn(`[Shorts] Planning with the LLM failed; using section openings: ${err instanceof Error ? err.message.slice(0, 160) : err}`);
         return [];
       })
-    : [];
+    : []);
   if (plans.length === 0) plans = fallbackShortPlans(timeline, (sj.sections?.sections ?? []).map((s) => s.start_beat), title);
   if (plans.length === 0) throw new Error('No stretch of the video fits a Short (20-59 seconds of whole beats)');
 

@@ -19,10 +19,11 @@ export async function generateThumbnails(options: {
   title: string;
   topic: string;
   narration: string;
+  creatorIdeas?: string[];
   theme: MotionTheme;
   llm?: { provider: LLMProvider; ctx: ProviderCallContext } | null;
 }): Promise<Thumbnail[]> {
-  const { videoId, timeline, finalVideoPath, title, topic, narration, theme, llm } = options;
+  const { videoId, timeline, finalVideoPath, title, topic, narration, creatorIdeas, theme, llm } = options;
   const outDir = path.join(rendersDir(videoId), 'thumbnails');
   const framesDir = path.join(outDir, 'frames');
   await fs.rm(framesDir, { recursive: true, force: true });
@@ -32,7 +33,7 @@ export async function generateThumbnails(options: {
   let plans = fallbackPlans(frames.length, title);
   if (llm?.provider.supportsVision) {
     try {
-      const picked = await planThumbnails({ frames, title, topic, narration, llm: llm.provider, ctx: llm.ctx });
+      const picked = await planThumbnails({ frames, title, topic, narration, creatorIdeas, llm: llm.provider, ctx: llm.ctx });
       if (picked.length) plans = picked;
     } catch (err) {
       console.warn(`[Thumbnails] Vision picks unavailable; using evenly spread frames: ${err instanceof Error ? err.message.slice(0, 160) : err}`);

@@ -5,6 +5,9 @@ import { VideoStyle } from '@/lib/script/style-templates';
 import { withStyleDefaults } from '@/lib/styles/packs';
 import { researchTopic } from '@/lib/research/research';
 import { planShots } from '@/lib/script/shot-planner';
+import { generateOutline, trimBrief } from '@/lib/script/outline';
+import { afterWriteChecks } from '@/lib/script/after-write';
+import { chosenPackage, generatePackagingOrNull } from '@/lib/script/packaging';
 import {
   parseSrtToBeats,
   parseRawTextToParagraphBeats,
@@ -42,6 +45,7 @@ export async function POST(req: Request) {
       rawText,
       srtText,
       minBeatDurationSeconds,
+      brief: rawBrief,
     } = body as {
       mode?: 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt';
       topic?: string;
@@ -50,6 +54,7 @@ export async function POST(req: Request) {
       rawText?: string;
       srtText?: string;
       minBeatDurationSeconds?: number;
+      brief?: string;
     };
 
     const supabase = getSupabaseServerClient();
@@ -262,20 +267,66 @@ export async function POST(req: Request) {
 
     // 2. Research the topic, then write the script from the researched facts
     try {
-      const research = await researchTopic(supabase, topic.trim());
+      const brief = trimBrief(rawBrief);
+      const research = await researchTopic(supabase, topic.trim(), brief || null);
+      // Packaging first: the title and thumbnail promise the script will be written to deliver
+      const packagingPromise = generatePackagingOrNull(supabase, {
+        topic: topic.trim(),
+        style,
+        targetMinutes: parsedTargetMinutes,
+        research,
+        brief: brief || null,
+      });
+
+      // Brief mode: stop at an outline for the creator to approve; the script is written after
+      if (brief) {
+        try {
+          const [drafted, packaging] = await Promise.all([
+            generateOutline(supabase, { topic: topic.trim(), style, targetMinutes: parsedTargetMinutes, brief, research }),
+            packagingPromise,
+          ]);
+          const { data: outlined, error: outlineSaveError } = await supabase
+            .from('videos')
+            .update({
+              script_json: withStyleDefaults(
+                { title_options: [], beats: [], brief, outline: drafted.outline, brief_extras: drafted.extras, ...(drafted.research ? { research: drafted.research } : {}), ...(packaging ? { packaging } : {}) },
+                style,
+              ),
+              status: 'script_review',
+            })
+            .eq('id', newVideo.id)
+            .select()
+            .single();
+          if (outlineSaveError || !outlined) {
+            throw new Error(`Failed to save the outline: ${outlineSaveError?.message}`);
+          }
+          return NextResponse.json(outlined, { status: 201 });
+        } catch (outlineError) {
+          // The brief still guides the script; only the approval step is skipped
+          console.warn('[videos] Outline failed; writing the script straight from the brief:', outlineError);
+        }
+      }
+
+      const packaging = await packagingPromise;
       const writtenScript = await generateScript(supabase, {
         topic: topic.trim(),
         style,
         targetMinutes: parsedTargetMinutes,
         research,
+        brief: brief || null,
+        packaging: chosenPackage(packaging),
       });
       const generatedScript = await planShots(supabase, writtenScript, topic.trim(), { style });
+      const checks = await afterWriteChecks(supabase, topic.trim(), generatedScript, style);
 
       // 3. Update with script_json and status='script_review'
       const { data: updatedVideo, error: updateError } = await supabase
         .from('videos')
         .update({
-          script_json: withStyleDefaults(generatedScript, style),
+          script_json: withStyleDefaults(
+            { ...generatedScript, ...(brief ? { brief } : {}), ...(packaging ? { packaging } : {}), ...checks },
+            style,
+          ),
           status: 'script_review',
         })
         .eq('id', newVideo.id)

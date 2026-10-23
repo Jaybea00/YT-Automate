@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript } from '@/lib/script/generate-script';
 import { planShots } from '@/lib/script/shot-planner';
+import { afterWriteChecks } from '@/lib/script/after-write';
+import { chosenPackage } from '@/lib/script/packaging-types';
 
 export async function POST(
   req: Request,
@@ -60,14 +62,18 @@ export async function POST(
       },
       // Revisions keep writing from the same researched facts
       research: video.script_json.research ?? null,
+      // Brief mode: revisions keep the creator's tone and lines
+      brief: video.script_json.brief ?? null,
+      packaging: chosenPackage(video.script_json.packaging),
     });
     const revisedScript = await planShots(supabase, rewritten, video.topic, { style: video.style });
+    const checks = await afterWriteChecks(supabase, video.topic, revisedScript, video.style);
 
     // 3. Update script_json with new result (keeping stored render settings); status stays 'script_review'
     const { data: updatedVideo, error: updateError } = await supabase
       .from('videos')
       .update({
-        script_json: { ...video.script_json, ...revisedScript },
+        script_json: { ...video.script_json, ...revisedScript, ...checks },
       })
       .eq('id', id)
       .select()
