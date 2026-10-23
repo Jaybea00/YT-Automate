@@ -89,7 +89,9 @@ export async function downloadNasaAsset(
     if (collRes.ok) {
       const assets: string[] = await collRes.json();
       // Pick best resolution
-      const mp4 = assets.find((u) => u.toLowerCase().endsWith('~orig.mp4') || u.toLowerCase().endsWith('~large.mp4') || u.toLowerCase().endsWith('.mp4'));
+      // Large (about 1080p) first: originals can run to gigabytes
+      const ends = (suffix: string) => assets.find((u) => u.toLowerCase().endsWith(suffix));
+      const mp4 = ends('~large.mp4') || ends('~medium.mp4') || ends('~orig.mp4') || ends('.mp4');
       const origJpg = assets.find((u) => u.toLowerCase().endsWith('~orig.jpg') || u.toLowerCase().endsWith('~large.jpg') || u.toLowerCase().endsWith('~medium.jpg'));
       directUrl = mp4 || origJpg || assets[0] || collectionUrl;
     }

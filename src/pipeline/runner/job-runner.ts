@@ -26,6 +26,8 @@ import { captionZonesFromTracks, loadCaptionWords } from '../assembly/caption-so
 import { applySoundDesign, planSoundCues } from '../assembly/sound-design';
 import { narrationSoundCues } from '../assembly/narration-sounds';
 import { applyPalette } from '../assembly/palettes';
+import { prepareEmphasis } from '../assembly/emphasis';
+import { planTransitions, startsFromOverlaps, type TransitionIntensity } from '../assembly/transitions';
 import { ensureMusicPlan, musicCredits, pickMusic } from '../assembly/music-plan';
 import { buildMusicBed } from '../assembly/music-bed';
 import { accentExpression, accentTimes, ensureMusicMoments, stingPath } from '../assembly/music-accents';
@@ -990,7 +992,7 @@ export class JobRunner {
 
         const transition = (videoRecord?.script_json?.transition ||
           videoRecord?.transition ||
-          'cut') as 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe';
+          'cut') as 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe' | 'style';
 
         const beatPacing = pacingPlan.get(beatIndex) ?? { leadInSec: 0, tailSec: DEFAULT_BEAT_PAUSE_SEC, dipIn: false, dipOut: false };
         const beatPauseSeconds = beatPacing.tailSec;
@@ -1031,8 +1033,9 @@ export class JobRunner {
             sfxVolume,
             beatPauseSeconds,
             leadInSeconds,
-            dipIn: beatPacing.dipIn,
-            dipOut: beatPacing.dipOut,
+            // Style-matched transitions mark chapter changes themselves, so the clips don't dip
+            dipIn: transition === 'style' ? false : beatPacing.dipIn,
+            dipOut: transition === 'style' ? false : beatPacing.dipOut,
             // Bumped when scene rendering changes, so clips from an older chain aren't reused
             sceneChain: 'v2-voice-chain',
           },
@@ -1149,8 +1152,8 @@ export class JobRunner {
             sfxVolume,
             pauseSeconds: beatPauseSeconds,
             leadInSeconds,
-            dipIn: beatPacing.dipIn,
-            dipOut: beatPacing.dipOut,
+            dipIn: transition === 'style' ? false : beatPacing.dipIn,
+            dipOut: transition === 'style' ? false : beatPacing.dipOut,
           });
 
           // Checkpoint as done
@@ -1200,21 +1203,48 @@ export class JobRunner {
       // 6. Concatenate all scenes into final video
       const transition = (videoRecord?.script_json?.transition ||
         videoRecord?.transition ||
-        'cut') as 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe';
+        'cut') as 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe' | 'style';
       // The joined beats are a working file; mastering writes the delivery file at the end
       let programPath = path.join(tempDir, `program_${Date.now()}.mp4`);
       const workingFiles: string[] = [programPath];
+      // Style-matched: a transition per join, sized to the moment and to the silence there
+      const reveals = new Set<number>(Array.isArray(videoRecord?.script_json?.music_moments?.reveals) ? videoRecord.script_json.music_moments.reveals : []);
+      const joins =
+        transition === 'style'
+          ? planTransitions(
+              sceneBeatIndexes.slice(1).map((next, i) => {
+                const prev = pacingPlan.get(sceneBeatIndexes[i]);
+                const nextPacing = pacingPlan.get(next);
+                return {
+                  chapter: nextPacing?.dipIn ?? false,
+                  reveal: reveals.has(next),
+                  silenceSec: (prev?.tailSec ?? DEFAULT_BEAT_PAUSE_SEC) + (nextPacing?.leadInSec ?? 0),
+                };
+              }),
+              videoRecord?.style,
+              (videoRecord?.script_json?.transition_intensity as TransitionIntensity | undefined) ?? 'balanced',
+              // Film burn, ink, paper tear, glitch... at chapter changes and reveals (slow to render)
+              { rendered: videoRecord?.script_json?.transition_rendered !== false },
+            )
+          : undefined;
       const joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
         transition,
+        joins,
       });
+      if (joins) {
+        const moves = joins.filter((j) => j.type !== 'cut');
+        console.log(`[Assembly] Transitions: ${moves.length} of ${joins.length} joins (${[...new Set(moves.map((j) => j.type))].join(', ') || 'all cuts'})`);
+      }
 
       // Where each beat really starts in the finished video (captions, chapters and sound use it).
       // Timed from how the beats were actually joined: a crossfade that fell back to cuts must
       // not leave the captions running ahead by half a second per beat.
       const clipDurationsSec = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
-      const beatStartMs = computeSceneStartOffsetsSec(clipDurationsSec, joined.overlapSec > 0 ? transition : 'cut').map((s) =>
-        Math.round(s * 1000),
-      );
+      const beatStartMs = (
+        joined.overlapsSec.length === clipDurationsSec.length - 1
+          ? startsFromOverlaps(clipDurationsSec, joined.overlapsSec)
+          : computeSceneStartOffsetsSec(clipDurationsSec, joined.overlapSec > 0 ? (transition === 'style' ? 'cut' : transition) : 'cut')
+      ).map((s) => Math.round(s * 1000));
 
       // Composed beats' shot lists say what is on screen when (captions and sound design use it)
       const { data: composedRows } = videoId
@@ -1356,6 +1386,9 @@ export class JobRunner {
         }
       }
 
+      // Narration sound cues, kept for emphasis (impact sounds get a camera shake)
+      let narrationCuesForEmphasis: Array<{ atMs: number; sound: string }> = [];
+
       // 6b+. Smart sound design: effects placed by what's on screen, laid over voice and music
       // (after the music, so the music ducks for the voice only)
       if (sfxEnabled && sfxTrack === 'smart') {
@@ -1386,6 +1419,7 @@ export class JobRunner {
                 console.warn('[Assembly] Narration sounds skipped:', err instanceof Error ? err.message.slice(0, 200) : err);
                 return { cues: [], beds: [] };
               });
+        narrationCuesForEmphasis = narrationPlanned.cues;
         // The style's real recordings for on-screen effects, where available
         const shotCuesVoiced =
           videoRecord?.script_json?.sfx?.palette === false
@@ -1407,18 +1441,58 @@ export class JobRunner {
       // 6c. Master: the style's look, captions, loudness to YouTube's reference and the end fade,
       // with one picture encode
       const grade = lookFilter(themeForStyle(videoRecord?.style).name, videoRecord?.script_json?.look);
+      // Emphasis: shakes on impacts, freeze-frames with titles, chapter zooms, letterbox
+      const emphasis =
+        videoId && usingVideoBeats
+          ? await prepareEmphasis({
+              supabase: this.supabase,
+              videoId,
+              style: videoRecord?.style,
+              theme: themeForStyle(videoRecord?.style),
+              beats: sceneBeatIndexes.map((beatIndex, pos) => {
+                const start = beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0);
+                return {
+                  index: beatIndex,
+                  text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+                  voiceStartMs: start,
+                  voiceEndMs: start + (ttsMap.get(beatIndex)?.duration_ms ?? 0),
+                };
+              }),
+              soundCues: narrationCuesForEmphasis,
+              chapterChangesMs: sections
+                .slice(1)
+                .map((s) => beatStartMs[sceneBeatIndexes.indexOf(s.start_beat)])
+                .filter((ms): ms is number => typeof ms === 'number' && ms > 0),
+              settings: videoRecord?.script_json?.emphasis,
+              tempDir,
+            }).catch((err) => {
+              console.warn('[Assembly] Emphasis effects skipped:', err instanceof Error ? err.message.slice(0, 200) : err);
+              return null;
+            })
+          : null;
+      if (emphasis) console.log(`[Assembly] Emphasis: ${emphasis.summary}`);
       try {
         try {
-          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade });
+          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis });
           console.log(
             `[Assembly] Mastered to ${TARGET_LUFS} LUFS (programme measured ${measured.input_i} LUFS)` +
               `${grade ? `, ${themeForStyle(videoRecord?.style).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
           );
         } catch (masterErr) {
-          if (!assPath && !grade) throw masterErr;
-          // Keep a plain master rather than failing the whole assembly
-          console.warn('[Assembly] Mastering with look/captions failed; mastering without them:', masterErr);
-          await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath });
+          // Emphasis is the newest part of the graph: drop it first, keeping the look and captions
+          const retried = emphasis
+            ? await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade })
+                .then(() => true)
+                .catch(() => false)
+            : false;
+          if (retried) {
+            console.warn('[Assembly] Mastering with emphasis effects failed; mastered without them:', masterErr instanceof Error ? masterErr.message.slice(0, 300) : masterErr);
+          } else {
+            if (!assPath && !grade) throw masterErr;
+            // Keep a plain master rather than failing the whole assembly
+            console.warn('[Assembly] Mastering with look/captions failed; mastering without them:', masterErr);
+            await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath });
+          }
         }
       } finally {
         for (const f of workingFiles) await fs.unlink(f).catch(() => {});

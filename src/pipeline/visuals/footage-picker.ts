@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ShotPlan } from '@/lib/script/generate-script';
-import { searchArchiveOrg } from '../providers/stock/archive-org';
+import { archiveFilmFrame, searchArchiveOrg } from '../providers/stock/archive-org';
+import { searchNasa } from '../providers/stock/nasa';
 import { searchWikimediaCommons } from '../providers/stock/wikimedia';
 import { searchUnsplash } from '../providers/stock/unsplash';
 import type { LLMProvider, LlmImage, ProviderCallContext, StockProvider } from '../providers/types';
@@ -94,6 +95,13 @@ const UNSPLASH_WHEN_FEWER_THAN = 8;
 
 const candidateKey = (c: MediaCandidate) => String(c.pageUrl || c.downloadUrl || c.id);
 
+/** Shots about space or spaceflight, where NASA's public-domain library has real film. */
+export const SPACE_SUBJECT =
+  /\b(nasa|apollo|gemini program|mercury program|space ?shuttle|international space station|astronauts?|cosmonauts?|rockets?|rocket launch|launch ?pad|saturn v|moon landing|lunar|mars|mars rover|orbit(?:al|ing)?|spacewalk|satellites?|hubble|james webb|space telescope|milky way|galaxies|nebula|planets?|earth from space|spacex|falcon 9|artemis)\b/i;
+
+/** Bonus for film over a still when both clearly show the shot (and never enough to make an unfit film fit). */
+export const MOTION_BONUS = 0.8;
+
 export interface GatherOptions {
   shot: ShotPlan;
   stockProvider?: StockProvider;
@@ -178,16 +186,22 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
   }
 
   const variants = queryVariants(shot.visual_query);
+  // NASA's public-domain film and photos, first in line for space subjects
+  if (SPACE_SUBJECT.test(`${shot.visual_query} ${shot.covers ?? ''}`)) {
+    const nasa = await safe(searchNasa(variants[0] ?? shot.visual_query, { limit: 6 }));
+    add([...nasa.filter((c) => c.mediaType === 'video').slice(0, 3), ...nasa.slice(0, 2)], 5);
+  }
   if (shot.visual_type === 'archive') {
-    // A few of the best from each phrasing, so later phrasings get a say
+    // A few of the best from each phrasing, so later phrasings get a say; films get their own
+    // search, since archive.org's mixed results are mostly scanned documents
     const archiveCap = maxCandidates - 3;
     for (const q of variants) {
       if (out.length >= archiveCap) break;
-      const [wiki, archive] = await Promise.all([
+      const [wiki, films] = await Promise.all([
         safe(searchWikimediaCommons(q, { limit: 6 })),
-        safe(searchArchiveOrg(q, { limit: 3 })),
+        safe(searchArchiveOrg(q, { limit: 3, preferMediaType: 'movies' })),
       ]);
-      add([...wiki.slice(0, 4), ...archive.slice(0, 1)], Math.min(archiveCap, out.length + 4));
+      add([...films.slice(0, 2), ...wiki.slice(0, 4)], Math.min(archiveCap, out.length + 5));
     }
     add(await stock(stockQueryFor(shot.visual_query)));
   } else {
@@ -197,7 +211,27 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
     if (out.length < UNSPLASH_WHEN_FEWER_THAN) add(await safe(searchUnsplash(stockQueryFor(shot.visual_query), { limit: 5 })), maxCandidates - 2);
     add(await safe(searchWikimediaCommons(variants[1] ?? variants[0] ?? shot.visual_query, { limit: 4 })));
   }
-  return out;
+  return withFilmFrames(out);
+}
+
+/**
+ * archive.org films are judged on a frame from inside the film, not their thumbnail (usually a
+ * title card or countdown leader); films with nothing small enough to download are dropped.
+ */
+export async function withFilmFrames(
+  candidates: MediaCandidate[],
+  frameOf: (identifier: string) => Promise<{ frameUrl: string | null } | null> = (id) => archiveFilmFrame(id),
+): Promise<MediaCandidate[]> {
+  const checked = await Promise.all(
+    candidates.map(async (c) => {
+      if (c.provider !== 'archive_org' || c.mediaType !== 'video') return c;
+      const identifier = String(c.id).replace(/^archive_/, '');
+      const frame = await frameOf(identifier);
+      if (!frame) return null;
+      return frame.frameUrl ? { ...c, thumbnailUrl: frame.frameUrl, previewUrl: frame.frameUrl } : c;
+    }),
+  );
+  return checked.filter((c): c is MediaCandidate => c !== null);
 }
 
 // --------------------------------------------------------------------------
@@ -319,7 +353,7 @@ ${era ? `The story is set in ${era}: anything visibly from another era (modern d
 ${shot.caption?.name ? `It is captioned "${shot.caption.name}", so it must show that person or place.` : ''}
 
 The images, in order:
-${shown.map(({ c }, i) => `${i + 1}. ${c.mediaType === 'video' ? 'a film' : 'a photo'} titled "${String(c.title ?? '').slice(0, 120)}"${c.mediaType === 'video' ? ' (its thumbnail; old films often open on a title card, so judge what the film shows from the thumbnail and title together)' : ''}`).join('\n')}
+${shown.map(({ c }, i) => `${i + 1}. ${c.mediaType === 'video' ? 'a film' : 'a photo'} titled "${String(c.title ?? '').slice(0, 120)}"${c.mediaType === 'video' ? (/\.thumbs\//.test(c.thumbnailUrl) ? ' (a frame from inside the film)' : ' (its thumbnail; old films often open on a title card, so judge what the film shows from the thumbnail and title together)') : ''}`).join('\n')}
 
 Rate each of the ${shown.length} images below (numbered 1 to ${shown.length} in order) from 0 to 10 for how well it would show this shot to a viewer:
 ${historical
@@ -345,8 +379,8 @@ search_suggestions: two short stock-library searches (2 to 3 plain words each) f
       let score = r ? r.score : 0;
       if (r && !r.subject_match) score = Math.min(score, OFF_SUBJECT_CAP);
       if (r && periodBound && !r.era_ok) score -= 3;
-      // Motion beats a still when both fit
-      if (c.mediaType === 'video') score += 0.3;
+      // Motion beats a still when both fit, but never makes an unfit film fit
+      if (c.mediaType === 'video' && score >= MIN_RELEVANCE) score += MOTION_BONUS;
       return { candidate: c, score, reason: r?.reason };
     })
     .sort((a, b) => b.score - a.score);
