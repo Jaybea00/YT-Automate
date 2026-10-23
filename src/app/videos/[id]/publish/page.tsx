@@ -93,6 +93,8 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
   const [data, setData] = useState<PublishData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // Shorts: footage fills the vertical frame, following the subject
+  const [reframe, setReframe] = useState(true);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tagsText, setTagsText] = useState('');
@@ -183,6 +185,15 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
             }`}
           >
             ⬇ Download package (.zip)
+          </a>
+          <a
+            href={data.hasTimeline ? `/api/videos/${id}/publish/resolve` : undefined}
+            title="The edit for DaVinci Resolve (free): picture, narration, music and effects on their own tracks, plus captions"
+            className={`px-4 py-2 rounded-xl text-sm font-semibold transition border ${
+              data.hasTimeline ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-100' : 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
+            }`}
+          >
+            🎚️ Export for DaVinci Resolve
           </a>
         </div>
 
@@ -346,6 +357,11 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
         <Card
           title={`Shorts (${data.shorts.length})`}
           actions={
+            <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1 text-[11px] text-zinc-400" title="Footage fills the vertical frame and the crop follows the subject; charts, maps and text stay whole">
+              <input type="checkbox" checked={reframe} onChange={(e) => setReframe(e.target.checked)} className="accent-indigo-500" />
+              Follow the subject
+            </label>
             <button
               type="button"
               disabled={Boolean(busy) || !data.hasTimeline}
@@ -354,6 +370,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
                   'shorts',
                   data.format === 'short' ? 'Rendering the vertical Short… (a few minutes)' : 'Choosing moments and cutting Shorts… (a few minutes)',
                   `/api/videos/${id}/publish/shorts`,
+                  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reframe }) },
                 )
               }
               className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium disabled:opacity-50"
@@ -366,6 +383,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
                   ? '↻ Re-cut Shorts'
                   : '✂ Create Shorts'}
             </button>
+            </div>
           }
         >
           {data.shorts.length ? (

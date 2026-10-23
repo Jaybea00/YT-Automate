@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdminClient } from './supabase-admin';
 import { JobRunner } from './runner/job-runner';
+import { releaseOvernightQueue } from './runner/overnight';
 import { verifyFfmpegInstalled } from './utils/ffmpeg';
 import './providers'; // Register all built-in providers
 
@@ -92,9 +93,25 @@ export async function claimNextJob(
   return null;
 }
 
+let lastOvernightCheck = 0;
+
+/** Once a minute: if the night window is open, the renders held for tonight become queued jobs. */
+export async function checkOvernightQueue(supabase: SupabaseClient, now = Date.now()): Promise<void> {
+  if (now - lastOvernightCheck < 60_000) return;
+  lastOvernightCheck = now;
+  try {
+    const { started, failed } = await releaseOvernightQueue(supabase, { now: new Date(now) });
+    if (started.length) console.log(`[Worker] Overnight queue: started ${started.length} render(s)`);
+    if (failed.length) console.warn(`[Worker] Overnight queue: ${failed.length} render(s) could not start (kept, with the reason)`);
+  } catch (err) {
+    console.error('[Worker] Overnight queue check failed:', err);
+  }
+}
+
 async function pollAndProcessOnce(supabase: SupabaseClient): Promise<boolean> {
   if (isShuttingDown) return false;
 
+  await checkOvernightQueue(supabase);
   const job = await claimNextJob(supabase);
   if (!job) {
     return false;

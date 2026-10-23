@@ -15,6 +15,8 @@ export interface TimelineBeat {
   audioPath: string | null;
   /** The composed track, whose shot list says what is on screen. */
   trackPath: string | null;
+  /** The beat's finished scene (picture with its voice), as joined into the video. */
+  sceneClipPath?: string | null;
 }
 
 export interface VideoTimeline {
@@ -22,6 +24,10 @@ export interface VideoTimeline {
   renderedAt: string;
   totalMs: number;
   beats: TimelineBeat[];
+  /** The music and the effects on their own, for editing elsewhere (DaVinci Resolve). */
+  stems?: { music?: string | null; sfx?: string | null };
+  /** Which beats this render built afresh; every other beat reused its scene from an earlier render. */
+  rebuiltBeats?: number[];
 }
 
 export function readTimeline(scriptJson: unknown): VideoTimeline | null {

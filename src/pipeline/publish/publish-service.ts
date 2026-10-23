@@ -218,7 +218,7 @@ export async function makeNativeShort(supabase: SupabaseClient, video: VideoRow,
   return childId;
 }
 
-export async function createShorts(supabase: SupabaseClient, video: VideoRow): Promise<void> {
+export async function createShorts(supabase: SupabaseClient, video: VideoRow, options: { reframe?: boolean } = {}): Promise<void> {
   const timeline = requireTimeline(video);
   const sj = video.script_json ?? {};
   const beats = (sj.beats ?? []).map((b, i) => ({ index: i, text: b.text }));
@@ -255,6 +255,7 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow): P
         words,
         highlightHex: themeForStyle(video.style).accent,
         outPath: path.join(dir, `short_${i + 1}.mp4`),
+        reframe: options.reframe !== false,
       }),
     );
   }

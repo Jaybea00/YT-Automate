@@ -19,6 +19,8 @@ export interface ApplyBgmOptions {
   accentExpression?: string;
   /** A sting recording and where it plays (chapter changes), in seconds. */
   sting?: { path: string; atSec: number[] };
+  /** Also writes the ducked music on its own here (for editing elsewhere, e.g. DaVinci Resolve). */
+  stemPath?: string;
 }
 
 export const PRESET_TRACKS = [
@@ -189,6 +191,7 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     releaseMs = 400,
     accentExpression,
     sting,
+    stemPath,
   } = options;
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -225,7 +228,10 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     `[1:a]volume=${safeVolume.toFixed(2)}${accent}${fades}[bgm0]`,
     ...stingChain,
     `[bgm][key]sidechaincompress=threshold=${duckingThreshold}:ratio=${duckingRatio}:attack=${attackMs}:release=${releaseMs}[ducked_bgm]`,
-    `[voice][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`,
+    // The music input loops forever, so its stem is cut to the programme's length
+    ...(stemPath && programSec > 0
+      ? [`[ducked_bgm]asplit=2[duck_mix][duck_stem]`, `[duck_stem]atrim=0:${programSec.toFixed(3)}[stem]`, `[voice][duck_mix]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`]
+      : [`[voice][ducked_bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`]),
   ].join(';');
 
   const args = [
@@ -253,6 +259,7 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     '-ar',
     '48000',
     outputPath,
+    ...(stemPath && programSec > 0 ? ['-map', '[stem]', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', stemPath] : []),
   ];
 
   try {

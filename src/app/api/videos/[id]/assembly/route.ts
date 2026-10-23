@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import { checkAssemblyGate } from '@/pipeline/assembly/gate';
-import { beatsToScenes } from '@/pipeline/utils/mapper';
+import { queueAssemblyJob } from '@/pipeline/runner/overnight';
 
 export async function handleAssemblyRequest(
   req: Request,
@@ -14,70 +13,26 @@ export async function handleAssemblyRequest(
   }
 
   const supabase = supabaseClient ?? getSupabaseServerClient();
+  // A quick low-resolution preview: the video's status and finished render stay as they are
+  const body = (await req.clone().json().catch(() => ({}))) as { draft?: boolean };
+  const draft = body?.draft === true;
 
-  // 1. Enforce Assembly Gate: must refuse to start unless every beat has an asset
-  const gateResult = await checkAssemblyGate(supabase, id);
-  if (!gateResult.ready) {
+  // The assembly gate (every beat needs an asset), then a pipeline job targeting ['assembly']
+  const result = await queueAssemblyJob(supabase, id, { draft });
+  if (!result.ok) {
     return NextResponse.json(
-      {
-        error: gateResult.error,
-        missingBeats: gateResult.missingBeats,
-        totalBeats: gateResult.totalBeats,
-      },
-      { status: gateResult.status },
+      result.missingBeats
+        ? { error: result.error, missingBeats: result.missingBeats, totalBeats: result.totalBeats }
+        : { error: result.error },
+      { status: result.status },
     );
   }
-
-  // 2. Fetch video details
-  const { data: video } = await supabase
-    .from('videos')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (!video) {
-    return NextResponse.json({ error: 'Video not found' }, { status: 404 });
-  }
-
-  const beats = video.script_json?.beats || [];
-  const { scenes, scriptFingerprint } = beatsToScenes(beats);
-
-  // 3. Create or reuse pipeline job targeting ['assembly'] stage
-  const { data: newJob, error: jobError } = await supabase
-    .from('yt_jobs')
-    .insert({
-      video_id: id,
-      topic: video.topic || video.title || 'Untitled',
-      template: video.style || 'tech-explainer',
-      status: 'queued',
-      stages: ['assembly'],
-      script: {
-        title: video.title,
-        visual_style: video.style,
-        scenes,
-      },
-      script_fingerprint: scriptFingerprint,
-    })
-    .select()
-    .single();
-
-  if (jobError) {
-    return NextResponse.json(
-      { error: `Failed to create assembly job: ${jobError.message}` },
-      { status: 500 },
-    );
-  }
-
-  await supabase
-    .from('videos')
-    .update({ status: 'rendering', error_message: null })
-    .eq('id', id);
 
   return NextResponse.json(
     {
-      jobId: newJob.id,
+      jobId: result.jobId,
       status: 'queued',
-      message: 'Assembly job queued successfully.',
+      message: draft ? 'Preview queued.' : 'Assembly job queued successfully.',
     },
     { status: 201 },
   );

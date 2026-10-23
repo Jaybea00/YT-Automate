@@ -6,14 +6,15 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-/** Shorts, generated afresh. */
-export async function POST(_req: Request, context: RouteContext) {
+/** Shorts, generated afresh. { reframe: false } keeps the whole picture in every shot. */
+export async function POST(req: Request, context: RouteContext) {
   const { id } = await context.params;
   const supabase = getSupabaseServerClient();
   const video = await loadVideo(supabase, id);
   if (!video) return NextResponse.json({ error: 'Video not found' }, { status: 404 });
   try {
-    await createShorts(supabase, video);
+    const body = (await req.json().catch(() => ({}))) as { reframe?: boolean };
+    await createShorts(supabase, video, { reframe: body?.reframe !== false });
     return NextResponse.json(await publishView(supabase, (await loadVideo(supabase, id))!));
   } catch (err) {
     console.error('[Publish] shorts failed:', err);

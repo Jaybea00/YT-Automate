@@ -15,12 +15,16 @@ export async function handleGetRender(
     return new NextResponse('Invalid or missing video ID', { status: 400 });
   }
 
+  // ?preview=1: the quick preview render, and nothing else
+  const preview = new URL(req.url).searchParams.get('preview') === '1';
+
   // 1. Check primary location: storage/renders/<id>/final_video.mp4
-  let candidatePath = path.join(process.cwd(), 'storage', 'renders', id, 'final_video.mp4');
+  let candidatePath = path.join(process.cwd(), 'storage', 'renders', id, preview ? 'preview.mp4' : 'final_video.mp4');
   let exists = await fsp
     .stat(candidatePath)
     .then((s) => s.isFile() && s.size > 0)
     .catch(() => false);
+  if (preview && !exists) return new NextResponse('No preview yet', { status: 404 });
 
   // 2. If not found, check DB videos.render_url or latest job output
   if (!exists) {

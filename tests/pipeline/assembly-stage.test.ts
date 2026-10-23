@@ -284,6 +284,8 @@ describe('Assembly Stage Pipeline Tests', () => {
     const beat0Clip = assemblyUnits[0].output_path;
     assert.ok(beat0Clip && (await fs.stat(beat0Clip)).isFile());
 
+    assert.deepEqual(db.videos.find((v) => v.id === videoId)?.script_json?.timeline?.rebuiltBeats, [0, 1], 'a first render builds every beat');
+
     // Record mtime of beat 0 clip
     const mtime1 = (await fs.stat(beat0Clip)).mtimeMs;
 
@@ -293,6 +295,12 @@ describe('Assembly Stage Pipeline Tests', () => {
     const mtime2 = (await fs.stat(beat0Clip)).mtimeMs;
     // Beat 0 should NOT have been re-rendered!
     assert.equal(mtime1, mtime2, 'Finished assembly unit should be skipped on resume');
+    // A new render of the same video (a re-render): unchanged beats reuse their scenes
+    const rerunId = 'job-resume-test-2';
+    db.yt_jobs.push({ ...db.yt_jobs.find((j) => j.id === jobId), id: rerunId });
+    for (const u of db.yt_job_units.filter((x) => x.job_id === jobId && x.stage === 'tts')) db.yt_job_units.push({ ...u, job_id: rerunId });
+    await new JobRunner({ jobId: rerunId, supabase, baseOutputDir: path.join(jobOutputDir, 'rerun') }).runAssemblyStage();
+    assert.deepEqual(db.videos.find((v) => v.id === videoId)?.script_json?.timeline?.rebuiltBeats, [], 'nothing changed, nothing rebuilt');
 
     // Verify video record status is rendered
     const videoRec = db.videos.find((v) => v.id === videoId);
@@ -404,6 +412,39 @@ describe('Assembly Stage Pipeline Tests', () => {
       `Beat 1 captions should start ~2.85s, got ${beat1Start}s`,
     );
     assert.equal(db.videos[0].status, 'rendered');
+  });
+
+  it('5d. A quick preview renders preview.mp4 at half size and leaves the video alone', async () => {
+    const videoId = 'vid-preview-test';
+    const jobId = 'job-preview-test';
+    const { supabase, db } = createMockSupabase({
+      videos: [{ id: videoId, title: 'Preview', status: 'voiced', script_json: { beats: [{ index: 0, text: 'Beat 0 narration' }] } }],
+      video_assets: [{ video_id: videoId, beat_index: 0, visual_type: 'uploaded', source_url: testImage }],
+      yt_jobs: [
+        {
+          id: jobId,
+          video_id: videoId,
+          topic: 'Preview',
+          template: 'tech-explainer',
+          status: 'running',
+          stages: ['assembly'],
+          script: { draft: true, scenes: [{ scene_number: 0, narration: 'Beat 0 narration', visual_prompt: 'p' }] },
+        },
+      ],
+      yt_job_units: [{ job_id: jobId, stage: 'tts', unit_index: 0, status: 'done', output_path: testAudio1, duration_ms: 2000, input_hash: 'h' }],
+    });
+    try {
+      const out = await new JobRunner({ jobId, supabase, baseOutputDir: path.join(tempDir, 'job_preview') }).runAssemblyStage();
+      assert.equal(path.basename(out), 'preview.mp4');
+      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', out]);
+      assert.equal(stdout.trim(), '960,540');
+      const video = db.videos.find((v) => v.id === videoId);
+      assert.equal(video?.status, 'voiced', 'a preview never changes the status');
+      assert.ok(video?.script_json?.preview?.renderedAt);
+      assert.equal(video?.script_json?.timeline, undefined, 'the finished edit is the final render only');
+    } finally {
+      await fs.rm(path.join(process.cwd(), 'storage', 'renders', videoId), { recursive: true, force: true });
+    }
   });
 
   it('6. GET /api/videos/[id]/render serves video and supports HTTP 206 Range requests', async () => {

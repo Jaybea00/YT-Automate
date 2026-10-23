@@ -86,6 +86,8 @@ export interface MasterOptions {
    * letterbox bars drawn after the grade.
    */
   emphasis?: { graph: string; inputs: string[]; letterbox?: string | null } | null;
+  /** A quick preview: half size and the fastest encode. */
+  draft?: boolean;
 }
 
 /**
@@ -93,7 +95,8 @@ export interface MasterOptions {
  * captions need burning in, so a video without captions loses no picture quality here.
  */
 export async function masterFinalVideo(options: MasterOptions): Promise<{ outputPath: string; measured: LoudnessMeasurement }> {
-  const { inputPath, outputPath, assPath, lookFilter, emphasis } = options;
+  const { inputPath, outputPath, assPath, lookFilter, emphasis, draft } = options;
+  const videoEncode = draft ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-movflags', '+faststart'] : MASTER_VIDEO_ENCODE;
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const measured = await measureLoudness(inputPath);
   const total = await durationSec(inputPath);
@@ -103,7 +106,7 @@ export async function masterFinalVideo(options: MasterOptions): Promise<{ output
   const args = ['-y', '-i', path.resolve(inputPath), '-map', '0:v:0', '-map', '0:a:0'];
   // The grade comes first so captions keep their exact colours; the ASS file is referenced by
   // bare name from its own folder (no escaping of Windows drive letters)
-  const effects = [lookFilter, emphasis?.letterbox, assPath ? `ass=${path.basename(assPath)}` : null].filter(Boolean);
+  const effects = [lookFilter, emphasis?.letterbox, assPath ? `ass=${path.basename(assPath)}` : null, draft ? 'scale=960:540' : null].filter(Boolean);
   // A full-range source (e.g. from an older render) must be converted, not just copied
   const needsRange = (await videoColorRange(inputPath)) === 'pc';
   if (emphasis && emphasis.graph !== '[vin]null[vfx]') {
@@ -114,10 +117,10 @@ export async function masterFinalVideo(options: MasterOptions): Promise<{ output
       '-filter_complex',
       `[0:v]scale=out_range=tv[vin];${emphasis.graph};[vfx]${[...effects, 'format=yuv420p'].join(',')}[vout]`,
       '-map', '[vout]', '-map', '0:a:0',
-      ...MASTER_VIDEO_ENCODE,
+      ...videoEncode,
     );
   } else if (effects.length || needsRange) {
-    args.push('-vf', ['scale=out_range=tv', ...effects, 'format=yuv420p'].join(','), ...MASTER_VIDEO_ENCODE);
+    args.push('-vf', ['scale=out_range=tv', ...effects, 'format=yuv420p'].join(','), ...videoEncode);
   } else {
     args.push('-c:v', 'copy', '-movflags', '+faststart');
   }

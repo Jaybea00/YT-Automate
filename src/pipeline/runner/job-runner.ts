@@ -34,7 +34,7 @@ import { accentExpression, accentTimes, ensureMusicMoments, stingPath } from '..
 import { lookFilter } from '../assembly/look';
 import { runFinalQualityCheck, type QualityReport } from '../assembly/final-check';
 import { generateMetadata, type VideoMetadata } from '../publish/metadata';
-import { generateThumbnails } from '../publish/publish-assets';
+import { generateThumbnails, rendersDir } from '../publish/publish-assets';
 import type { Thumbnail } from '../publish/thumbnails';
 import type { VideoTimeline } from '../utils/timeline';
 import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
@@ -180,6 +180,8 @@ export class JobRunner {
     try {
       const job = await this.getJob();
       if (!job.video_id) return;
+      // A preview render leaves the video's status and finished render alone
+      if ((job.script as { draft?: boolean } | null)?.draft) return;
 
       if (state === 'failed') {
         await this.supabase
@@ -719,10 +721,13 @@ export class JobRunner {
   async runAssemblyStage(): Promise<string> {
     const job = await this.getJob();
     const videoId = job.video_id;
+    // Preview: cuts instead of transitions, no emphasis, a small fast master, into preview.mp4.
+    // Its beat scenes are the ones the final render reuses, so a preview also speeds that up.
+    const draft = Boolean((job.script as { draft?: boolean } | null)?.draft);
 
     const finalRenderPath = videoId
-      ? path.join(process.cwd(), 'storage', 'renders', videoId, 'final_video.mp4')
-      : path.join(this.baseOutputDir, 'final_video.mp4');
+      ? path.join(process.cwd(), 'storage', 'renders', videoId, draft ? 'preview.mp4' : 'final_video.mp4')
+      : path.join(this.baseOutputDir, draft ? 'preview.mp4' : 'final_video.mp4');
 
     if (await this.isStageDone('assembly')) {
       const exists = await fs
@@ -867,6 +872,8 @@ export class JobRunner {
       const sfxPath = sfxEnabled ? await resolveSfxPath(sfxTrack) : null;
 
       const sceneClipPaths: string[] = [];
+      // Beats whose scene was rendered afresh (the rest were reused: a partial re-render)
+      const rebuiltBeats: number[] = [];
       const sceneBeatIndexes: number[] = [];
       // The voice starts this far into each scene (its lead-in)
       const sceneLeadInMs: number[] = [];
@@ -1176,6 +1183,7 @@ export class JobRunner {
             .eq('unit_index', beatIndex);
 
           sceneClipPaths.push(sceneClipPath);
+          rebuiltBeats.push(beatIndex);
           sceneBeatIndexes.push(beatIndex);
           sceneLeadInMs.push(Math.round(leadInSeconds * 1000));
         } catch (beatErr) {
@@ -1205,6 +1213,13 @@ export class JobRunner {
         }
       }
 
+      // Music and effects on their own, kept with the renders for exporting the edit (DaVinci Resolve)
+      const stemsDir = path.join(rendersDir(videoId ?? job.id), draft ? 'preview-stems' : 'stems');
+      await fs.rm(stemsDir, { recursive: true, force: true }).catch(() => {});
+      await fs.mkdir(stemsDir, { recursive: true });
+      const musicStemPath = path.join(stemsDir, 'music.m4a');
+      const sfxStemPath = path.join(stemsDir, 'sfx.m4a');
+
       // 6. Concatenate all scenes into final video
       const transition = (videoRecord?.script_json?.transition ||
         videoRecord?.transition ||
@@ -1215,7 +1230,7 @@ export class JobRunner {
       // Style-matched: a transition per join, sized to the moment and to the silence there
       const reveals = new Set<number>(Array.isArray(videoRecord?.script_json?.music_moments?.reveals) ? videoRecord.script_json.music_moments.reveals : []);
       const joins =
-        transition === 'style'
+        !draft && transition === 'style'
           ? planTransitions(
               sceneBeatIndexes.slice(1).map((next, i) => {
                 const prev = pacingPlan.get(sceneBeatIndexes[i]);
@@ -1233,7 +1248,7 @@ export class JobRunner {
             )
           : undefined;
       const joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
-        transition,
+        transition: draft ? 'cut' : transition,
         joins,
       });
       if (joins) {
@@ -1384,6 +1399,7 @@ export class JobRunner {
             bgmPath: bgmTrackPath,
             outputPath: withMusicPath,
             volume: bgmVolume,
+            stemPath: musicStemPath,
             accentExpression: accentExpr,
             sting,
           });
@@ -1434,7 +1450,7 @@ export class JobRunner {
         if (cues.length > 0 || narrationPlanned.beds.length > 0) {
           const withSfxPath = path.join(tempDir, `program_sfx_${Date.now()}.mp4`);
           workingFiles.push(withSfxPath);
-          await applySoundDesign({ videoPath: programPath, outputPath: withSfxPath, cues, beds: narrationPlanned.beds, volume: sfxVolume });
+          await applySoundDesign({ videoPath: programPath, outputPath: withSfxPath, cues, beds: narrationPlanned.beds, volume: sfxVolume, stemPath: sfxStemPath });
           programPath = withSfxPath;
           const real = shotCuesVoiced.filter((c) => c.file).length;
           console.log(
@@ -1448,7 +1464,7 @@ export class JobRunner {
       const grade = lookFilter(themeForStyle(videoRecord?.style).name, videoRecord?.script_json?.look);
       // Emphasis: shakes on impacts, freeze-frames with titles, chapter zooms, letterbox
       const emphasis =
-        videoId && usingVideoBeats
+        videoId && usingVideoBeats && !draft
           ? await prepareEmphasis({
               supabase: this.supabase,
               videoId,
@@ -1478,7 +1494,7 @@ export class JobRunner {
       if (emphasis) console.log(`[Assembly] Emphasis: ${emphasis.summary}`);
       try {
         try {
-          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis });
+          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis, draft });
           console.log(
             `[Assembly] Mastered to ${TARGET_LUFS} LUFS (programme measured ${measured.input_i} LUFS)` +
               `${grade ? `, ${themeForStyle(videoRecord?.style).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
@@ -1501,6 +1517,20 @@ export class JobRunner {
         }
       } finally {
         for (const f of workingFiles) await fs.unlink(f).catch(() => {});
+      }
+
+      if (draft) {
+        if (videoId) {
+          const { data: latest } = await this.supabase.from('videos').select('script_json').eq('id', videoId).maybeSingle();
+          if (latest?.script_json) {
+            await this.supabase
+              .from('videos')
+              .update({ script_json: { ...latest.script_json, preview: { renderedAt: new Date().toISOString(), error: null, rebuiltBeats, beats: sceneBeatIndexes.length } } })
+              .eq('id', videoId);
+          }
+        }
+        console.log(`[Assembly] Preview rendered: ${finalRenderPath}`);
+        return finalRenderPath;
       }
 
       // 6d. Final quality check: black frames, frozen picture, dead air, loudness, format, sync
@@ -1575,7 +1605,13 @@ export class JobRunner {
             voiceMs: ttsMap.get(b)?.duration_ms ?? null,
             audioPath: ttsMap.get(b)?.output_path ?? null,
             trackPath: trackByBeat.get(b) ?? null,
+            sceneClipPath: sceneClipPaths[pos] ?? null,
           })),
+          stems: {
+            music: (await fs.stat(musicStemPath).then((s) => s.size > 0).catch(() => false)) ? musicStemPath : null,
+            sfx: (await fs.stat(sfxStemPath).then((s) => s.size > 0).catch(() => false)) ? sfxStemPath : null,
+          },
+          rebuiltBeats,
         };
 
         // Thumbnails from the video's own strongest frames (regenerated on the publish page)
@@ -1643,7 +1679,13 @@ export class JobRunner {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await this.updateStageStatus('assembly', 'failed', msg);
-      if (videoId) {
+      if (videoId && draft) {
+        // A failed preview never marks the video failed; the error is kept with the preview
+        const { data: latest } = await this.supabase.from('videos').select('script_json').eq('id', videoId).maybeSingle();
+        if (latest?.script_json) {
+          await this.supabase.from('videos').update({ script_json: { ...latest.script_json, preview: { renderedAt: null, error: msg } } }).eq('id', videoId);
+        }
+      } else if (videoId) {
         await this.supabase
           .from('videos')
           .update({

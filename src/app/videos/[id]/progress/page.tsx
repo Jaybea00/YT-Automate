@@ -108,6 +108,36 @@ export default function PipelineProgressPage() {
   const [editingTitles, setEditingTitles] = useState<Record<number, string>>({});
   const [isSavingTitles, setIsSavingTitles] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // Held for tonight's render queue, and the hours it runs
+  const [overnight, setOvernight] = useState<{ queued: boolean; window: { start: string; end: string } } | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    fetch('/api/overnight')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((q) => {
+        if (!cancelled && q) setOvernight({ queued: q.items.some((i: { videoId: string }) => i.videoId === id), window: q.window });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  async function toggleOvernight() {
+    if (!id || !overnight) return;
+    try {
+      const res = overnight.queued
+        ? await fetch(`/api/overnight?videoId=${id}`, { method: 'DELETE' })
+        : await fetch('/api/overnight', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ videoId: id }) });
+      const q = await res.json();
+      if (!res.ok) throw new Error(q.error || 'Could not change the overnight queue');
+      setOvernight({ queued: q.items.some((i: { videoId: string }) => i.videoId === id), window: q.window });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not change the overnight queue');
+    }
+  }
 
   const fetchChapters = useCallback(
     async (style: 'dash' | 'space' = formatStyle) => {
@@ -254,12 +284,13 @@ export default function PipelineProgressPage() {
     }
   }
 
-  async function handleStartAssembly() {
+  async function handleStartAssembly(draft = false) {
     setIsTriggering(true);
     try {
       const res = await fetch(`/api/videos/${id}/assembly`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft ? { draft: true } : {}),
       });
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -274,6 +305,18 @@ export default function PipelineProgressPage() {
   }
 
   const video = data?.video;
+  const preview = video?.script_json?.preview as
+    | { renderedAt: string | null; error: string | null; rebuiltBeats?: number[]; beats?: number }
+    | undefined;
+  const lastRender = video?.script_json?.timeline as { renderedAt?: string; rebuiltBeats?: number[]; beats?: unknown[] } | undefined;
+  const rebuildNote = (rebuilt: number[] | undefined, total: number | undefined) =>
+    rebuilt && total
+      ? rebuilt.length >= total
+        ? `All ${total} beats rendered fresh.`
+        : rebuilt.length === 0
+          ? `Nothing changed: all ${total} beats reused.`
+          : `Rebuilt ${rebuilt.length} of ${total} beats (${rebuilt.map((b) => b + 1).join(', ')}); the rest reused.`
+      : null;
   const qualityReport = video?.script_json?.quality_report as
     | { passed: boolean; checkedAt: string; checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }> }
     | undefined;
@@ -380,9 +423,35 @@ export default function PipelineProgressPage() {
                 <span>🎬</span>
                 <span>Vibedit Studio</span>
               </Link>
+              <button
+                onClick={() => handleStartAssembly(true)}
+                disabled={isTriggering || isRendering}
+                title="A quick, small render to check the edit (cuts instead of transitions, no emphasis effects). The final render reuses its work."
+                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 text-zinc-100 font-medium text-sm transition"
+              >
+                ⚡ Quick preview
+              </button>
+              {overnight && (
+                <button
+                  onClick={toggleOvernight}
+                  disabled={isRendering}
+                  title={
+                    overnight.queued
+                      ? 'Take it out of tonight\'s queue'
+                      : `Render it tonight, between ${overnight.window.start} and ${overnight.window.end}, while the laptop is free`
+                  }
+                  className={`px-4 py-2.5 rounded-xl border disabled:opacity-50 font-medium text-sm transition ${
+                    overnight.queued
+                      ? 'bg-sky-950 border-sky-700 text-sky-200 hover:bg-sky-900'
+                      : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-100'
+                  }`}
+                >
+                  {overnight.queued ? `🌙 Queued for ${overnight.window.start} · cancel` : '🌙 Render tonight'}
+                </button>
+              )}
               {video?.status !== 'rendered' && (
                 <button
-                  onClick={handleStartAssembly}
+                  onClick={() => handleStartAssembly()}
                   disabled={isTriggering || isRendering}
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-sm transition shadow-lg shadow-indigo-900/40"
                 >
@@ -712,6 +781,36 @@ export default function PipelineProgressPage() {
         </div>
 
         {/* Final quality check on the rendered video */}
+        {rebuildNote(lastRender?.rebuiltBeats, lastRender?.beats?.length) && (
+          <p className="text-xs text-zinc-500 px-1">
+            Last full render: {rebuildNote(lastRender?.rebuiltBeats, lastRender?.beats?.length)} Change a shot and render again: only the beats you changed are rebuilt.
+          </p>
+        )}
+
+        {preview && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-white">⚡ Quick preview</h2>
+              <span className="text-[11px] text-zinc-500">
+                {preview.renderedAt ? `made ${new Date(preview.renderedAt).toLocaleString()}` : 'failed'}
+              </span>
+            </div>
+            {preview.renderedAt ? (
+              <video
+                src={`/api/videos/${id}/render?preview=1&v=${encodeURIComponent(preview.renderedAt)}`}
+                controls
+                preload="metadata"
+                className="w-full max-w-2xl rounded-lg border border-zinc-800 bg-black"
+              />
+            ) : (
+              <p className="text-xs text-red-300">{preview.error}</p>
+            )}
+            {rebuildNote(preview.rebuiltBeats, preview.beats) && (
+              <p className="text-[11px] text-zinc-400">{rebuildNote(preview.rebuiltBeats, preview.beats)}</p>
+            )}
+            <p className="text-[11px] text-zinc-500">Small and fast: cuts instead of transitions, no emphasis effects. Music, sound effects and captions are as in the final. Start Assembly for the real thing.</p>
+          </div>
+        )}
         {qualityReport && qualityReport.checks.length > 0 && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-4">
             <div className="flex items-center justify-between">
