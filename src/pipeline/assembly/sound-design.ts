@@ -230,6 +230,8 @@ export async function applySoundDesign(options: {
   beds?: BedCue[];
   /** The video's effects volume setting, where 0.25 is the designed level. */
   volume?: number;
+  /** Also writes the effects on their own here (for editing elsewhere, e.g. DaVinci Resolve). */
+  stemPath?: string;
 }): Promise<{ outputPath: string; cueCount: number }> {
   const { videoPath, outputPath, cues } = options;
   const beds = options.beds ?? [];
@@ -267,7 +269,14 @@ export async function applySoundDesign(options: {
     );
     labels.push(label);
   });
-  graph.push(`[0:a]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0[aout]`);
+  if (options.stemPath) {
+    // Effects summed over silence of the programme's length, then added to it: the same mix, plus an effects-only copy
+    graph.push(`[0:a]asplit=2[prog][quiet]`, `[quiet]volume=0[silence]`);
+    graph.push(`[silence]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0,asplit=2[fx][fxstem]`);
+    graph.push(`[prog][fx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`);
+  } else {
+    graph.push(`[0:a]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0[aout]`);
+  }
 
   // Large graphs go through a script file (Windows caps command-line length)
   const scriptPath = `${outputPath}.sfx-graph.txt`;
@@ -276,7 +285,7 @@ export async function applySoundDesign(options: {
     await execFileAsync(
       getFfmpegPath(),
       // "-/option file" reads the option's value from a file (ffmpeg 7+; -filter_complex_script is gone)
-      ['-y', '-i', videoPath, ...inputs, ...bedInputs, '-/filter_complex', scriptPath, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', outputPath],
+      ['-y', '-i', videoPath, ...inputs, ...bedInputs, '-/filter_complex', scriptPath, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', outputPath, ...(options.stemPath ? ['-map', '[fxstem]', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', options.stemPath] : [])],
       { maxBuffer: 16 * 1024 * 1024 },
     );
   } finally {
