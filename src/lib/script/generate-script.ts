@@ -15,6 +15,11 @@ import {
 } from './script-quality';
 import type { ResearchDossier } from '@/lib/research/types';
 import type { ScriptReview } from './script-editor';
+import type { BriefExtras, ScriptOutline } from './outline';
+import type { FactCheckReport } from './fact-check-issues';
+import type { PronunciationHints } from './pronunciation-hints-types';
+import type { AdCheckReport } from './ad-check-issues';
+import { leadWithPackageTitle, type PackageOption, type Packaging } from './packaging-types';
 import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
 
@@ -109,6 +114,22 @@ export interface GeneratedScript {
   review?: ScriptReview;
   /** Visual rhythm (slideshow risk) of the shot plan, and of the rendered visuals once made. */
   rhythm?: { plan?: RhythmReport; render?: RhythmReport };
+  /** Brief mode: the creator's notes, the approved outline, and the brief's notes for publishing. */
+  brief?: string;
+  outline?: ScriptOutline;
+  brief_extras?: BriefExtras;
+  /** The independent fact-check run after the script was written. */
+  fact_check?: FactCheckReport;
+  /** Names the voice may mispronounce, with suggested respellings for the creator to confirm. */
+  pronunciation_hints?: PronunciationHints;
+  /** Wording likely to limit ads, with safer suggestions. */
+  ad_check?: AdCheckReport;
+  /** Title and thumbnail options decided before the script; the script delivers the chosen one. */
+  packaging?: Packaging;
+  /** 'short' for a native YouTube Short (a linked mini video); absent for normal videos. */
+  format?: 'short';
+  /** For a native Short: the long video it came from, and the on-screen hook banner. */
+  short?: { parent_video_id: string; hook_banner: string };
 }
 
 export const ScriptBeatSchema = z.object({
@@ -133,6 +154,14 @@ export interface GenerateScriptInput {
   revisionOf?: { previousScript: GeneratedScript; feedback: string };
   /** Researched facts to write from; every specific in the narration must come from here. */
   research?: ResearchDossier | null;
+  /** The creator's notes; the script follows their structure, tone and lines. */
+  brief?: string | null;
+  /** The outline the creator approved; the script follows it chapter by chapter. */
+  outline?: ScriptOutline | null;
+  /** The title and thumbnail promise the script must pay off. */
+  packaging?: PackageOption | null;
+  /** 'short': a native YouTube Short of about a minute, written for vertical viewing. */
+  format?: 'short';
 }
 
 export interface GenerateScriptOptions {
@@ -175,17 +204,58 @@ function researchSection(input: GenerateScriptInput): string {
   return input.research?.facts.length ? `\n\n${formatDossierForPrompt(input.research)}` : '';
 }
 
+/** The outline as the script prompt shows it. */
+export function formatOutlineForPrompt(outline: ScriptOutline): string {
+  const chapters = outline.chapters
+    .map((c, i) => {
+      const facts = c.fact_ids?.length ? ` [facts: ${c.fact_ids.join(', ')}]` : '';
+      return `${i + 1}. ${c.title}${facts}\n${c.points.map((p) => `   - ${p}`).join('\n')}`;
+    })
+    .join('\n');
+  return `Hook: ${outline.hook}\n${chapters}\nClosing: ${outline.closing}`;
+}
+
+/** Rules for a native Short: it must work for someone with no context, in under a minute. */
+export const SHORT_FORMAT_RULES = `THIS IS A YOUTUBE SHORT (vertical, under 60 seconds, watched by people who've never seen the channel):
+- The first beat is the hook, said in the first 2 seconds: open mid-action or on the most surprising fact. No intro, no "in this video", no scene-setting first.
+- One idea, one story beat, told fast: short sentences, no detours, no chapter structure.
+- Every beat raises the stakes or answers part of the hook's question.
+- End on a payoff line that lands hard and makes them want the full story. Never ask viewers to like, subscribe or check the description.`;
+
+function briefSection(input: GenerateScriptInput): string {
+  const parts: string[] = [];
+  if (input.format === 'short') parts.push(SHORT_FORMAT_RULES);
+  if (input.brief?.trim()) {
+    parts.push(`CREATOR'S BRIEF (follow its structure, angle, tone and chapter order; use any opening or closing lines it gives, word for word; it overrides the style's defaults where they conflict, but never the research rules and never the word budget; ignore its title, thumbnail and source notes, which are used elsewhere):
+"""
+${input.brief.trim()}
+"""`);
+  }
+  if (input.packaging) {
+    parts.push(`PACKAGING (the title and thumbnail viewers clicked; the script must keep this promise):
+Title: ${input.packaging.title}
+Thumbnail: ${input.packaging.thumbnail_image}${input.packaging.thumbnail_text ? ` with the text "${input.packaging.thumbnail_text}"` : ''}
+Promise: ${input.packaging.promise}
+Open on this promise within the first few beats so the click feels rewarded, keep returning to its question, and answer it clearly and satisfyingly by the end. Put this title first in title_options.`);
+  }
+  if (input.outline?.chapters.length) {
+    parts.push(`APPROVED OUTLINE (the creator signed this off: cover every chapter and point, in this order, with the hook first and the closing last; spread the word budget across the chapters):
+${formatOutlineForPrompt(input.outline)}`);
+  }
+  return parts.length ? `\n\n${parts.join('\n\n')}` : '';
+}
+
 export function buildUserPrompt(input: GenerateScriptInput): string {
   const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style));
   return input.revisionOf
     ? `Revise this existing script for the topic "${input.topic}" (target ~${input.targetMinutes} minutes).
 Requested changes: ${input.revisionOf.feedback}
-${describeBudget(budget)} Keep to it unless the requested changes say otherwise.${researchSection(input)}
+${describeBudget(budget)} Keep to it unless the requested changes say otherwise.${briefSection(input)}${researchSection(input)}
 
 Previous script JSON:
 ${JSON.stringify(scriptForPrompt(input.revisionOf.previousScript), null, 2)}`
     : `Write a script for the topic "${input.topic}". Target runtime: ~${input.targetMinutes} minutes.
-${describeBudget(budget)}${researchSection(input)}`;
+${describeBudget(budget)}${briefSection(input)}${researchSection(input)}`;
 }
 
 export function buildLengthFixPrompt(
@@ -203,7 +273,7 @@ export function buildLengthFixPrompt(
 
   return `The script below for "${input.topic}" has ${words} words of narration. ${describeBudget(budget)}
 ${direction}
-Keep every rule from your instructions (hook, visual-type rules, accuracy). Return the complete revised script JSON.${researchSection(input)}
+Keep every rule from your instructions (hook, visual-type rules, accuracy). Return the complete revised script JSON.${briefSection(input)}${researchSection(input)}
 
 Current script JSON:
 ${JSON.stringify(scriptForPrompt(script), null, 2)}`;
@@ -273,10 +343,13 @@ export async function generateScript(
   }
 
   // Links beats to the dossier, flags unsupported specifics, and stores the dossier with the script
-  const withResearch = (script: GeneratedScript): GeneratedScript =>
-    input.research
+  // Also keeps the packaged title first among the title options
+  const withResearch = (draft: GeneratedScript): GeneratedScript => {
+    const script = { ...draft, title_options: leadWithPackageTitle(draft.title_options ?? [], input.packaging) };
+    return input.research
       ? { ...script, beats: applyResearchToBeats(script.beats, input.research), research: input.research }
       : script;
+  };
 
   let best = await generateWithRetry(provider, ctx, maxRetries, template.systemPrompt, buildUserPrompt(input));
   if (input.revisionOf) {

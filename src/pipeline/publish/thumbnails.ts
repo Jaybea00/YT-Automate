@@ -146,10 +146,12 @@ export async function planThumbnails(options: {
   title: string;
   topic: string;
   narration: string;
+  /** Thumbnail wishes from the creator's brief. */
+  creatorIdeas?: string[];
   llm: LLMProvider;
   ctx: ProviderCallContext;
 }): Promise<ThumbnailPlan[]> {
-  const { frames, title, topic, narration, llm, ctx } = options;
+  const { frames, title, topic, narration, creatorIdeas = [], llm, ctx } = options;
   if (!llm.supportsVision) throw new Error(`${llm.id} cannot see images`);
   const images: LlmImage[] = await Promise.all(
     frames.map(async (f) => ({ mimeType: 'image/jpeg', data: (await fs.readFile(f.preview)).toString('base64') })),
@@ -159,7 +161,7 @@ export async function planThumbnails(options: {
       prompt: `You design YouTube thumbnails for a documentary channel.
 Video: "${title}" (topic: ${topic})
 What it covers: ${narration.slice(0, 2500)}
-
+${creatorIdeas.length ? `The creator's thumbnail ideas (follow them where a frame fits; use their wording as overlay text when it fits the rules below):\n${creatorIdeas.map((t) => `- ${t}`).join('\n')}\n` : ''}
 These ${frames.length} frames (numbered 0 to ${frames.length - 1} in order) come from the video. Pick the ${VARIANTS} that would make the strongest thumbnails: one clear subject, a face or striking scene, strong contrast, readable at small size, little text already in the frame. Prefer variety between the picks.
 For each pick write overlay text: 2-4 punchy words that add intrigue the title doesn't already say (never repeat the title), only facts from the video. Choose 1-2 of those words to highlight. Say where the main subject sits in the frame (left, center, right) so the text can go on the other side.`,
       schema: PlanSchema,

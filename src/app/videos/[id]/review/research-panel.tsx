@@ -7,15 +7,19 @@ import type { ResearchDossier } from '@/lib/research/types';
 const PROVIDER_LABEL: Record<ResearchDossier['provider'], string> = {
   wikipedia: 'Wikipedia',
   google_search: 'Google Search',
+  brief: 'brief',
 };
 
 /** Summary of the research behind the script, with an expandable list of sources and facts. */
 export function ResearchPanel({
   research,
   beats,
+  beforeScript = false,
 }: {
   research: ResearchDossier | undefined;
   beats: ScriptBeat[];
+  /** Brief mode's outline step: there's no script yet to count used facts or checks in. */
+  beforeScript?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -43,11 +47,11 @@ export function ResearchPanel({
           {research.sources.length === 1 ? '' : 's'}
           <span className="font-normal text-zinc-400">
             {' '}
-            · {usedFacts.size} of {research.facts.length} facts used
+            · {beforeScript ? `${research.facts.length} facts` : `${usedFacts.size} of ${research.facts.length} facts used`}
           </span>
         </span>
         <span className="flex items-center gap-3">
-          {flagged > 0 ? (
+          {beforeScript ? null : flagged > 0 ? (
             <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 font-medium">
               ⚠ {flagged} beat{flagged === 1 ? '' : 's'} need{flagged === 1 ? 's' : ''} checking
             </span>
@@ -66,9 +70,13 @@ export function ResearchPanel({
             {research.sources.map((s) => (
               <li key={s.id}>
                 <span className="font-mono text-zinc-500 mr-2">{s.id}</span>
-                <a href={s.url} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 underline">
-                  {s.title}
-                </a>
+                {s.url ? (
+                  <a href={s.url} target="_blank" rel="noreferrer" className="text-indigo-300 hover:text-indigo-200 underline">
+                    {s.title}
+                  </a>
+                ) : (
+                  <span className="text-zinc-300">{s.title}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -111,7 +119,7 @@ export function BeatSources({
         return (
           <a
             key={fact.id}
-            href={source?.url}
+            href={source?.url || undefined}
             target="_blank"
             rel="noreferrer"
             title={`${fact.claim}${source ? ` (${source.title})` : ''}`}

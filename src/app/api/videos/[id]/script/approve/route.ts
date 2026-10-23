@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
+import { loadPronunciations, savePronunciations } from '@/pipeline/tts/pronunciations';
+import { mergeHintsIntoList, type PronunciationHints } from '@/lib/script/pronunciation-hints';
 
 export async function POST(
   req: Request,
@@ -40,6 +42,14 @@ export async function POST(
       );
     }
 
+    // Brief mode: an outline isn't a script yet
+    if (!Array.isArray(video.script_json?.beats) || video.script_json.beats.length === 0) {
+      return NextResponse.json(
+        { error: 'There is no script to approve yet. Write the full script from the outline first.' },
+        { status: 400 },
+      );
+    }
+
     // 2. Validate selectedTitle is in script_json.title_options
     const titleOptions: string[] = video.script_json?.title_options ?? [];
     if (!titleOptions.includes(selectedTitle.trim())) {
@@ -51,10 +61,25 @@ export async function POST(
       );
     }
 
+    // Ticked pronunciation hints join the channel's list now, before voicing reads it
+    let scriptJson = video.script_json;
+    const hints = video.script_json.pronunciation_hints as PronunciationHints | undefined;
+    if (hints?.hints.some((h) => !h.skip && !h.added)) {
+      try {
+        const merged = mergeHintsIntoList(await loadPronunciations(), hints.hints);
+        await savePronunciations(merged.list);
+        scriptJson = { ...scriptJson, pronunciation_hints: { ...hints, hints: merged.hints } };
+        console.log(`[approve] Added ${merged.added} pronunciation(s) to the channel list`);
+      } catch (err) {
+        console.warn('[approve] Could not add pronunciation hints; voicing without them:', err);
+      }
+    }
+
     // 3. Set script_approved_at = now(), title = selectedTitle, status = 'voicing'
     const { data: updatedVideo, error: updateError } = await supabase
       .from('videos')
       .update({
+        script_json: scriptJson,
         title: selectedTitle.trim(),
         script_approved_at: new Date().toISOString(),
         status: 'voicing',

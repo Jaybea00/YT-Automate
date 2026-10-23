@@ -17,6 +17,7 @@ export default function NewVideoPage() {
   const [topic, setTopic] = useState('');
   const [style, setStyle] = useState<VideoStyle>('tech');
   const [targetMinutes, setTargetMinutes] = useState<number | string>(5);
+  const [brief, setBrief] = useState('');
 
   // Raw Script State
   const [rawText, setRawText] = useState('');
@@ -79,6 +80,7 @@ export default function NewVideoPage() {
       }
       payload.topic = topic.trim();
       payload.targetMinutes = parsedMinutes;
+      if (brief.trim()) payload.brief = brief.trim();
     } else if (activeTab === 'raw') {
       mode = rawMode;
       if (!rawText.trim()) {
@@ -228,6 +230,24 @@ export default function NewVideoPage() {
                     value={targetMinutes}
                     onChange={(e) => setTargetMinutes(e.target.value)}
                     className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 focus:outline-none focus:ring-2 focus:ring-red-500/40 focus:border-red-500 transition text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="brief" className="block text-sm font-medium text-zinc-200 mb-1">
+                    Brief / outline <span className="text-zinc-500 font-normal">(optional)</span>
+                  </label>
+                  <p className="text-xs text-zinc-500 mb-2">
+                    Your notes: angle, chapters, facts, lines you want said, title or thumbnail ideas, sources. With a
+                    brief you get an outline to approve before the full script is written.
+                  </p>
+                  <textarea
+                    id="brief"
+                    rows={8}
+                    value={brief}
+                    onChange={(e) => setBrief(e.target.value)}
+                    placeholder={'e.g.\nAngle: the rise and fall of...\nChapter 1: ...\nOpen with: "..."\nTitle idea: ...\nSources: ...'}
+                    className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-red-500/40 focus:border-red-500 transition text-xs leading-relaxed"
                   />
                 </div>
               </div>
@@ -437,7 +457,9 @@ export default function NewVideoPage() {
                 ) : (
                   <span>
                     {activeTab === 'ai'
-                      ? 'Generate Script with AI →'
+                      ? brief.trim()
+                        ? 'Research & Draft Outline →'
+                        : 'Generate Script with AI →'
                       : activeTab === 'srt'
                       ? 'Parse SRT & Review Script →'
                       : 'Structure Script & Review →'}

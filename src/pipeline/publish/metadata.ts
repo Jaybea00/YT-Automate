@@ -77,9 +77,10 @@ export function normalizeMetadata(raw: z.infer<typeof MetadataSchema>): Omit<Vid
  * The full description: hook, summary, chapters, credits, hashtags, in the order YouTube shows
  * them, cut to the 5,000-character limit without dropping the chapters or credits.
  */
-export function composeDescription(parts: { hook: string; summary: string; chapters?: string; credits?: string; hashtags?: string[] }): string {
+export function composeDescription(parts: { hook: string; summary: string; chapters?: string; sources?: string; credits?: string; hashtags?: string[] }): string {
   const tail = [
     parts.chapters ? `Chapters:\n${parts.chapters}` : '',
+    parts.sources ? `Sources:\n${parts.sources}` : '',
     parts.credits ? `Credits:\n${parts.credits}` : '',
     parts.hashtags?.length ? parts.hashtags.join(' ') : '',
   ].filter(Boolean);
@@ -90,6 +91,33 @@ export function composeDescription(parts: { hook: string; summary: string; chapt
   return [head, tailText].filter(Boolean).join('\n\n');
 }
 
+/**
+ * The description's source list: the sources the creator listed in a brief, then the researched
+ * sources the script actually cites. Empty for videos without research or a brief.
+ */
+export function descriptionSources(scriptJson: {
+  brief_extras?: { sources?: string[] };
+  beats?: Array<{ fact_ids?: string[] }>;
+  research?: {
+    facts?: Array<{ id: string; sourceIds: string[] }>;
+    sources?: Array<{ id: string; title: string; url: string }>;
+  };
+}): string {
+  const lines = [...(scriptJson.brief_extras?.sources ?? [])];
+  const cited = new Set((scriptJson.beats ?? []).flatMap((b) => b.fact_ids ?? []));
+  const sourceIds = new Set(
+    (scriptJson.research?.facts ?? []).filter((f) => cited.has(f.id)).flatMap((f) => f.sourceIds),
+  );
+  for (const s of scriptJson.research?.sources ?? []) {
+    // Sources without a link (the creator's brief itself) and ones the creator already listed are skipped
+    if (!s.url || !sourceIds.has(s.id) || lines.some((l) => l.includes(s.url))) continue;
+    lines.push(`${s.title}: ${s.url}`);
+  }
+  return [...new Set(lines.map((l) => l.replace(/^[-•*]\s*/, '').trim()).filter(Boolean))]
+    .map((l) => `- ${l}`)
+    .join('\n');
+}
+
 export async function generateMetadata(options: {
   topic: string;
   style?: string | null;
@@ -97,17 +125,19 @@ export async function generateMetadata(options: {
   sectionTitles?: string[];
   facts?: string[];
   currentTitle?: string | null;
+  /** Title ideas from the creator's brief. */
+  creatorTitles?: string[];
   llm: LLMProvider;
   ctx: ProviderCallContext;
 }): Promise<VideoMetadata> {
-  const { topic, style, narration, sectionTitles = [], facts = [], currentTitle, llm, ctx } = options;
+  const { topic, style, narration, sectionTitles = [], facts = [], currentTitle, creatorTitles = [], llm, ctx } = options;
   const script = narration.join(' ');
   const { data } = await llm.generateJson(
     {
       system:
         'You package documentary videos for YouTube. You write titles and descriptions that earn the click honestly: specific, intriguing, and true to the video. Never promise what the video does not deliver.',
       prompt: `Topic: "${topic}"${style ? `\nStyle: ${style}` : ''}${currentTitle ? `\nWorking title: "${currentTitle}"` : ''}
-${sectionTitles.length ? `Chapters: ${sectionTitles.join(' | ')}\n` : ''}${facts.length ? `Verified facts:\n${facts.slice(0, 15).map((f) => `- ${f}`).join('\n')}\n` : ''}
+${creatorTitles.length ? `The creator's own title ideas: ${creatorTitles.map((t) => `"${t}"`).join(', ')}. Include the strongest of them among the 5 (fitted to the rules below) and let them guide the others.\n` : ''}${sectionTitles.length ? `Chapters: ${sectionTitles.join(' | ')}\n` : ''}${facts.length ? `Verified facts:\n${facts.slice(0, 15).map((f) => `- ${f}`).join('\n')}\n` : ''}
 Narration:
 ${script.slice(0, 9000)}
 

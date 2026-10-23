@@ -7,6 +7,13 @@ import { VideoRecord } from '@/lib/types/video';
 import { ScriptBeat } from '@/lib/script/generate-script';
 import { applyResearchToBeats } from '@/lib/script/script-quality';
 import { ResearchPanel, BeatSources } from './research-panel';
+import { OutlineEditor } from './outline-editor';
+import { BeatFactIssues, FactCheckPanel } from './fact-check-panel';
+import type { FactCheckReport } from '@/lib/script/fact-check-issues';
+import { PronunciationPanel } from './pronunciation-panel';
+import { AdCheckPanel, BeatAdIssues } from './ad-check-panel';
+import { PackagingSummary } from './packaging-card';
+import type { AdCheckReport } from '@/lib/script/ad-check-issues';
 import { BeatShots, ShotPlanSummary } from './shots-panel';
 import { BeatRewritePanel, HookLab, RuntimeMeter, ScriptDoctor } from './editor-panels';
 
@@ -187,6 +194,14 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
     return () => clearInterval(interval);
   }, [video?.status, id]);
+
+  function setFactCheck(report: FactCheckReport) {
+    setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, fact_check: report } } : v));
+  }
+
+  function setAdCheck(report: AdCheckReport) {
+    setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, ad_check: report } } : v));
+  }
 
   // Handle Beat Text Edit (re-evaluates the "needs check" flag against the research dossier)
   function handleBeatTextChange(index: number, newText: string) {
@@ -647,14 +662,14 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                     {video.target_minutes} min
                   </span>
                 </span>
-                {video.script_json?.beats && (
+                {video.script_json?.beats?.length ? (
                   <span className="flex items-center gap-1.5 bg-zinc-950 px-3 py-1 rounded-lg border border-zinc-800">
                     <span className="text-zinc-400">Estimated Duration:</span>
                     <span className="font-semibold text-amber-400">
                       ~{totalMinutesFormatted} min ({totalSeconds}s)
                     </span>
                   </span>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -885,8 +900,20 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           </div>
         )}
 
+        {/* Brief mode: the outline is approved before the full script is written */}
+        {video.status === 'script_review' && video.script_json?.outline && !video.script_json.beats?.length && (
+          <OutlineEditor
+            video={video}
+            onWritten={(written) => {
+              setVideo(written);
+              setEditableBeats(written.script_json?.beats ?? []);
+              setSelectedTitle(written.script_json?.title_options?.[0] ?? '');
+            }}
+          />
+        )}
+
         {/* Case 4: Status = 'script_review' (Active Review & Approval Flow) */}
-        {video.status === 'script_review' && video.script_json && (
+        {video.status === 'script_review' && video.script_json && !(video.script_json.outline && !video.script_json.beats?.length) && (
           <div className="space-y-8">
             {/* 1. Title Options Selection */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-xl">
@@ -1001,7 +1028,19 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 </div>
               </div>
 
+              <PackagingSummary packaging={video.script_json.packaging} />
               <ResearchPanel research={video.script_json.research} beats={editableBeats} />
+              <FactCheckPanel videoId={id} report={video.script_json.fact_check} beats={editableBeats} onReport={setFactCheck} />
+              <AdCheckPanel videoId={id} report={video.script_json.ad_check} beats={editableBeats} onReport={setAdCheck} />
+              <PronunciationPanel
+                key={video.script_json.pronunciation_hints?.checkedAt ?? 'none'}
+                videoId={id}
+                hints={video.script_json.pronunciation_hints}
+                beats={editableBeats}
+                onHints={(pronunciation_hints) =>
+                  setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, pronunciation_hints } } : v))
+                }
+              />
               <ShotPlanSummary
                 beats={editableBeats}
                 isPlanning={isPlanningShots}
@@ -1164,6 +1203,22 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                         beat={beat}
                         research={video.script_json?.research}
                         onMarkChecked={() => handleMarkChecked(beat.index)}
+                      />
+
+                      <BeatFactIssues
+                        videoId={id}
+                        beat={beat}
+                        report={video.script_json?.fact_check}
+                        onReport={setFactCheck}
+                        onUseSuggestion={(text) => handleBeatTextChange(beat.index, text)}
+                      />
+                      <BeatAdIssues
+                        videoId={id}
+                        beat={beat}
+                        report={video.script_json?.ad_check}
+                        onReport={setAdCheck}
+                        onUseSuggestion={(text) => handleBeatTextChange(beat.index, text)}
+                        onRewrite={(instruction) => openRewrite(idx, instruction)}
                       />
 
                       <BeatShots beat={beat} />

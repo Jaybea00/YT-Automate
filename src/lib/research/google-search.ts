@@ -60,13 +60,14 @@ export async function researchWithGoogleSearch(
   apiKey: string,
   model: string,
   topic: string,
+  focus?: string,
 ): Promise<{ facts: ResearchFact[]; sources: ResearchSource[] }> {
   const genAI = new GoogleGenerativeAI(apiKey);
   // The SDK only types the legacy googleSearchRetrieval tool; current models take googleSearch
   const searchModel = genAI.getGenerativeModel({ model, tools: [{ googleSearch: {} } as unknown as Tool] });
 
   const result = await searchModel.generateContent(
-    `Research this YouTube video topic with Google Search: "${topic}".
+    `Research this YouTube video topic with Google Search: "${topic}".${focus ? `\nThe creator's notes say what the video covers; research the people, events and claims they mention:\n${focus}\n` : ''}
 List 25-40 verified facts, one per line, formatted exactly "F1: ...", "F2: ...".
 Each fact must contain something specific: a number with its unit, a date, a named person or place, a quote with who said it, or a real newspaper headline with outlet and date.
 Only include facts the search results support. No commentary before or after the list.`,
