@@ -1199,6 +1199,12 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                         />
                       </div>
 
+                      {/…|\.\.\./.test(beat.text) && (
+                        <p className="text-[11px] text-sky-300/80">
+                          ⏸ The narrator pauses at each “…” in this beat.
+                        </p>
+                      )}
+
                       <BeatSources
                         beat={beat}
                         research={video.script_json?.research}

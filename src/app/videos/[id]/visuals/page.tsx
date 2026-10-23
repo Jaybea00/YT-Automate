@@ -112,6 +112,13 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [sfxEnabled, setSfxEnabled] = useState(true);
   const [sfxTrack, setSfxTrack] = useState('smart');
   const [sfxVolume, setSfxVolume] = useState(0.25);
+  // Real sounds on the words that describe them, and the moments last planned
+  const [narrationSounds, setNarrationSounds] = useState(true);
+  const [soundMoments, setSoundMoments] = useState<Array<{ beat_index: number; trigger: string; sound: string }> | null>(null);
+  const [soundBeds, setSoundBeds] = useState<Array<{ start_beat: number; end_beat: number; sound: string }> | null>(null);
+  const [paletteSounds, setPaletteSounds] = useState(true);
+  // Music swells into reveals, drops out before key lines, and stings at chapter changes
+  const [musicAccents, setMusicAccents] = useState(true);
   const [previewingSfx, setPreviewingSfx] = useState<string | null>(null);
 
   // Beat Pacing & Breathing Room state (default 0.5s pause)
@@ -216,6 +223,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     sfxEnabled?: boolean;
     sfxTrack?: string;
     sfxVolume?: number;
+    sfxNarration?: boolean;
+    sfxPalette?: boolean;
+    musicAccents?: boolean;
     beatPauseSeconds?: number;
     captionPreset?: string;
     look?: 'auto' | 'off';
@@ -230,6 +240,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextSfxEnabled = updates.sfxEnabled !== undefined ? updates.sfxEnabled : sfxEnabled;
     const nextSfxTrack = updates.sfxTrack !== undefined ? updates.sfxTrack : sfxTrack;
     const nextSfxVolume = updates.sfxVolume !== undefined ? updates.sfxVolume : sfxVolume;
+    const nextSfxNarration = updates.sfxNarration !== undefined ? updates.sfxNarration : narrationSounds;
+    const nextSfxPalette = updates.sfxPalette !== undefined ? updates.sfxPalette : paletteSounds;
+    const nextMusicAccents = updates.musicAccents !== undefined ? updates.musicAccents : musicAccents;
     const nextBeatPause =
       updates.beatPauseSeconds !== undefined ? updates.beatPauseSeconds : beatPauseSeconds;
     const nextCaptionPreset =
@@ -246,6 +259,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     setSfxEnabled(nextSfxEnabled);
     setSfxTrack(nextSfxTrack);
     setSfxVolume(nextSfxVolume);
+    setNarrationSounds(nextSfxNarration);
+    setPaletteSounds(nextSfxPalette);
+    setMusicAccents(nextMusicAccents);
     setBeatPauseSeconds(nextBeatPause);
     setCaptionPreset(nextCaptionPreset);
     setFilmLook(nextLook);
@@ -266,6 +282,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           sfxEnabled: nextSfxEnabled,
           sfxTrack: nextSfxTrack,
           sfxVolume: nextSfxVolume,
+          sfxNarration: nextSfxNarration,
+          sfxPalette: nextSfxPalette,
+          musicAccents: nextMusicAccents,
           beatPauseSeconds: nextBeatPause,
           captionPreset: nextCaptionPreset,
           look: nextLook,
@@ -331,6 +350,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             setBgmEnabled(bData.bgm.enabled !== false);
             setBgmTrack(bData.bgm.track || 'story');
             setBgmVolume(Number(bData.bgm.volume ?? 0.2));
+            setMusicAccents(bData.bgm.accents !== false);
           }
           if (bData.padStyle) {
             setPadStyle(bData.padStyle);
@@ -345,7 +365,11 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             setSfxEnabled(bData.sfx.enabled !== false);
             setSfxTrack(bData.sfx.track || 'smart');
             setSfxVolume(Number(bData.sfx.volume ?? 0.25));
+            setNarrationSounds(bData.sfx.narration !== false);
+            setPaletteSounds(bData.sfx.palette !== false);
           }
+          setSoundMoments(Array.isArray(bData.soundMoments) ? bData.soundMoments : null);
+          setSoundBeds(Array.isArray(bData.soundBeds) ? bData.soundBeds : null);
           if (bData.beatPauseSeconds !== undefined) {
             setBeatPauseSeconds(Number(bData.beatPauseSeconds));
           }
@@ -814,6 +838,18 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 <p className="text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/60">
                   ⚡ Auto-ducks by -16dB whenever voice speaks.
                 </p>
+                <label className="flex items-start gap-2 pt-2 text-[11px] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={musicAccents}
+                    onChange={(e) => updateBgmConfig({ musicAccents: e.target.checked })}
+                    className="accent-indigo-500 mt-0.5"
+                  />
+                  <span>
+                    <span className="text-zinc-200 font-semibold">Music hits moments</span>
+                    <span className="text-zinc-500"> · swells into reveals, goes silent before key lines, a sting at each chapter change</span>
+                  </span>
+                </label>
               </div>
             </div>
           )}
@@ -1064,6 +1100,44 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                     ⚡ Precision-blended at scene cuts without muffling voiceover.
                   </p>
                 </div>
+              </div>
+            )}
+            {sfxEnabled && sfxTrack === 'smart' && (
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-2 text-xs">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={narrationSounds}
+                    onChange={(e) => updateBgmConfig({ sfxNarration: e.target.checked })}
+                    className="accent-indigo-500"
+                  />
+                  <span className="text-zinc-200 font-semibold">Sounds the narration describes</span>
+                  <span className="text-zinc-500">(a gunshot on &quot;fires two shots&quot;, a roar on a goal, and quiet ambience like a stadium or rain)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={paletteSounds}
+                    onChange={(e) => updateBgmConfig({ sfxPalette: e.target.checked })}
+                    className="accent-indigo-500"
+                  />
+                  <span className="text-zinc-200 font-semibold">Real recordings for on-screen effects</span>
+                  <span className="text-zinc-500">(the style&apos;s own whooshes, clicks and booms instead of the built-in ones)</span>
+                </label>
+                <p className="text-zinc-500">
+                  Planned at assembly and placed on the exact word. Uses your recordings in storage/sfx/real/&lt;sound&gt;/, or CC0 sounds
+                  from Freesound when FREESOUND_API_KEY is set; a moment with no recording is skipped.
+                </p>
+                {narrationSounds && soundMoments && (
+                  <p className="text-zinc-400">
+                    {soundMoments.length
+                      ? `Last planned: ${soundMoments.map((m) => `${m.sound.replace(/_/g, ' ')} on “${m.trigger}” (beat ${m.beat_index + 1})`).join(' · ')}`
+                      : 'Last planned: nothing in the narration makes a sound.'}
+                    {soundBeds?.length
+                      ? ` · Ambience: ${soundBeds.map((b) => `${b.sound.replace(/_bed$/, '').replace(/_/g, ' ')} (beats ${b.start_beat + 1}-${b.end_beat + 1})`).join(', ')}`
+                      : ''}
+                  </p>
+                )}
               </div>
             )}
             {/* Beat Pacing & Breathing Room Section */}

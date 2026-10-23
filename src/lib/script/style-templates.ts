@@ -37,6 +37,7 @@ RETENTION CRAFT (applies to every style):
 - Open a loop early (a question the video promises to answer) and pay it off near the end.
 - Roughly every 45-60 seconds of narration, re-hook with a turn, a reveal, or a new question.
 - One idea per beat, 12-35 words. Write for the ear: short spoken sentences, varied rhythm.
+- Pacing marks: for a deliberate dramatic pause, end the word before it with an ellipsis (…), e.g. "He fired twice… Silence." The narrator really pauses there. Use one before a reveal or after a line that should land, at most once every few beats (fewer in fast styles). A short fragment of one to four words right after a long sentence hits hardest.
 - Prefer concrete specifics (names, numbers, dates, places) over generalities.
 - Close on a memorable line that resolves the opening loop. No "like and subscribe".
 - Never invent quotes, statistics, or events. If a figure is uncertain, attribute or hedge it.

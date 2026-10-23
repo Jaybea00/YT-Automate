@@ -473,6 +473,14 @@ export function narrationPaceFactor(style: string | null | undefined): number {
   return Math.round((pacing.speed / (1 + pacing.sentencePauseSec / TYPICAL_SENTENCE_SEC)) * 1000) / 1000;
 }
 
+/**
+ * The pause for a pacing mark (an ellipsis the writer put in for effect): longer in documentary
+ * styles, where lines are meant to land, than in fast explainers.
+ */
+export function dramaticPauseSec(style: string | null | undefined): number {
+  return stylePack(style)?.narration ? 0.8 : 0.5;
+}
+
 /** The pack for a stored style, or undefined for unknown/legacy values. */
 export function stylePack(style: string | null | undefined): StylePack | undefined {
   return isVideoStyle(style) ? STYLE_PACKS[style] : undefined;

@@ -19,9 +19,23 @@ const execFileAsync = promisify(execFile);
 
 export interface SoundCue {
   atMs: number;
-  sound: SoundId;
+  /** A library sound, or "real:<id>" for a recorded effect (with its `file`). */
+  sound: SoundId | `real:${string}`;
   /** Relative level (1 = the designed level, already well under the voice). */
   gain: number;
+  /** The recording to play, for real sounds; library sounds use their built file. */
+  file?: string;
+}
+
+/** A looping ambience bed under a stretch of the video. */
+export interface BedCue {
+  startMs: number;
+  endMs: number;
+  file: string;
+  /** Relative level, like a cue's. */
+  gain: number;
+  /** Fade in and out. */
+  fadeMs: number;
 }
 
 export interface SceneForSound {
@@ -152,7 +166,7 @@ export async function planSoundCues(scenes: SceneForSound[]): Promise<SoundCue[]
 
 /** Drops cues before the start, too-close repeats of one sound, and anything past the cap. */
 export function thinCues(cues: SoundCue[]): SoundCue[] {
-  const lastAt = new Map<SoundId, number>();
+  const lastAt = new Map<SoundCue['sound'], number>();
   return [...cues]
     .filter((c) => c.atMs >= 0)
     .sort((a, b) => a.atMs - b.atMs)
@@ -174,24 +188,28 @@ export async function applySoundDesign(options: {
   videoPath: string;
   outputPath: string;
   cues: SoundCue[];
+  /** Ambience beds, looped under their stretch. */
+  beds?: BedCue[];
   /** The video's effects volume setting, where 0.25 is the designed level. */
   volume?: number;
 }): Promise<{ outputPath: string; cueCount: number }> {
   const { videoPath, outputPath, cues } = options;
+  const beds = options.beds ?? [];
   const master = BED_GAIN * Math.max(0, Math.min(3, (options.volume ?? 0.25) / 0.25));
-  if (cues.length === 0 || master === 0) {
+  if ((cues.length === 0 && beds.length === 0) || master === 0) {
     await fs.copyFile(videoPath, outputPath);
     return { outputPath, cueCount: 0 };
   }
   await ensureSoundLibrary();
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-  const sounds = [...new Set(cues.map((c) => c.sound))];
-  const inputs = sounds.flatMap((s) => ['-i', soundPath(s)]);
+  const fileOf = (c: SoundCue) => c.file ?? soundPath(c.sound as SoundId);
+  const sounds = [...new Set(cues.map(fileOf))];
+  const inputs = sounds.flatMap((s) => ['-i', s]);
   const graph: string[] = [];
   const labels: string[] = [];
   sounds.forEach((sound, si) => {
-    const uses = cues.filter((c) => c.sound === sound);
+    const uses = cues.filter((c) => fileOf(c) === sound);
     const outs = uses.map((_, ui) => `[s${si}u${ui}]`);
     graph.push(`[${si + 1}:a]asplit=${uses.length}${outs.join('')}`);
     uses.forEach((cue, ui) => {
@@ -199,6 +217,17 @@ export async function applySoundDesign(options: {
       graph.push(`[s${si}u${ui}]adelay=${cue.atMs}:all=1,volume=${(cue.gain * master).toFixed(3)},aformat=channel_layouts=stereo${label}`);
       labels.push(label);
     });
+  });
+  // Each bed is its own looping input, cut to its stretch, faded at both ends and delayed into place
+  const bedInputs = beds.flatMap((b) => ['-stream_loop', '-1', '-i', b.file]);
+  beds.forEach((bed, bi) => {
+    const durSec = (bed.endMs - bed.startMs) / 1000;
+    const fade = Math.min(bed.fadeMs / 1000, durSec / 3);
+    const label = `[bed${bi}]`;
+    graph.push(
+      `[${sounds.length + 1 + bi}:a]atrim=0:${durSec.toFixed(3)},asetpts=PTS-STARTPTS,afade=t=in:d=${fade.toFixed(2)},afade=t=out:st=${(durSec - fade).toFixed(3)}:d=${fade.toFixed(2)},adelay=${bed.startMs}:all=1,volume=${(bed.gain * master).toFixed(3)},aformat=channel_layouts=stereo${label}`,
+    );
+    labels.push(label);
   });
   graph.push(`[0:a]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0[aout]`);
 
@@ -209,11 +238,11 @@ export async function applySoundDesign(options: {
     await execFileAsync(
       getFfmpegPath(),
       // "-/option file" reads the option's value from a file (ffmpeg 7+; -filter_complex_script is gone)
-      ['-y', '-i', videoPath, ...inputs, '-/filter_complex', scriptPath, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', outputPath],
+      ['-y', '-i', videoPath, ...inputs, ...bedInputs, '-/filter_complex', scriptPath, '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-ar', '48000', outputPath],
       { maxBuffer: 16 * 1024 * 1024 },
     );
   } finally {
     await fs.unlink(scriptPath).catch(() => {});
   }
-  return { outputPath, cueCount: cues.length };
+  return { outputPath, cueCount: cues.length + beds.length };
 }
