@@ -107,6 +107,9 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [padStyle, setPadStyle] = useState<'blur' | 'black'>('blur');
   const [stillMotion, setStillMotion] = useState<'zoom' | 'static'>('zoom');
   const [transition, setTransition] = useState<string>('cut');
+  // Style-matched transitions: how often and how big
+  const [transitionIntensity, setTransitionIntensity] = useState<'subtle' | 'balanced' | 'bold'>('balanced');
+  const [transitionRendered, setTransitionRendered] = useState(true);
 
   // Transition Sound Effects (SFX) state
   const [sfxEnabled, setSfxEnabled] = useState(true);
@@ -129,6 +132,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   // The style's colour grade at mastering ('auto') or none ('off', faster to render)
   const [filmLook, setFilmLook] = useState<'auto' | 'off'>('auto');
   const [archiveLook, setArchiveLook] = useState<'auto' | 'off'>('auto');
+  const [emphasisEnabled, setEmphasisEnabled] = useState(true);
+  const [letterbox, setLetterbox] = useState<'auto' | 'on' | 'off'>('auto');
 
   // Batch Uploader state
   const [showBatchUploader, setShowBatchUploader] = useState(false);
@@ -230,6 +235,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     captionPreset?: string;
     look?: 'auto' | 'off';
     archiveLook?: 'auto' | 'off';
+    transitionIntensity?: 'subtle' | 'balanced' | 'bold';
+    transitionRendered?: boolean;
+    emphasisEnabled?: boolean;
+    letterbox?: 'auto' | 'on' | 'off';
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
     const nextTrack = updates.track !== undefined ? updates.track : bgmTrack;
@@ -237,6 +246,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextPadStyle = updates.padStyle !== undefined ? updates.padStyle : padStyle;
     const nextStillMotion = updates.stillMotion !== undefined ? updates.stillMotion : stillMotion;
     const nextTransition = updates.transition !== undefined ? updates.transition : transition;
+    const nextIntensity = updates.transitionIntensity !== undefined ? updates.transitionIntensity : transitionIntensity;
+    setTransitionIntensity(nextIntensity);
+    const nextRendered = updates.transitionRendered !== undefined ? updates.transitionRendered : transitionRendered;
+    setTransitionRendered(nextRendered);
     const nextSfxEnabled = updates.sfxEnabled !== undefined ? updates.sfxEnabled : sfxEnabled;
     const nextSfxTrack = updates.sfxTrack !== undefined ? updates.sfxTrack : sfxTrack;
     const nextSfxVolume = updates.sfxVolume !== undefined ? updates.sfxVolume : sfxVolume;
@@ -249,6 +262,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
       updates.captionPreset !== undefined ? updates.captionPreset : captionPreset;
     const nextLook = updates.look !== undefined ? updates.look : filmLook;
     const nextArchiveLook = updates.archiveLook !== undefined ? updates.archiveLook : archiveLook;
+    const nextEmphasis = updates.emphasisEnabled !== undefined ? updates.emphasisEnabled : emphasisEnabled;
+    const nextLetterbox = updates.letterbox !== undefined ? updates.letterbox : letterbox;
+    setEmphasisEnabled(nextEmphasis);
+    setLetterbox(nextLetterbox);
 
     setBgmEnabled(nextEnabled);
     setBgmTrack(nextTrack);
@@ -279,6 +296,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           padStyle: nextPadStyle,
           stillMotion: nextStillMotion,
           transition: nextTransition,
+          transitionIntensity: nextIntensity,
+          transitionRendered: nextRendered,
           sfxEnabled: nextSfxEnabled,
           sfxTrack: nextSfxTrack,
           sfxVolume: nextSfxVolume,
@@ -289,6 +308,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           captionPreset: nextCaptionPreset,
           look: nextLook,
           archiveLook: nextArchiveLook,
+          emphasisEnabled: nextEmphasis,
+          letterbox: nextLetterbox,
         }),
       });
     } catch (err) {
@@ -361,6 +382,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           if (bData.transition) {
             setTransition(bData.transition);
           }
+          if (bData.transitionRendered !== undefined) setTransitionRendered(bData.transitionRendered !== false);
+          if (['subtle', 'balanced', 'bold'].includes(bData.transitionIntensity)) {
+            setTransitionIntensity(bData.transitionIntensity);
+          }
           if (bData.sfx) {
             setSfxEnabled(bData.sfx.enabled !== false);
             setSfxTrack(bData.sfx.track || 'smart');
@@ -375,6 +400,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           }
           if (bData.look === 'off' || bData.look === 'auto') {
             setFilmLook(bData.look);
+          }
+          if (bData.emphasis) {
+            setEmphasisEnabled(bData.emphasis.enabled !== false);
+            if (['auto', 'on', 'off'].includes(bData.emphasis.letterbox)) setLetterbox(bData.emphasis.letterbox);
           }
           if (bData.archiveLook === 'off' || bData.archiveLook === 'auto') {
             setArchiveLook(bData.archiveLook);
@@ -949,11 +978,44 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   'Gentle dissolve crossfading adjacent scenes directly into each other.'}
                 {transition === 'wipe' &&
                   'Dynamic horizontal wipe sliding across adjacent scene boundaries.'}
+                {transition === 'style' &&
+                  'Transitions in this style\'s own language (slides and whips for sport, glitches for tech, fades for history), bigger at chapter changes and into reveals, never fading a spoken word.'}
               </p>
+              {transition === 'style' && (
+                <div className="flex items-center gap-1.5 mt-2">
+                  {(['subtle', 'balanced', 'bold'] as const).map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      onClick={() => updateBgmConfig({ transitionIntensity: level })}
+                      className={`px-2 py-1 rounded-md text-[11px] capitalize cursor-pointer ${
+                        transitionIntensity === level ? 'bg-indigo-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {level}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {transition === 'style' && (
+                <label className="flex items-start gap-2 mt-2 text-[11px] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={transitionRendered}
+                    onChange={(e) => updateBgmConfig({ transitionRendered: e.target.checked })}
+                    className="accent-indigo-500 mt-0.5"
+                  />
+                  <span>
+                    <span className="text-zinc-200 font-semibold">Rendered effects at chapter changes and reveals</span>
+                    <span className="text-zinc-500"> · film burn, light leak, ink, paper tear, glitch, whip pan, zoom punch, flash. Slow to render: minutes each on a small laptop.</span>
+                  </span>
+                </label>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
               {[
+                { id: 'style', label: 'Style-matched', icon: '🎞️' },
                 { id: 'cut', label: 'Cut', icon: '✂️' },
                 { id: 'dip_black', label: 'Dip to Black', icon: '🎬' },
                 { id: 'dip_white', label: 'Flash White', icon: '⚡' },
@@ -1321,6 +1383,50 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                     <span className="text-[10px] text-zinc-400 mt-1">{option.desc}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Emphasis Effects Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-4">
+              <div>
+                <span className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>💥</span> Emphasis Effects
+                </span>
+                <p className="text-[11px] text-zinc-400">
+                  A camera shake on impact sounds (gunshots, explosions), a freeze-frame with a title on 1-3 big moments, a zoom punch into chapters in fast styles. Captions are never affected. Applied at assembly.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={emphasisEnabled}
+                  onChange={(e) => updateBgmConfig({ emphasisEnabled: e.target.checked })}
+                  className="accent-indigo-500"
+                />
+                <span className="text-zinc-200 font-medium">Emphasis effects on</span>
+              </label>
+              <div className="space-y-1.5">
+                <span className="text-[11px] text-zinc-400">Letterbox bars (thin, 2:1)</span>
+                <div className="grid grid-cols-3 gap-2 max-w-md">
+                  {[
+                    { id: 'auto' as const, label: 'Style default', desc: 'On for cinematic, mystery, true crime, story' },
+                    { id: 'on' as const, label: 'On', desc: 'Cinematic bars' },
+                    { id: 'off' as const, label: 'Off', desc: 'Full frame' },
+                  ].map((option) => (
+                    <div
+                      key={option.id}
+                      onClick={() => updateBgmConfig({ letterbox: option.id })}
+                      className={`p-2.5 rounded-xl border flex flex-col transition cursor-pointer ${
+                        letterbox === option.id
+                          ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-md shadow-indigo-950'
+                          : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                      }`}
+                    >
+                      <span className="text-xs font-medium leading-tight">{option.label}</span>
+                      <span className="text-[10px] text-zinc-400 mt-1">{option.desc}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

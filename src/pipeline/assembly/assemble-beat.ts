@@ -3,10 +3,12 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg';
+import { xfadeTransitionOption } from './custom-transitions';
 
 const execFileAsync = promisify(execFile);
 
-export type TransitionType = 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe';
+/** 'style': each join gets a transition from the style's vocabulary (see transitions.ts). */
+export type TransitionType = 'cut' | 'dip_black' | 'dip_white' | 'crossfade' | 'wipe' | 'style';
 
 export interface RenderBeatSceneOptions {
   visualPath: string;
@@ -412,6 +414,8 @@ export async function concatenateSceneClips(
 export interface ConcatenateSceneClipsOptions {
   transition?: TransitionType;
   transitionDuration?: number;
+  /** One transition per join (style-matched); overrides `transition` when given. */
+  joins?: Array<{ type: string; sec: number }>;
 }
 
 /**
@@ -523,10 +527,96 @@ async function xfadeInGroups(
   }
 }
 
+/**
+ * Joins clips with a different transition at each join: an xfade (with an audio crossfade) or a
+ * cut (concat), in one ffmpeg command per group of XFADE_GROUP_SIZE clips, then the groups the
+ * same way. `joins[i]` is the join between clip i and i+1.
+ */
+async function joinMixedClips(clipPaths: string[], durations: number[], joins: Array<{ type: string; sec: number }>, outputPath: string): Promise<void> {
+  if (clipPaths.length === 1) {
+    await fs.copyFile(clipPaths[0], outputPath);
+    return;
+  }
+  // One timebase and frame rate for every input: concat outputs a different timebase than the
+  // clips have, and xfade refuses to mix the two
+  const filters: string[] = clipPaths.flatMap((_, i) => [
+    `[${i}:v]fps=30,settb=AVTB,format=yuv420p[in${i}]`,
+    `[${i}:a]aformat=sample_rates=48000:channel_layouts=stereo[ia${i}]`,
+  ]);
+  let prevV = 'in0';
+  let prevA = 'ia0';
+  let length = durations[0];
+  for (let i = 1; i < clipPaths.length; i++) {
+    const last = i === clipPaths.length - 1;
+    const outV = last ? 'vout' : `v${i}`;
+    const outA = last ? 'aout' : `a${i}`;
+    const join = joins[i - 1];
+    if (!join || join.type === 'cut' || join.sec <= 0) {
+      filters.push(`[${prevV}][${prevA}][in${i}][ia${i}]concat=n=2:v=1:a=1[${outV}][${outA}]`);
+      length += durations[i];
+    } else {
+      filters.push(`[${prevV}][in${i}]xfade=${xfadeTransitionOption(join.type)}:duration=${join.sec.toFixed(3)}:offset=${(length - join.sec).toFixed(3)}[${outV}]`);
+      filters.push(`[${prevA}][ia${i}]acrossfade=d=${join.sec.toFixed(3)}[${outA}]`);
+      length += durations[i] - join.sec;
+    }
+    prevV = outV;
+    prevA = outA;
+  }
+  // Rendered transitions are long expressions: the graph goes through a file (Windows caps
+  // command-line length)
+  const scriptPath = `${outputPath}.join-graph.txt`;
+  await fs.writeFile(scriptPath, filters.join(';\n'), 'utf-8');
+  try {
+    await execFileAsync(
+      getFfmpegPath(),
+      ['-y', ...clipPaths.flatMap((p) => ['-i', p]), '-/filter_complex', scriptPath, '-map', '[vout]', '-map', '[aout]', ...SCENE_VIDEO_ENCODE, '-r', '30', ...SCENE_AUDIO_ENCODE, outputPath],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+  } finally {
+    await fs.unlink(scriptPath).catch(() => {});
+  }
+}
+
+/** joinMixedClips over any number of clips, a group at a time (see xfadeInGroups). */
+async function joinMixedInGroups(
+  clipPaths: string[],
+  durations: number[],
+  joins: Array<{ type: string; sec: number }>,
+  outputPath: string,
+  tempDir: string,
+  level = 0,
+): Promise<void> {
+  if (clipPaths.length <= XFADE_GROUP_SIZE) {
+    await joinMixedClips(clipPaths, durations, joins, outputPath);
+    return;
+  }
+  const groupPaths: string[] = [];
+  const groupDurations: number[] = [];
+  const groupJoins: Array<{ type: string; sec: number }> = [];
+  try {
+    for (let start = 0; start < clipPaths.length; start += XFADE_GROUP_SIZE) {
+      const end = Math.min(clipPaths.length, start + XFADE_GROUP_SIZE);
+      const inner = joins.slice(start, end - 1);
+      const durs = durations.slice(start, end);
+      const groupPath = path.join(tempDir, `join_l${level}_g${groupPaths.length}.mp4`);
+      await joinMixedClips(clipPaths.slice(start, end), durs, inner, groupPath);
+      groupPaths.push(groupPath);
+      groupDurations.push(durs.reduce((a, b) => a + b, 0) - inner.reduce((a, j) => a + (j.type === 'cut' ? 0 : j.sec), 0));
+      // The join between this group's last clip and the next group's first
+      if (end < clipPaths.length) groupJoins.push(joins[end - 1] ?? { type: 'cut', sec: 0 });
+    }
+    await joinMixedInGroups(groupPaths, groupDurations, groupJoins, outputPath, tempDir, level + 1);
+  } finally {
+    await Promise.all(groupPaths.map((p) => fs.unlink(p).catch(() => {})));
+  }
+}
+
 export interface JoinedScenes {
   outputPath: string;
   /** How much each clip actually overlaps the next: the crossfade length, or 0 when joined with cuts. */
   overlapSec: number;
+  /** Each join's overlap, in order (style-matched joins differ; otherwise all equal overlapSec). */
+  overlapsSec: number[];
 }
 
 /**
@@ -551,17 +641,36 @@ export async function joinSceneClips(
 
   if (sceneClipPaths.length === 1) {
     await fs.copyFile(sceneClipPaths[0], outputPath);
-    return { outputPath, overlapSec: 0 };
+    return { outputPath, overlapSec: 0, overlapsSec: [] };
   }
 
   const transition = options?.transition || 'cut';
+  const cuts = () => sceneClipPaths.slice(1).map(() => 0);
+
+  // Style-matched: a transition per join; all cuts can still use the lossless concat below
+  const joins = options?.joins?.slice(0, sceneClipPaths.length - 1);
+  if (joins && joins.some((j) => j.type !== 'cut' && j.sec > 0)) {
+    const durations = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
+    // Never overlap more than a third of either clip
+    const safe = joins.map((j, i) =>
+      j.type === 'cut' ? { type: 'cut', sec: 0 } : { type: j.type, sec: Math.min(j.sec, durations[i] / 3, durations[i + 1] / 3) },
+    );
+    try {
+      await joinMixedInGroups(sceneClipPaths, durations, safe, outputPath, tempDir);
+      const overlapsSec = safe.map((j) => (j.type === 'cut' ? 0 : j.sec));
+      return { outputPath, overlapSec: Math.max(0, ...overlapsSec), overlapsSec };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message.slice(-600) : String(err);
+      console.warn(`[Assembly] Style-matched join failed; joining with cuts instead: ${detail}`);
+    }
+  }
 
   if (transition === 'crossfade' || transition === 'wipe') {
     const durations = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
     const transSec = resolveTransitionSeconds(durations, options?.transitionDuration);
     try {
       await xfadeInGroups(sceneClipPaths, durations, transSec, transition === 'wipe' ? 'wipeleft' : 'fade', outputPath, tempDir);
-      return { outputPath, overlapSec: transSec };
+      return { outputPath, overlapSec: transSec, overlapsSec: sceneClipPaths.slice(1).map(() => transSec) };
     } catch (err) {
       const detail = err instanceof Error ? err.message.slice(-600) : String(err);
       console.warn(`[Assembly] ${transition} join failed; joining with cuts instead (captions and chapters are timed for cuts): ${detail}`);
@@ -593,7 +702,7 @@ export async function joinSceneClips(
   try {
     await execFileAsync(ffmpegBin, concatArgs);
     await fs.unlink(concatListPath).catch(() => {});
-    return { outputPath, overlapSec: 0 };
+    return { outputPath, overlapSec: 0, overlapsSec: cuts() };
   } catch (err) {
     throw new Error(
       `FFmpeg concat demuxer failed: ${

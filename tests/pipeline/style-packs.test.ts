@@ -72,8 +72,9 @@ describe('Style packs', () => {
   });
 
   it('sets a new niche video\'s starting captions and transition, never overriding existing settings', () => {
-    assert.deepEqual(withStyleDefaults({ beats: [] }, 'car'), { beats: [], captions: { preset: 'social_pop' }, transition: 'cut' });
-    assert.deepEqual(withStyleDefaults({ beats: [] }, 'vox_explainer'), { beats: [] }, 'original styles keep their behaviour');
+    assert.deepEqual(withStyleDefaults({ beats: [] }, 'car'), { beats: [], captions: { preset: 'social_pop' }, transition: 'style' });
+    assert.deepEqual(withStyleDefaults({ beats: [] }, 'vox_explainer'), { beats: [], transition: 'style' }, 'every style starts with its own transitions');
+    assert.deepEqual(withStyleDefaults({ beats: [] }, 'not-a-style'), { beats: [] }, 'unknown styles are left alone');
     const own = { beats: [], captions: { preset: 'vox' }, transition: 'wipe' };
     assert.deepEqual(withStyleDefaults(own, 'sport'), { ...own, beat_pause_seconds: 1 }, 'own captions and transition kept; only the missing beat pause is added');
   });

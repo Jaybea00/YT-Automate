@@ -69,8 +69,10 @@ export interface StylePack {
    * its voicing job is created, so existing videos keep the pace they were voiced at.
    */
   narration?: NarrationPacing;
+  /** Emphasis effects that suit the style: letterbox bars (cinematic), a zoom punch into chapters (fast styles). */
+  emphasis?: { letterbox?: boolean; chapterZoom?: boolean };
   /** Starting settings for new videos in this style (changeable per video). */
-  defaults?: { captionPreset?: CaptionPreset; transition?: 'cut' | 'crossfade' | 'dip_black' | 'dip_white' | 'wipe' };
+  defaults?: { captionPreset?: CaptionPreset; transition?: 'cut' | 'crossfade' | 'dip_black' | 'dip_white' | 'wipe' | 'style' };
 }
 
 const pack = <T extends StylePack>(p: T) => p;
@@ -78,6 +80,7 @@ const pack = <T extends StylePack>(p: T) => p;
 export const STYLE_PACKS = {
   tech: pack({
     id: 'tech',
+    emphasis: { chapterZoom: true },
     name: 'Tech Explainer',
     label: 'Tech explainer (fast, Fireship-style)',
     description: 'Fast-paced, punchy hook, rapid delivery with dry humor and technical clarity.',
@@ -97,6 +100,7 @@ Short sentences. No filler.`,
 
   cinematic: pack({
     id: 'cinematic',
+    emphasis: { letterbox: true },
     name: 'Cinematic Documentary',
     label: 'Cinematic documentary (ColdFusion-style)',
     description: 'Atmospheric pacing, descriptive depth, and thoughtful narrative build toward a payoff.',
@@ -116,6 +120,7 @@ society rather than a quick tutorial. Build tension toward a payoff.`,
 
   modernmba: pack({
     id: 'modernmba',
+    emphasis: { chapterZoom: true },
     name: 'Business & Data Analysis',
     label: 'Business/data analysis (modernmba-style)',
     description: 'Structured around a thesis backed by hard data, financial metrics, and market dynamics.',
@@ -135,6 +140,7 @@ wherever a claim can be shown as a number.`,
 
   listicle: pack({
     id: 'listicle',
+    emphasis: { chapterZoom: true },
     name: 'Listicle / Countdown',
     label: 'Listicle / countdown',
     description: 'Brisk, numbered items with snappy justifications and high-retention pacing.',
@@ -154,6 +160,7 @@ Close with a quick recap or a "which was your favorite" style beat.`,
 
   story_driven: pack({
     id: 'story_driven',
+    emphasis: { letterbox: true },
     name: 'Story-Driven Deep Dive',
     label: 'Story-driven deep dive',
     description: 'Compelling narrative arc with setup, rising stakes, turning points, and resolution.',
@@ -174,6 +181,7 @@ narrative pull toward the payoff.`,
 
   comparison: pack({
     id: 'comparison',
+    emphasis: { chapterZoom: true },
     name: 'Comparison Breakdown',
     label: 'Comparison / "X vs Y" breakdown',
     description: 'Head-to-head analysis evaluating cost, capabilities, tradeoffs, and a definitive verdict.',
@@ -193,6 +201,7 @@ criteria you walked through. Avoid strawmanning either side.`,
 
   eli5: pack({
     id: 'eli5',
+    emphasis: { chapterZoom: true },
     name: 'ELI5 / Beginner Explainer',
     label: 'ELI5 / beginner explainer',
     description: 'Accessible analogies, patient conversational tone, and step-by-step clarity with zero jargon.',
@@ -212,6 +221,7 @@ condescending.`,
 
   true_crime_pov: pack({
     id: 'true_crime_pov',
+    emphasis: { letterbox: true },
     name: 'Investigative / POV',
     label: 'True crime / POV explainer',
     description: 'Suspenseful narrative delivery, atmospheric timeline reconstruction, and building dread.',
@@ -234,6 +244,7 @@ than dramatizing it as fact.`,
 
   vox_explainer: pack({
     id: 'vox_explainer',
+    emphasis: { chapterZoom: true },
     name: 'Vox Explainer',
     label: 'Vox-style visual explainer',
     description: 'One clear question, answered with evidence: charts, maps, archival proof, and a "here\'s why it matters" payoff.',
@@ -262,6 +273,7 @@ that answers the opening question.`,
 
   car: pack({
     id: 'car',
+    emphasis: { chapterZoom: true },
     name: 'Car Culture',
     label: 'Car culture / automotive',
     description: 'Machines, rivalries and engineering told with enthusiast energy; specs as head-to-heads.',
@@ -282,11 +294,12 @@ clearly framed as opinions.`,
     fallbackMood: 'triumphant',
     maxGraphicsShare: 0.45,
     directorNotes: `Car videos live on footage: favour stock b-roll of driving and details (tracking shots on open roads, engine bays, wheels, gauges, assembly lines) with concrete queries such as "sports car tracking shot mountain road" or "engine bay close-up". Show specs as "comparison" (one car vs another, or old vs new) and "stat" (horsepower, 0-60 time, top speed, price). Use "timeline" for a model's generations and "diagram" for how a part works (turbocharger, gearbox, aerodynamics). Stock footage rarely shows the exact model, so never put a caption or annotation naming a specific make or model on stock; use those only on archive photos.`,
-    defaults: { captionPreset: 'social_pop', transition: 'cut' },
+    defaults: { captionPreset: 'social_pop' },
   }),
 
   sport: pack({
     id: 'sport',
+    emphasis: { chapterZoom: true },
     name: 'Sports Story',
     label: 'Sports storytelling',
     description: 'Matches, seasons and rivalries with broadcast tension and stat-driven graphics.',
@@ -305,11 +318,12 @@ people involved: no mocking injuries, private lives or rival fans.`,
     fallbackMood: 'triumphant',
     narration: DOCUMENTARY_PACING,
     directorNotes: `Show records and results as "stat", head-to-heads between players or teams as "comparison", and a season or career as "timeline"; use "geo_map" for host cities and tournament routes. Stock b-roll should be generic and atmospheric ("stadium crowd at night floodlights", "football on wet grass close-up", "runner's feet on track"). Stock never shows the real players, so never caption or annotate stock footage with an athlete's or team's name; names belong on archive photos only.`,
-    defaults: { captionPreset: 'social_pop', transition: 'cut' },
+    defaults: { captionPreset: 'social_pop' },
   }),
 
   finance: pack({
     id: 'finance',
+    emphasis: { chapterZoom: true },
     name: 'Money & Finance',
     label: 'Personal finance / markets',
     description: 'Calm, practical money explainers with real numbers, charts and the risks spelled out.',
@@ -328,7 +342,7 @@ Prices, rates and dates come only from the research.`,
     fallbackMood: 'curious',
     maxGraphicsShare: 0.6,
     directorNotes: `Numbers carry finance videos: use "chart" for prices, rates or balances over time, "comparison" for two options side by side (renting vs buying, saving vs investing), "stat" for one striking figure, and "diagram" for mechanisms (how compound interest grows: process; the inflation spiral: cycle). Stock b-roll: concrete and calm ("coins stacking close-up", "person reviewing bills at kitchen table", "financial district skyline at dusk"). Never show a company logo or ticker the narration doesn't name.`,
-    defaults: { captionPreset: 'clean_news', transition: 'cut' },
+    defaults: { captionPreset: 'clean_news' },
   }),
 
   space_science: pack({
@@ -351,11 +365,12 @@ the ear; they come only from the research.`,
     fallbackMood: 'hopeful',
     maxGraphicsShare: 0.5,
     directorNotes: `Use "diagram" for processes (how a star forms: process; the water or carbon cycle: cycle; what's inside a planet: breakdown), "comparison" for scale (Earth vs Jupiter), and "stat" for distances, ages and sizes. Real imagery beats illustration: prefer "archive" for NASA, ESA and observatory photos (e.g. "Hubble image Pillars of Creation", "Apollo 11 lunar surface 1969"), and stock for night skies, labs and rocket launches. An artist's impression must never be presented as a photo.`,
-    defaults: { captionPreset: 'vox', transition: 'crossfade' },
+    defaults: { captionPreset: 'vox' },
   }),
 
   tech_review: pack({
     id: 'tech_review',
+    emphasis: { chapterZoom: true },
     name: 'Tech Review',
     label: 'Tech product review',
     description: "What it is, who it's for, the good, the bad, and a clear verdict.",
@@ -375,7 +390,7 @@ no hype and no pile-ons; say when the answer depends on the buyer.`,
     fallbackMood: 'curious',
     maxGraphicsShare: 0.5,
     directorNotes: `Specs belong in "comparison" (this model vs last year's, or vs its rival) and "stat" (battery hours, price, weight). A "diagram" breakdown suits what's inside (centre: the device; parts: chip, battery, cameras). Use "screen_recording" when the narration names a website or app. Stock b-roll: generic and tactile ("smartphone on wooden desk close-up", "hands typing on laptop keyboard", "earbuds charging case"). Stock rarely shows the exact product, so never caption or annotate stock with a product or brand name.`,
-    defaults: { captionPreset: 'clean_news', transition: 'cut' },
+    defaults: { captionPreset: 'clean_news' },
   }),
 
   history: pack({
@@ -399,11 +414,12 @@ words in a historical figure's mouth.`,
     narration: DOCUMENTARY_PACING,
     maxGraphicsShare: 0.5,
     directorNotes: `History is told through the archive: favour "archive" photos, paintings, documents and film of the period, with annotations on the people and places that matter. Use "timeline" for sequences of events, "geo_map" for campaigns, empires and journeys, "quote" for attributed primary sources, and "newspaper" when the research quotes a headline. Use stock only for landscapes and places as they look today, never as stand-ins for the past.`,
-    defaults: { captionPreset: 'vox', transition: 'crossfade' },
+    defaults: { captionPreset: 'vox' },
   }),
 
   mystery: pack({
     id: 'mystery',
+    emphasis: { letterbox: true },
     name: 'Unsolved Mystery',
     label: 'Mystery / unsolved',
     description: 'Atmospheric case reconstructions with every theory weighed fairly.',
@@ -423,7 +439,7 @@ blame without evidence.`,
     narration: DOCUMENTARY_PACING,
     maxGraphicsShare: 0.45,
     directorNotes: `Reconstruct events with "timeline", locate them with "geo_map" (mode "locate"), and quote documents or witnesses with "quote" when the research attributes them. Footage should be atmospheric and non-graphic ("foggy forest path at dusk", "old case files on desk", "empty road at night"); archive photos of real places and documents are best. When laying out competing theories, a "comparison" can set two explanations side by side. Never show anything that looks like a real victim unless it is an archive photo the research names.`,
-    defaults: { captionPreset: 'vox', transition: 'dip_black' },
+    defaults: { captionPreset: 'vox' },
   }),
 } as const satisfies Record<string, StylePack>;
 
@@ -449,12 +465,13 @@ export function withStyleDefaults<T extends object>(scriptJson: T, style: string
   const pack = stylePack(style);
   const defaults = pack?.defaults;
   const beatPause = pack?.narration?.beatPauseSec;
-  if (!defaults && beatPause === undefined) return scriptJson;
+  if (!pack) return scriptJson;
   const current = scriptJson as T & { captions?: unknown; transition?: unknown; beat_pause_seconds?: unknown };
   return {
     ...scriptJson,
     ...(defaults?.captionPreset && current.captions === undefined ? { captions: { preset: defaults.captionPreset } } : {}),
-    ...(defaults?.transition && current.transition === undefined ? { transition: defaults.transition } : {}),
+    // New videos get transitions in their style's own language
+    ...(current.transition === undefined ? { transition: 'style' } : {}),
     ...(beatPause !== undefined && current.beat_pause_seconds === undefined ? { beat_pause_seconds: beatPause } : {}),
   };
 }

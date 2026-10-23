@@ -68,6 +68,13 @@ export async function handleGetBgm(
     captionPreset,
     look: video.script_json?.look === 'off' ? 'off' : 'auto',
     archiveLook: video.script_json?.archive_look === 'off' ? 'off' : 'auto',
+    transitionIntensity: ['subtle', 'balanced', 'bold'].includes(video.script_json?.transition_intensity) ? video.script_json.transition_intensity : 'balanced',
+    transitionRendered: video.script_json?.transition_rendered !== false,
+    // Shakes, freeze-frames, chapter zooms; letterbox follows the style unless set
+    emphasis: {
+      enabled: video.script_json?.emphasis?.enabled !== false,
+      letterbox: typeof video.script_json?.emphasis?.letterbox === 'boolean' ? (video.script_json.emphasis.letterbox ? 'on' : 'off') : 'auto',
+    },
     presets: PRESET_TRACKS,
     sfxPresets: PRESET_SFX,
     soundMoments: video.script_json?.sound_moments?.moments ?? null,
@@ -99,6 +106,10 @@ export async function handlePostBgm(
   let captionPreset: CaptionPreset | 'none' | undefined;
   let look: 'auto' | 'off' | undefined;
   let archiveLook: 'auto' | 'off' | undefined;
+  let emphasisEnabled: boolean | undefined;
+  let transitionIntensity: 'subtle' | 'balanced' | 'bold' | undefined;
+  let transitionRendered: boolean | undefined;
+  let letterbox: 'auto' | 'on' | 'off' | undefined;
 
   let sfxEnabled: boolean | undefined;
   let sfxTrack: string | undefined;
@@ -168,6 +179,10 @@ export async function handlePostBgm(
     }
     if (body.look === 'auto' || body.look === 'off') look = body.look;
     if (body.archiveLook === 'auto' || body.archiveLook === 'off') archiveLook = body.archiveLook;
+    if (body.emphasisEnabled !== undefined) emphasisEnabled = Boolean(body.emphasisEnabled);
+    if (['subtle', 'balanced', 'bold'].includes(body.transitionIntensity)) transitionIntensity = body.transitionIntensity;
+    if (body.transitionRendered !== undefined) transitionRendered = Boolean(body.transitionRendered);
+    if (body.letterbox === 'auto' || body.letterbox === 'on' || body.letterbox === 'off') letterbox = body.letterbox;
 
     if (body.sfxEnabled !== undefined) sfxEnabled = Boolean(body.sfxEnabled);
     if (body.sfxTrack) sfxTrack = String(body.sfxTrack);
@@ -221,6 +236,15 @@ export async function handlePostBgm(
   }
   if (look !== undefined) {
     scriptJson.look = look;
+  }
+  if (transitionIntensity !== undefined) scriptJson.transition_intensity = transitionIntensity;
+  if (transitionRendered !== undefined) scriptJson.transition_rendered = transitionRendered;
+  if (emphasisEnabled !== undefined || letterbox !== undefined) {
+    const current = scriptJson.emphasis ?? {};
+    const next: { enabled?: boolean; letterbox?: boolean } = { enabled: emphasisEnabled ?? current.enabled !== false };
+    const box = letterbox ?? (typeof current.letterbox === 'boolean' ? (current.letterbox ? 'on' : 'off') : 'auto');
+    if (box !== 'auto') next.letterbox = box === 'on';
+    scriptJson.emphasis = next;
   }
   if (archiveLook !== undefined) {
     scriptJson.archive_look = archiveLook;

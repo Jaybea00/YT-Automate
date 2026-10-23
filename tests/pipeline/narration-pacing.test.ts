@@ -84,7 +84,7 @@ describe('Documentary pacing in the style packs', () => {
   });
 
   it('gives new paced videos a longer pause between beats', () => {
-    assert.deepEqual(withStyleDefaults({ beats: [] }, 'history'), { beats: [], captions: { preset: 'vox' }, transition: 'crossfade', beat_pause_seconds: 1 });
+    assert.deepEqual(withStyleDefaults({ beats: [] }, 'history'), { beats: [], captions: { preset: 'vox' }, transition: 'style', beat_pause_seconds: 1 });
     assert.deepEqual(withStyleDefaults({ beats: [], beat_pause_seconds: 0.5 }, 'mystery').beat_pause_seconds, 0.5, 'a chosen pause is kept');
   });
 

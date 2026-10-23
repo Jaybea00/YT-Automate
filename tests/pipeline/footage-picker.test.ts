@@ -119,7 +119,7 @@ describe('Vision relevance check', () => {
       llm,
       { apiKey: 'k' },
     );
-    assert.deepEqual(ranked.map((r) => [r.candidate.id, Math.round(r.score * 10) / 10]), [['c', 7.3], ['a', 5], ['b', 5]]);
+    assert.deepEqual(ranked.map((r) => [r.candidate.id, Math.round(r.score * 10) / 10]), [['c', 7.8], ['a', 5], ['b', 5]]);
     assert.match(prompts[0], /a film titled "Roosevelt Inaugurated 1933"/, 'titles are shown with thumbnails');
     assert.match(prompts[0], /set in 1933/);
   });

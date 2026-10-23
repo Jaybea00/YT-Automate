@@ -121,7 +121,7 @@ export async function downloadArchiveOrgAsset(
   return downloadToFile(directFileUrl, targetPath, { signal });
 }
 
-interface ArchiveFile {
+export interface ArchiveFile {
   name?: string;
   size?: string;
   format?: string;
@@ -147,4 +147,38 @@ export function chooseArchiveFile(files: ArchiveFile[]): ArchiveFile | undefined
   return files
     .filter((f) => /\.(jpe?g|png)$/i.test(f.name ?? '') && usable(f))
     .sort((a, b) => sizeOf(b) - sizeOf(a))[0];
+}
+
+/**
+ * A frame from inside an archive.org film, for judging what it shows: the item thumbnail is
+ * usually a title card or countdown leader. archive.org stores evenly spaced frames from each
+ * film (format "Thumbnail", in "<film>.thumbs/"); this picks one about 40% of the way in.
+ * Returns null when the item has no film small enough to download, so it can be skipped.
+ */
+export async function archiveFilmFrame(identifier: string, signal?: AbortSignal): Promise<{ frameUrl: string | null } | null> {
+  try {
+    const res = await fetch(`https://archive.org/metadata/${encodeURIComponent(identifier)}/files`, {
+      headers: { 'User-Agent': 'YT-Automation/1.0 (footage relevance check)' },
+      signal: signal ?? AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return { frameUrl: null };
+    const files: ArchiveFile[] = (await res.json()).result ?? [];
+    const film = chooseArchiveFile(files);
+    if (!film?.name || !/\.mp4$/i.test(film.name)) return null;
+    return { frameUrl: pickFilmFrame(identifier, files) };
+  } catch {
+    // Unknown: keep the candidate with its own thumbnail
+    return { frameUrl: null };
+  }
+}
+
+/** The stored frame about 40% into the film, or null if archive.org made none. */
+export function pickFilmFrame(identifier: string, files: ArchiveFile[]): string | null {
+  const frames = files
+    .filter((f) => /\.thumbs\//i.test(f.name ?? '') && /\.jpe?g$/i.test(f.name ?? ''))
+    .map((f) => f.name!)
+    .sort();
+  if (frames.length === 0) return null;
+  const name = frames[Math.min(frames.length - 1, Math.floor(frames.length * 0.4))];
+  return `https://archive.org/download/${identifier}/${name.split('/').map(encodeURIComponent).join('/')}`;
 }
