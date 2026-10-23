@@ -23,6 +23,7 @@ import {
 } from './motion/templates';
 import type { RenderedShot, ShotSlot } from './shot-composer';
 import type { ShotRenderContext, TypedShotRenderer } from './shot-renderers';
+import { renderScreenRecording } from './screen-capture';
 
 /** The page for a graphic shot, or null when the shot lacks its spec. */
 export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null {
@@ -158,6 +159,7 @@ export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
   comparison: renderGraphic,
   title: renderGraphic,
   kinetic_text: renderGraphic,
+  screen_recording: renderScreenRecording,
 };
 
 /** Longer narration doesn't fit a type card legibly. */

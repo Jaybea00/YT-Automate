@@ -98,6 +98,31 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
     }
   };
 
+  // Your own photo or clip into just this shot; the beat's other shots stay as they are
+  const upload = async (shotIndex: number, file: File) => {
+    setBusy((b) => ({ ...b, [shotIndex]: `Uploading ${file.name} and fitting it to the shot…` }));
+    setErrors((e) => ({ ...e, [shotIndex]: '' }));
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('license_type', 'own_work');
+      const res = await fetch(`${base}/${shotIndex}/upload`, { method: 'POST', body: form });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'The upload could not be used');
+      setShots((prev) => prev?.map((s) => (s.index === shotIndex ? body.shot : s)) ?? prev);
+      setVersions((v) => ({ ...v, [shotIndex]: Date.now() }));
+      onChanged();
+    } catch (err) {
+      setErrors((e) => ({ ...e, [shotIndex]: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setBusy((b) => {
+        const next = { ...b };
+        delete next[shotIndex];
+        return next;
+      });
+    }
+  };
+
   const search = async (shotIndex: number) => {
     const query = (queries[shotIndex] ?? '').trim();
     if (query.length < 2) return;
@@ -245,6 +270,22 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                   >
                     Text card
                   </button>
+                  <label
+                    className={`px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 ${isBusy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
+                    title="Use your own photo or clip for this shot only (your own work; for licensed footage use the beat upload)"
+                  >
+                    Upload your own
+                    <input
+                      type="file"
+                      accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (file) upload(s.index, file);
+                      }}
+                    />
+                  </label>
                 </div>
 
                 {open[s.index] === 'search' && (

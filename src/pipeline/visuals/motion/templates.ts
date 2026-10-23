@@ -21,6 +21,11 @@ const decimalsOf=(v)=>{const s=String(v);return s.includes('.')?Math.min(2,s.spl
 const drift=(t,d)=>'scale('+(1+0.025*clamp(t/d))+')';
 `;
 
+/** A themed 1920x1080 motion page: background, stage, helpers (ease, phase, drift) and window.__frame. */
+export function themedPage(theme: MotionTheme, css: string, body: string, script: string): string {
+  return page(theme, css, body, script);
+}
+
 function page(theme: MotionTheme, css: string, body: string, script: string): string {
   return motionDocument({
     css: `${baseCss(theme)}
