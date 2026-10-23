@@ -102,17 +102,29 @@ export interface ChartData {
   unit?: string;
   labels: string[];
   values: number[];
+  /** Callouts on points or bars ("the crash"), shown once the data has drawn in. */
+  annotations?: Array<{ index: number; text: string }>;
 }
 
+/** Callout boxes for annotated charts, appended to a chart page's script (needs pts or bars, and drawEnd). */
+const CALLOUTS = `const ANN=(D.ann||[]).filter(a=>a.index>=0&&a.index<D.values.length);
+const callouts=ANN.map((a,i)=>{const p=anchor(a.index);const up=p[1]>520;const ty=up?p[1]-170:p[1]+120;
+const ln=mk('line',{x1:p[0],y1:p[1]+(up?-20:20),x2:p[0],y2:ty+(up?56:0),stroke:D.accent,'stroke-width':4,opacity:0});
+const ring=mk('circle',{cx:p[0],cy:p[1],r:26,fill:'none',stroke:D.accent,'stroke-width':5,opacity:0});
+const box=document.createElement('div');box.className='callout';box.textContent=a.text;box.style.left=Math.min(1560,Math.max(160,p[0]-150))+'px';box.style.top=ty+'px';document.getElementById('stage').appendChild(box);
+return {ln,ring,box,i}});
+const showCallouts=(t,d,drawEnd)=>{callouts.forEach(c=>{const k=ease(phase(t,drawEnd+0.15+c.i*0.35,0.4));c.ln.setAttribute('opacity',k);c.ring.setAttribute('opacity',k);c.ring.setAttribute('r',26+10*(1-k));c.box.style.opacity=k;c.box.style.transform='translateY('+(12*(1-k))+'px)'})};`;
+
 export function chartTemplate(theme: MotionTheme, chart: ChartData, sourceNote?: string): string {
-  const css = `.title{position:absolute;left:150px;top:100px;font-size:60px;font-family:${theme.headingFont};color:${theme.text};max-width:1500px}
+  const css = `.callout{position:absolute;width:300px;padding:12px 16px;background:${theme.accent};color:#fff;font:700 26px ${theme.bodyFont};border-radius:6px;opacity:0;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+.title{position:absolute;left:150px;top:100px;font-size:60px;font-family:${theme.headingFont};color:${theme.text};max-width:1500px}
 .unit{position:absolute;left:150px;top:184px;font-size:30px;color:${theme.muted};letter-spacing:1px}
 .source{position:absolute;left:150px;bottom:56px;font-size:24px;color:${theme.muted}}
 svg{position:absolute;left:0;top:0}
 .lbl{font-size:30px;fill:${theme.muted};font-family:${theme.bodyFont}}
 .val{font-size:44px;fill:${theme.text};font-weight:700;font-family:${theme.numberFont}}`;
   const head = `<div class="title" id="title">${escapeHtml(chart.title)}</div>${chart.unit ? `<div class="unit">${escapeHtml(chart.unit)}</div>` : ''}${sourceNote ? `<div class="source">${escapeHtml(sourceNote)}</div>` : ''}`;
-  const data = JSON.stringify({ labels: chart.labels, values: chart.values, colors: theme.series, grid: theme.muted, accent: theme.accent, text: theme.text, bg: theme.background });
+  const data = JSON.stringify({ labels: chart.labels, values: chart.values, colors: theme.series, grid: theme.muted, accent: theme.accent, text: theme.text, bg: theme.background, ann: chart.annotations ?? [] }).replace(/</g, '\\u003c');
 
   if (chart.chart_type === 'pie') {
     return page(theme, css, `${head}<svg width="1920" height="1080" id="svg"></svg>`, `const D=${data};
@@ -138,7 +150,9 @@ const bars=D.values.map((v,i)=>{const x=L+slot*i+(slot-bw)/2;
   return {rect:mk('rect',{x,width:bw,y:B,height:0,fill:i===n-1?D.accent:D.colors[(i+1)%D.colors.length],rx:4}),
     val:mk('text',{x:x+bw/2,y:B,'text-anchor':'middle',class:'val'},''),v,x}});
 bars.forEach(b=>{b.val.textContent=fmt(b.v,decimalsOf(b.v));b.val.setAttribute('y',B-(B-T)*b.v/max-22)});
-window.__frame=(t,d)=>{const grow=Math.min(1.4,d*0.4);
+const anchor=(i)=>[bars[i].x+bw/2,B-(B-T)*bars[i].v/max-80];
+${CALLOUTS}
+window.__frame=(t,d)=>{const grow=Math.min(1.4,d*0.4);showCallouts(t,d,0.25+n*0.18+grow);
 bars.forEach((b,i)=>{const start=0.25+i*0.18;const p=ease(phase(t,start,grow));const h=(B-T)*b.v/max*p;b.rect.setAttribute('y',B-h);b.rect.setAttribute('height',h);
 // The exact value fades in once its bar is up; counting would flash wrong numbers on screen
 b.val.style.opacity=ease(phase(t,start+grow*0.85,0.3))});
@@ -160,7 +174,9 @@ const len=line.getTotalLength();line.style.strokeDasharray=len;
 const dots=pts.map(p=>mk('circle',{cx:p[0],cy:p[1],r:0,fill:D.bg,stroke:D.accent,'stroke-width':7}));
 // Values always show their exact figure; they fade in as the line reaches each point
 const vals=D.values.map((v,i)=>mk('text',{x:pts[i][0],y:pts[i][1]-34,'text-anchor':'middle',class:'val'},fmt(v,decimalsOf(v))));
-window.__frame=(t,d)=>{const draw=easeInOut(phase(t,0.3,Math.min(2.2,d*0.5)));line.style.strokeDashoffset=len*(1-draw);
+const anchor=(i)=>pts[i];
+${CALLOUTS}
+window.__frame=(t,d)=>{const draw=easeInOut(phase(t,0.3,Math.min(2.2,d*0.5)));showCallouts(t,d,0.3+Math.min(2.2,d*0.5));line.style.strokeDashoffset=len*(1-draw);
 area.setAttribute('opacity',0.12*draw);
 pts.forEach((p,i)=>{const at=n===1?1:i/(n-1);const show=ease(phase(draw,at-0.12,0.12));dots[i].setAttribute('r',13*show);vals[i].style.opacity=show});
 document.getElementById('title').style.opacity=ease(phase(t,0,0.4));document.getElementById('stage').style.transform=drift(t,d)};`);

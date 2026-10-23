@@ -9,6 +9,7 @@ import { themeForStyle } from './motion/theme';
 import type { ComposedShot, ShotAlternative } from './shot-composer';
 import { replaceShot, type ComposedBeatRecord } from './shot-editor';
 import { candidateFromAlternative, renderCandidateShot, renderFootageShot, toAlternative, type ShotRenderContext } from './shot-renderers';
+import { stylePack } from '@/lib/styles/packs';
 
 export type ShotEdit =
   /** Use one of the shot's alternatives, or a search result. */
@@ -40,6 +41,8 @@ async function editorContext(supabase: SupabaseClient, videoId: string, beat: Co
     // A replaced archive shot gets the same texture as the rest of the video (no print beneath:
     // its neighbours are already rendered)
     ...(video?.script_json?.archive_look !== 'off' ? { archiveLook: { count: { next: beat.beatIndex } } } : {}),
+    ...(stylePack(video?.style)?.photoLook === 'collage' ? { collage: { count: { next: beat.beatIndex } } } : {}),
+    ...(video?.script_json?.parallax !== false ? { parallax: { count: { next: beat.beatIndex } } } : {}),
   };
   return { ctx, close: async () => browser?.close().catch(() => {}) };
 }

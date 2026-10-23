@@ -6,7 +6,9 @@ import type { ResearchFact } from '@/lib/research/types';
 import {
   DIAGRAM_LIMITS,
   SHOT_TYPES,
+  SIGNATURE_SHOT_TYPES,
   withWritingModel,
+  type SignatureShotType,
   type GeneratedScript,
   type ScriptBeat,
   type ShotPlan,
@@ -59,7 +61,35 @@ const MIN_GRAPHIC_SECONDS: Partial<Record<ShotType, number>> = {
   newspaper: 2.5,
   title: 2,
   stat: 2,
+  pitch: 4,
+  evidence_board: 4,
+  letter: 4,
+  race_bars: 3.5,
+  scale: 4,
+  spec_card: 3.5,
+  money: 3.5,
 };
+
+/** How each signature shot is described to the director, for the styles that use it. */
+const SIGNATURE_RULES: Record<SignatureShotType, string> = {
+  pitch: `- "pitch": a move or goal recreated on a top-down pitch (the Tifo Football look). pitch = {title, players: [{label, x, y, team: "a"|"b", to: {x, y}}], ball: [{x, y}], outcome: "goal"|"save"|"miss"|null}. x runs 0-100 from the left goal to the right goal, y 0-100 from the top touchline to the bottom one. ball is the ball's path, 2-8 points; players are the few who matter (at most 10), labelled with surnames from the narration or research, or shirt numbers; to is where a player runs. For a specific goal, chance or tactical idea the narration describes, not general match talk.`,
+  evidence_board: `- "evidence_board": the investigation as pinned clues joined by red string; the camera moves clue to clue. evidence = {title, items: [{kind: "photo"|"note"|"clipping"|"place", label, detail}], links: [[i, j]]}. 3-6 items: photo for a person, note for a fact or question, clipping for a report, place for a location; label at most 5 words, detail at most 8, all stated in the narration or research. links join items the story connects (indexes into items). For moments that tie the case's threads together.`,
+  letter: `- "letter": a historical letter or telegram, its words inking in by hand. letter = {writer, recipient, date, text}. text must be words the narration or research quotes from it, exactly; writer and recipient as named there.`,
+  race_bars: `- "race_bars": figures racing as bars, the winner lit. race = {title, unit, lower_is_better, items: [{label, value}]}. For times (0-60 mph in seconds, lap times) set lower_is_better true; for scores or speeds false. 2-6 items; every value stated in the narration or research.`,
+  spec_card: `- "spec_card": a spec sheet for one car or product. spec = {title, subject, rows: [{label, value}]}. title is its name, subject a short kicker such as the maker and year; 3-6 rows like {label: "0-60 mph", value: "2.1 s"}. Every figure stated in the narration or research.`,
+  money: `- "money": money you can see. money = {kind: "growth"|"shrink", from, to, currency, label}. growth: notes piling up as a sum compounds (from the starting amount to the end amount); shrink: one note shrinking to what it's worth after inflation. currency is the symbol, e.g. "$"; label says what it shows, e.g. "$1,000 at 10% for 36 years". from and to must be stated in the narration or research.`,
+  scale: `- "scale": things shown side by side at true relative size, the camera pulling back as each bigger one arrives. scale = {title, items: [{label, size, unit}]}. 2-5 items in the same unit (e.g. diameters in km); every size stated in the narration or research.`,
+};
+
+export interface SignatureOptions {
+  /** Signature shot types this style may use. */
+  signature?: readonly SignatureShotType[];
+  /** Charts may carry callouts. */
+  chartCallouts?: boolean;
+}
+
+const MAX_CALLOUTS = 2;
+const MAX_CALLOUT_WORDS = 6;
 const SECONDS_PER_TIMELINE_EVENT = 1.6;
 
 export function shotCountForBeat(text: string): number {
@@ -120,6 +150,7 @@ const DirectorShotSchema = z.object({
     unit: z.string().nullable().optional(),
     labels: z.array(z.string()),
     values: z.array(z.number()),
+    annotations: z.array(z.object({ index: z.number(), text: z.string() })).nullable().optional(),
   }),
   stat: nullableObject({
     value: z.number(),
@@ -138,6 +169,53 @@ const DirectorShotSchema = z.object({
   }),
   title_card: nullableObject({ text: z.string(), kicker: z.string().nullable().optional() }),
   kinetic: nullableObject({ phrase: z.string(), emphasis: z.array(z.string()) }),
+  pitch: nullableObject({
+    title: z.string().nullable().optional(),
+    players: z.array(
+      z.object({
+        label: z.string(),
+        x: z.number(),
+        y: z.number(),
+        team: z.enum(['a', 'b']),
+        to: z.object({ x: z.number(), y: z.number() }).nullable().optional(),
+      }),
+    ),
+    ball: z.array(z.object({ x: z.number(), y: z.number() })),
+    outcome: z.enum(['goal', 'save', 'miss']).nullable().optional(),
+  }),
+  evidence: nullableObject({
+    title: z.string().nullable().optional(),
+    items: z.array(z.object({ kind: z.enum(['photo', 'note', 'clipping', 'place']), label: z.string(), detail: z.string().nullable().optional() })),
+    links: z.array(z.array(z.number())),
+  }),
+  letter: nullableObject({
+    writer: z.string(),
+    recipient: z.string().nullable().optional(),
+    date: z.string().nullable().optional(),
+    text: z.string(),
+  }),
+  race: nullableObject({
+    title: z.string(),
+    unit: z.string().nullable().optional(),
+    lower_is_better: z.boolean(),
+    items: z.array(z.object({ label: z.string(), value: z.number() })),
+  }),
+  scale: nullableObject({
+    title: z.string().nullable().optional(),
+    items: z.array(z.object({ label: z.string(), size: z.number(), unit: z.string() })),
+  }),
+  spec: nullableObject({
+    title: z.string(),
+    subject: z.string().nullable().optional(),
+    rows: z.array(z.object({ label: z.string(), value: z.string() })),
+  }),
+  money: nullableObject({
+    kind: z.enum(['growth', 'shrink']),
+    from: z.number(),
+    to: z.number(),
+    currency: z.string(),
+    label: z.string(),
+  }),
   caption: nullableObject({ name: z.string(), detail: z.string().nullable().optional() }),
   annotation: nullableObject({ target: z.string(), label: z.string(), detail: z.string().nullable().optional() }),
   diagram: nullableObject({
@@ -160,6 +238,7 @@ function buildBatchPrompt(
   facts: ResearchFact[],
   previousShotTypes: ShotType[],
   styleNotes?: string,
+  signature: SignatureOptions = {},
 ): string {
   const factSection = facts.length
     ? `RESEARCH FACTS:\n${facts.map((f) => `${f.id}: ${f.claim}`).join('\n')}\n\n`
@@ -174,12 +253,21 @@ function buildBatchPrompt(
     )
     .join('\n\n');
 
+  const signatureRules = [
+    ...(signature.signature ?? []).map((t) => SIGNATURE_RULES[t]),
+    ...(signature.chartCallouts
+      ? [`- A "chart" may carry annotations = [{index, text}]: up to ${MAX_CALLOUTS} callouts on the points or bars that matter ("the crash", "peak"), index into its values, text at most ${MAX_CALLOUT_WORDS} words.`]
+      : []),
+  ];
+  const signatureSection = signatureRules.length
+    ? `SIGNATURE SHOTS FOR THIS STYLE (use where they fit the narration, a few per video, never in a row):\n${signatureRules.join('\n')}\n\n`
+    : '';
   return `Video topic: "${topic}"
 
 ${styleNotes ? `STYLE NOTES (this kind of video):
 ${styleNotes}
 
-` : ''}${factSection}${continuity}Plan the shots for these beats. Return {"beats": [{"index": ..., "shots": [...]}]} with one entry per beat.
+` : ''}${signatureSection}${factSection}${continuity}Plan the shots for these beats. Return {"beats": [{"index": ..., "shots": [...]}]} with one entry per beat.
 
 ${beatLines}`;
 }
@@ -411,7 +499,111 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
     return nums.length ? nums.every((v) => datePool.has(v)) : isNamed(date);
   };
 
+  const wordsIn = (s?: string | null) => (s ?? '').trim().split(/\s+/).filter(Boolean).length;
+  const figuresGrounded = (s?: string | null) => !s || groundValues(quantitiesIn(s)) !== null;
+  /** Shares a content word with the narration or research (loosely: "murdered" ~ "murder"). */
+  const relatesToGround = (s: string) => {
+    const pool = new Set(`${groundNorm} ${anyFactNorm}`.split(' ').filter((w) => w.length > 3));
+    return normalizeText(s)
+      .split(' ')
+      .filter((w) => w.length > 3)
+      .some((w) => pool.has(w) || [...pool].some((g) => g.length >= 5 && w.length >= 5 && g.slice(0, 5) === w.slice(0, 5)));
+  };
+  const inPitch = (p: { x: number; y: number }) => p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100;
+
   switch (shot.visual_type) {
+    case 'pitch': {
+      const spec = shot.pitch;
+      if (!spec) return footageFallback(beat, shot);
+      const ball = spec.ball.filter(inPitch).slice(0, 8);
+      // Names on the pitch must be in the story; shirt numbers and initials are just markers
+      const labelOk = (l: string) => l.trim() && (/^\d{1,2}$/.test(l.trim()) || /^[A-Z]{1,3}$/.test(l.trim()) || (wordsIn(l) <= 3 && isNamed(l)));
+      const players = spec.players
+        .filter((p) => inPitch(p) && (!p.to || inPitch(p.to)) && labelOk(p.label))
+        .slice(0, 10)
+        .map((p) => ({ ...p, label: p.label.trim(), to: p.to ?? null }));
+      if (ball.length < 2) return footageFallback(beat, shot);
+      const title = spec.title?.trim() && wordsIn(spec.title) <= MAX_TITLE_WORDS && figuresGrounded(spec.title) ? spec.title.trim() : null;
+      return { ...shot, pitch: { title, players, ball, outcome: spec.outcome ?? null } };
+    }
+    case 'evidence_board': {
+      const spec = shot.evidence;
+      if (!spec) return footageFallback(beat, shot);
+      const items = spec.items
+        .map((it) => ({ kind: it.kind, label: it.label.trim(), detail: it.detail?.trim() || null }))
+        .filter((it) => it.label && wordsIn(it.label) <= 5 && (isNamed(it.label) || relatesToGround(it.label)) && figuresGrounded(it.label))
+        .map((it) => ({ ...it, detail: it.detail && wordsIn(it.detail) <= 8 && figuresGrounded(it.detail) ? it.detail : null }))
+        .slice(0, 6);
+      if (items.length < 3) return footageFallback(beat, shot);
+      const seen = new Set<string>();
+      const links = spec.links
+        .filter((l) => l.length === 2 && l.every((i) => Number.isInteger(i) && i >= 0 && i < items.length) && l[0] !== l[1])
+        .filter(([a, b]) => {
+          const key = [a, b].sort().join('-');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, 8);
+      const title = spec.title?.trim() && wordsIn(spec.title) <= MAX_TITLE_WORDS && figuresGrounded(spec.title) ? spec.title.trim() : null;
+      return { ...shot, evidence: { title, items, links } };
+    }
+    case 'letter': {
+      const spec = shot.letter;
+      if (!spec || !isNamed(spec.writer.trim())) return footageFallback(beat, shot);
+      // Only words the narration or research quotes, as with a quote card
+      const text = quotedPassageFor(spec.text, `${groundText} ${facts.map((f) => f.claim).join(' ')}`);
+      if (wordsIn(text) < 5) return footageFallback(beat, shot);
+      const recipient = spec.recipient?.trim() && isNamed(spec.recipient.trim()) ? spec.recipient.trim() : null;
+      const date = spec.date?.trim() && isStatedDate(spec.date.trim()) ? spec.date.trim() : null;
+      return { ...shot, letter: { writer: spec.writer.trim(), recipient, date, text } };
+    }
+    case 'race_bars': {
+      const spec = shot.race;
+      if (!spec) return footageFallback(beat, shot);
+      const items = spec.items
+        .map((it) => ({ label: it.label.trim(), value: it.value }))
+        .filter((it) => it.label && wordsIn(it.label) <= 4 && Number.isFinite(it.value) && it.value > 0)
+        .slice(0, 6);
+      const extra = items.length >= 2 ? groundValues(items.map((it) => it.value)) : null;
+      if (!extra || !spec.title.trim() || wordsIn(spec.title) > MAX_TITLE_WORDS) return footageFallback(beat, shot);
+      return { ...withFacts(extra), race: { title: spec.title.trim(), unit: spec.unit?.trim() || null, lower_is_better: spec.lower_is_better, items } };
+    }
+    case 'scale': {
+      const spec = shot.scale;
+      if (!spec) return footageFallback(beat, shot);
+      const items = spec.items
+        .map((it) => ({ label: it.label.trim(), size: it.size, unit: it.unit.trim() }))
+        .filter((it) => it.label && wordsIn(it.label) <= 4 && (isNamed(it.label) || relatesToGround(it.label)) && it.size > 0)
+        .slice(0, 5);
+      const units = new Set(items.map((it) => it.unit.toLowerCase()));
+      const extra = items.length >= 2 && units.size === 1 ? groundValues(items.map((it) => it.size)) : null;
+      if (!extra) return footageFallback(beat, shot);
+      const title = spec.title?.trim() && wordsIn(spec.title) <= MAX_TITLE_WORDS && figuresGrounded(spec.title) ? spec.title.trim() : null;
+      return { ...withFacts(extra), scale: { title, items } };
+    }
+    case 'spec_card': {
+      const spec = shot.spec;
+      if (!spec?.title.trim() || wordsIn(spec.title) > 6) return footageFallback(beat, shot);
+      // Every figure in a row must be stated; a row without figures must still relate to the story
+      const rows = spec.rows
+        .map((r) => ({ label: r.label.trim(), value: r.value.trim() }))
+        .filter((r) => r.label && r.value && wordsIn(r.label) <= 4 && wordsIn(r.value) <= 4 && figuresGrounded(r.value) && (quantitiesIn(r.value).length > 0 || relatesToGround(r.value)))
+        .slice(0, 6);
+      if (rows.length < 3 || !(isNamed(spec.title.trim()) || relatesToGround(spec.title))) return footageFallback(beat, shot);
+      const subject = spec.subject?.trim() && wordsIn(spec.subject) <= 5 && figuresGrounded(spec.subject) ? spec.subject.trim() : null;
+      return { ...shot, spec: { title: spec.title.trim(), subject, rows } };
+    }
+    case 'money': {
+      const spec = shot.money;
+      if (!spec || !(spec.from > 0) || !(spec.to > 0) || spec.from === spec.to) return footageFallback(beat, shot);
+      if ((spec.kind === 'growth') !== spec.to > spec.from) return footageFallback(beat, shot);
+      const extra = groundValues([spec.from, spec.to]);
+      const label = spec.label.trim();
+      if (!extra || !label || wordsIn(label) > 10 || !figuresGrounded(label)) return footageFallback(beat, shot);
+      const currency = spec.currency.trim().slice(0, 3) || '$';
+      return { ...withFacts(extra), money: { kind: spec.kind, from: spec.from, to: spec.to, currency, label } };
+    }
     case 'stock':
     case 'archive': {
       const detailOf = (raw?: string | null) => {
@@ -509,7 +701,11 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
       const values = chart.values.slice(0, n);
       const extra = n >= 2 ? groundValues(values) : null;
       if (!extra) return footageFallback(beat, shot);
-      return { ...withFacts(extra), chart: { ...chart, labels, values } };
+      const annotations = (chart.annotations ?? [])
+        .map((a) => ({ index: a.index, text: a.text.trim() }))
+        .filter((a) => Number.isInteger(a.index) && a.index >= 0 && a.index < n && a.text && wordsIn(a.text) <= MAX_CALLOUT_WORDS && figuresGrounded(a.text))
+        .slice(0, MAX_CALLOUTS);
+      return { ...withFacts(extra), chart: { ...chart, labels, values, annotations: annotations.length ? annotations : null } };
     }
     case 'stat': {
       // A lone figure must be the one being spoken: a true but different number on screen
@@ -562,6 +758,13 @@ const GRAPHIC_KEEP_PRIORITY: Partial<Record<ShotType, number>> = {
   diagram: 6,
   newspaper: 7,
   geo_map: 8,
+  race_bars: 8,
+  scale: 9,
+  letter: 9,
+  evidence_board: 9,
+  pitch: 9,
+  spec_card: 8,
+  money: 8,
 };
 /** Share-of-video rules need enough shots to mean anything. */
 const MIN_SHOTS_FOR_SHARE_RULES = 8;
@@ -670,8 +873,37 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   };
   if (shot.fact_ids?.length) plan.fact_ids = shot.fact_ids;
   if (shot.visual_type === 'chart' && shot.chart) {
-    plan.chart = { ...shot.chart, unit: shot.chart.unit ?? undefined };
+    const { annotations, ...chart } = shot.chart;
+    plan.chart = { ...chart, unit: chart.unit ?? undefined, ...(annotations?.length ? { annotations } : {}) };
   }
+  if (shot.visual_type === 'pitch' && shot.pitch) {
+    plan.pitch = {
+      title: shot.pitch.title ?? undefined,
+      players: shot.pitch.players.map((p) => ({ label: p.label, x: p.x, y: p.y, team: p.team, ...(p.to ? { to: p.to } : {}) })),
+      ball: shot.pitch.ball,
+      outcome: shot.pitch.outcome ?? null,
+    };
+  }
+  if (shot.visual_type === 'evidence_board' && shot.evidence) {
+    plan.evidence = {
+      title: shot.evidence.title ?? undefined,
+      items: shot.evidence.items.map((it) => ({ kind: it.kind, label: it.label, detail: it.detail ?? undefined })),
+      links: shot.evidence.links.map((l) => [l[0], l[1]] as [number, number]),
+    };
+  }
+  if (shot.visual_type === 'letter' && shot.letter) {
+    plan.letter = { writer: shot.letter.writer, recipient: shot.letter.recipient ?? undefined, date: shot.letter.date ?? undefined, text: shot.letter.text };
+  }
+  if (shot.visual_type === 'race_bars' && shot.race) {
+    plan.race = { ...shot.race, unit: shot.race.unit ?? undefined };
+  }
+  if (shot.visual_type === 'scale' && shot.scale) {
+    plan.scale = { title: shot.scale.title ?? undefined, items: shot.scale.items };
+  }
+  if (shot.visual_type === 'spec_card' && shot.spec) {
+    plan.spec = { title: shot.spec.title, subject: shot.spec.subject ?? undefined, rows: shot.spec.rows };
+  }
+  if (shot.visual_type === 'money' && shot.money) plan.money = shot.money;
   if (shot.visual_type === 'stat' && shot.stat) {
     plan.stat = { ...shot.stat, prefix: shot.stat.prefix ?? undefined, suffix: shot.stat.suffix ?? undefined };
   }
@@ -740,8 +972,13 @@ export function fitGraphicsToTime(beat: ScriptBeat, shots: ShotPlan[]): ShotPlan
 }
 
 /** Validates, aligns, and converts the director's shots for one beat. */
-export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts: ResearchFact[]): ShotPlan[] {
-  const verified = shots.map((s) => verifyShot(s, beat, facts));
+export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts: ResearchFact[], signature: SignatureOptions = {}): ShotPlan[] {
+  const allowed = new Set<string>(signature.signature ?? []);
+  const verified = shots
+    // A signature shot outside its style becomes footage; callouts only where the style has them
+    .map((s) => ((SIGNATURE_SHOT_TYPES as readonly string[]).includes(s.visual_type) && !allowed.has(s.visual_type) ? footageFallback(beat, s) : s))
+    .map((s) => (s.chart?.annotations && !signature.chartCallouts ? { ...s, chart: { ...s.chart, annotations: null } } : s))
+    .map((s) => verifyShot(s, beat, facts));
   return fitGraphicsToTime(beat, alignShotsToNarration(beat.text, verified).map(toShotPlan));
 }
 
@@ -786,6 +1023,7 @@ export async function planShotsWith(
   const facts = script.research?.facts ?? [];
   const pack = stylePack(options.style);
   const maxGraphicsShare = pack?.maxGraphicsShare ?? MAX_GRAPHICS_SHARE;
+  const signature: SignatureOptions = { signature: pack?.signatureShots, chartCallouts: pack?.chartCallouts };
   const planned = new Map<number, ShotPlan[]>();
   let previousTypes: ShotType[] = [];
   const toPlan = options.onlyBeats
@@ -798,7 +1036,7 @@ export async function planShotsWith(
       const { data } = await llm.generateJson(
         {
           system: DIRECTOR_SYSTEM,
-          prompt: buildBatchPrompt(topic, batch, facts, previousTypes, pack?.directorNotes),
+          prompt: buildBatchPrompt(topic, batch, facts, previousTypes, pack?.directorNotes, signature),
           schema: DirectorResponseSchema,
         },
         ctx,
@@ -806,7 +1044,7 @@ export async function planShotsWith(
       const byIndex = new Map(data.beats.map((b) => [b.index, b.shots]));
       for (const beat of batch) {
         const shots = byIndex.get(beat.index);
-        if (shots?.length) planned.set(beat.index, finalizeBeatShots(beat, shots, facts));
+        if (shots?.length) planned.set(beat.index, finalizeBeatShots(beat, shots, facts, signature));
       }
     } catch (err) {
       console.warn(`[planShots] Batch starting at beat ${i} failed; those beats keep beat-level visuals:`, err);

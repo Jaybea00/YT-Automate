@@ -24,6 +24,8 @@ import {
 import type { RenderedShot, ShotSlot } from './shot-composer';
 import type { ShotRenderContext, TypedShotRenderer } from './shot-renderers';
 import { renderScreenRecording } from './screen-capture';
+import { evidenceBoardTemplate, letterTemplate, pitchTemplate, raceBarsTemplate, scaleTemplate } from './motion/signature-templates';
+import { moneyTemplate, specCardTemplate } from './motion/signature-templates-2';
 
 /** The page for a graphic shot, or null when the shot lacks its spec. */
 export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null {
@@ -47,6 +49,20 @@ export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null
       return shot.title_card ? titleTemplate(theme, shot.title_card) : null;
     case 'kinetic_text':
       return shot.kinetic ? kineticTextTemplate(theme, shot.kinetic.phrase, shot.kinetic.emphasis) : null;
+    case 'pitch':
+      return shot.pitch ? pitchTemplate(theme, shot.pitch) : null;
+    case 'evidence_board':
+      return shot.evidence ? evidenceBoardTemplate(theme, shot.evidence) : null;
+    case 'letter':
+      return shot.letter ? letterTemplate(theme, shot.letter) : null;
+    case 'race_bars':
+      return shot.race ? raceBarsTemplate(theme, shot.race) : null;
+    case 'scale':
+      return shot.scale ? scaleTemplate(theme, shot.scale) : null;
+    case 'spec_card':
+      return shot.spec ? specCardTemplate(theme, shot.spec) : null;
+    case 'money':
+      return shot.money ? moneyTemplate(theme, shot.money) : null;
     default:
       return null;
   }
@@ -160,6 +176,13 @@ export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
   title: renderGraphic,
   kinetic_text: renderGraphic,
   screen_recording: renderScreenRecording,
+  pitch: renderGraphic,
+  evidence_board: renderGraphic,
+  letter: renderGraphic,
+  race_bars: renderGraphic,
+  scale: renderGraphic,
+  spec_card: renderGraphic,
+  money: renderGraphic,
 };
 
 /** Longer narration doesn't fit a type card legibly. */

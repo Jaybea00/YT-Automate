@@ -68,6 +68,7 @@ export async function handleGetBgm(
     captionPreset,
     look: video.script_json?.look === 'off' ? 'off' : 'auto',
     archiveLook: video.script_json?.archive_look === 'off' ? 'off' : 'auto',
+    parallax: video.script_json?.parallax !== false,
     transitionIntensity: ['subtle', 'balanced', 'bold'].includes(video.script_json?.transition_intensity) ? video.script_json.transition_intensity : 'balanced',
     transitionRendered: video.script_json?.transition_rendered !== false,
     // Shakes, freeze-frames, chapter zooms; letterbox follows the style unless set
@@ -107,6 +108,7 @@ export async function handlePostBgm(
   let look: 'auto' | 'off' | undefined;
   let archiveLook: 'auto' | 'off' | undefined;
   let emphasisEnabled: boolean | undefined;
+  let parallax: boolean | undefined;
   let transitionIntensity: 'subtle' | 'balanced' | 'bold' | undefined;
   let transitionRendered: boolean | undefined;
   let letterbox: 'auto' | 'on' | 'off' | undefined;
@@ -180,6 +182,7 @@ export async function handlePostBgm(
     if (body.look === 'auto' || body.look === 'off') look = body.look;
     if (body.archiveLook === 'auto' || body.archiveLook === 'off') archiveLook = body.archiveLook;
     if (body.emphasisEnabled !== undefined) emphasisEnabled = Boolean(body.emphasisEnabled);
+    if (body.parallax !== undefined) parallax = Boolean(body.parallax);
     if (['subtle', 'balanced', 'bold'].includes(body.transitionIntensity)) transitionIntensity = body.transitionIntensity;
     if (body.transitionRendered !== undefined) transitionRendered = Boolean(body.transitionRendered);
     if (body.letterbox === 'auto' || body.letterbox === 'on' || body.letterbox === 'off') letterbox = body.letterbox;
@@ -238,6 +241,7 @@ export async function handlePostBgm(
     scriptJson.look = look;
   }
   if (transitionIntensity !== undefined) scriptJson.transition_intensity = transitionIntensity;
+  if (parallax !== undefined) scriptJson.parallax = parallax;
   if (transitionRendered !== undefined) scriptJson.transition_rendered = transitionRendered;
   if (emphasisEnabled !== undefined || letterbox !== undefined) {
     const current = scriptJson.emphasis ?? {};

@@ -17,6 +17,8 @@ import { annotatedPhotoTemplate, locateTarget, photoForRender } from './annotate
 import { ensureArchiveTextures, treatmentFor, type ArchiveTreatment } from './archive-look';
 import type { RenderedShot, ShotAlternative, ShotRenderer, ShotSlot } from './shot-composer';
 import type { MediaCandidate } from './types';
+import { collagePhotoTemplate } from './motion/signature-templates-2';
+import { depthMap, parallaxClip, suitsParallax } from './parallax';
 
 export interface ShotRenderContext {
   beatIndex: number;
@@ -38,6 +40,10 @@ export interface ShotRenderContext {
    * archive photo, which lies under the next print.
    */
   archiveLook?: { count: { next: number }; lastStill?: { path: string; key: string } };
+  /** Still photos as a paper collage (StylePack.photoLook); counts shots so the tilt varies. */
+  collage?: { count: { next: number } };
+  /** 2.5D parallax for landscape still photos (parallax.ts); counts shots so the glide alternates. */
+  parallax?: { count: { next: number } };
 }
 
 /** Archives whose footage is genuinely old; NASA's library is mostly modern. */
@@ -225,6 +231,22 @@ export async function renderCandidateShot(
   // Historical shots from real archives get the archive texture; modern stock never does
   const archive = ctx.archiveLook;
   const historical = Boolean(archive) && shot.visual_type === 'archive' && HISTORICAL_PROVIDERS.has(candidate.provider);
+
+  // The style's collage look: a still photo cut out and taped onto paper
+  if (ctx.collage && !isVideo && !historical) {
+    try {
+      await renderMotionClip({
+        html: collagePhotoTemplate(ctx.theme, await photoForRender(sourcePath), ctx.collage.count.next++),
+        durationSec: slot.frames / FPS,
+        outputPath: clipPath,
+        browser: ctx.browser,
+      });
+      ctx.usedSources.add(sourceKey(candidate));
+      return applyCaption(options.captionShot ?? shot, slot, { clipPath, renderedType: fromArchive ? 'archive' : 'stock', ...source, note: [options.note, 'collage'].filter(Boolean).join('; '), still: false }, ctx);
+    } catch (err) {
+      console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: collage failed (${err instanceof Error ? err.message.slice(0, 120) : err}); showing the photo plainly`);
+    }
+  }
   let archiveLook: ArchiveTreatment | undefined;
   if (archive && historical) {
     try {
@@ -232,6 +254,17 @@ export async function renderCandidateShot(
       archiveLook = treatmentFor(archive.count.next++, await ensureArchiveTextures(), under);
     } catch (err) {
       console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: archive texture unavailable (${err instanceof Error ? err.message.slice(0, 120) : err}); rendering plainly`);
+    }
+  }
+
+  // 2.5D parallax: a plain landscape photo moves in depth instead of a flat pan
+  if (ctx.parallax && !isVideo && !archiveLook && (await suitsParallax(sourcePath))) {
+    try {
+      await parallaxClip({ imagePath: sourcePath, depthPath: await depthMap(sourcePath), frames: slot.frames, outputPath: clipPath, n: ctx.parallax.count.next++ });
+      ctx.usedSources.add(sourceKey(candidate));
+      return applyCaption(options.captionShot ?? shot, slot, { clipPath, renderedType: fromArchive ? 'archive' : 'stock', ...source, note: [options.note, 'parallax'].filter(Boolean).join('; '), still: true }, ctx);
+    } catch (err) {
+      console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: parallax failed (${err instanceof Error ? err.message.slice(0, 120) : err}); using a camera move`);
     }
   }
 

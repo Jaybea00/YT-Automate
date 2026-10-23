@@ -133,6 +133,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [filmLook, setFilmLook] = useState<'auto' | 'off'>('auto');
   const [archiveLook, setArchiveLook] = useState<'auto' | 'off'>('auto');
   const [emphasisEnabled, setEmphasisEnabled] = useState(true);
+  const [parallax, setParallax] = useState(true);
   const [letterbox, setLetterbox] = useState<'auto' | 'on' | 'off'>('auto');
 
   // Batch Uploader state
@@ -238,6 +239,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     transitionIntensity?: 'subtle' | 'balanced' | 'bold';
     transitionRendered?: boolean;
     emphasisEnabled?: boolean;
+    parallax?: boolean;
     letterbox?: 'auto' | 'on' | 'off';
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
@@ -263,6 +265,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextLook = updates.look !== undefined ? updates.look : filmLook;
     const nextArchiveLook = updates.archiveLook !== undefined ? updates.archiveLook : archiveLook;
     const nextEmphasis = updates.emphasisEnabled !== undefined ? updates.emphasisEnabled : emphasisEnabled;
+    const nextParallax = updates.parallax !== undefined ? updates.parallax : parallax;
+    setParallax(nextParallax);
     const nextLetterbox = updates.letterbox !== undefined ? updates.letterbox : letterbox;
     setEmphasisEnabled(nextEmphasis);
     setLetterbox(nextLetterbox);
@@ -309,6 +313,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           look: nextLook,
           archiveLook: nextArchiveLook,
           emphasisEnabled: nextEmphasis,
+          parallax: nextParallax,
           letterbox: nextLetterbox,
         }),
       });
@@ -401,6 +406,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           if (bData.look === 'off' || bData.look === 'auto') {
             setFilmLook(bData.look);
           }
+          if (bData.parallax !== undefined) setParallax(bData.parallax !== false);
           if (bData.emphasis) {
             setEmphasisEnabled(bData.emphasis.enabled !== false);
             if (['auto', 'on', 'off'].includes(bData.emphasis.letterbox)) setLetterbox(bData.emphasis.letterbox);
@@ -1384,6 +1390,24 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* 2.5D Parallax Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-2">
+              <label className="flex items-start gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={parallax}
+                  onChange={(e) => updateBgmConfig({ parallax: e.target.checked })}
+                  className="accent-indigo-500 mt-0.5"
+                />
+                <span>
+                  <span className="text-sm font-bold text-white">🏔️ 2.5D parallax on photos</span>
+                  <span className="block text-[11px] text-zinc-400 mt-0.5">
+                    Landscape photos move in depth (near things slide against the background as the camera pushes in) instead of a flat pan. A small depth model runs on this computer (downloaded once, about 30 MB); slow on a small laptop, around half a minute per photo shot. Archive prints and collages keep their own look. Applies to beats rendered after the change.
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Emphasis Effects Section */}
