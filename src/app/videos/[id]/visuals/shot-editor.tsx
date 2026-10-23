@@ -34,6 +34,13 @@ const TYPE_LABEL: Record<string, { label: string; bar: string }> = {
   title: { label: 'Title', bar: 'bg-rose-500/80' },
   kinetic_text: { label: 'Text', bar: 'bg-violet-500/80' },
   diagram: { label: 'Diagram', bar: 'bg-sky-400/80' },
+  pitch: { label: 'Pitch', bar: 'bg-green-500/80' },
+  evidence_board: { label: 'Evidence', bar: 'bg-red-500/80' },
+  letter: { label: 'Letter', bar: 'bg-yellow-600/80' },
+  race_bars: { label: 'Race', bar: 'bg-orange-400/80' },
+  scale: { label: 'Scale', bar: 'bg-purple-500/80' },
+  spec_card: { label: 'Specs', bar: 'bg-slate-400/80' },
+  money: { label: 'Money', bar: 'bg-emerald-600/80' },
   color: { label: 'Blank', bar: 'bg-red-600/80' },
 };
 const typeLabel = (t: string) => TYPE_LABEL[t]?.label ?? t;

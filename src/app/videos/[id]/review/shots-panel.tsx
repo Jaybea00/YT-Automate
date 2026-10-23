@@ -20,6 +20,13 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   title: { label: 'Title', icon: '🔖', bar: 'bg-rose-500/80', chip: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
   kinetic_text: { label: 'Kinetic', icon: '🔤', bar: 'bg-violet-500/80', chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10' },
   diagram: { label: 'Diagram', icon: '🧩', bar: 'bg-sky-400/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },
+  pitch: { label: 'Pitch', icon: '⚽', bar: 'bg-green-500/80', chip: 'text-green-300 border-green-500/30 bg-green-500/10' },
+  evidence_board: { label: 'Evidence', icon: '📌', bar: 'bg-red-500/80', chip: 'text-red-300 border-red-500/30 bg-red-500/10' },
+  letter: { label: 'Letter', icon: '✉️', bar: 'bg-yellow-600/80', chip: 'text-yellow-300 border-yellow-500/30 bg-yellow-500/10' },
+  race_bars: { label: 'Race', icon: '🏁', bar: 'bg-orange-400/80', chip: 'text-orange-300 border-orange-500/30 bg-orange-500/10' },
+  scale: { label: 'Scale', icon: '🪐', bar: 'bg-purple-500/80', chip: 'text-purple-300 border-purple-500/30 bg-purple-500/10' },
+  spec_card: { label: 'Specs', icon: '📋', bar: 'bg-slate-400/80', chip: 'text-slate-300 border-slate-500/30 bg-slate-500/10' },
+  money: { label: 'Money', icon: '💵', bar: 'bg-emerald-600/80', chip: 'text-emerald-300 border-emerald-600/30 bg-emerald-600/10' },
 };
 
 const shotSeconds = (shot: ShotPlan) => shot.word_count / SPEECH_WORDS_PER_SECOND;

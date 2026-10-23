@@ -45,6 +45,7 @@ import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visu
 import { saveRenderedRhythm } from '../visuals/rhythm-report';
 import { themeForStyle } from '../visuals/motion/theme';
 import { withWritingModel, type ScriptBeat } from '@/lib/script/generate-script';
+import { stylePack } from '@/lib/styles/packs';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -380,6 +381,8 @@ export class JobRunner {
         usedSources: new Set<string>(),
         motionCounter: { next: 0 },
         ...(archiveLookOn ? { archiveLook: { count: { next: 0 } } } : {}),
+        ...(stylePack(videoRow?.style)?.photoLook === 'collage' ? { collage: { count: { next: 0 } } } : {}),
+        ...(videoRow?.script_json?.parallax !== false ? { parallax: { count: { next: 0 } } } : {}),
       };
 
       const outputDir = path.join(this.baseOutputDir, 'visuals');
@@ -433,6 +436,8 @@ export class JobRunner {
                     composer: 'shots-v2-paced',
                     // Switching the archive texture re-renders composed beats
                     archiveLook: archiveLookOn ? 'on' : 'off',
+                    photoLook: stylePack(videoRow?.style)?.photoLook ?? 'plain',
+                    parallax: videoRow?.script_json?.parallax !== false ? 'on' : 'off',
                     leadInSec: pacing.get(scene.scene_number)?.leadInSec ?? 0,
                     tailSec: pacing.get(scene.scene_number)?.tailSec ?? 0,
                   }

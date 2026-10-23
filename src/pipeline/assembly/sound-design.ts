@@ -123,6 +123,44 @@ export function shotCues(
     case 'newspaper':
       cues.push({ at: 0, sound: 'paper', gain: 0.7 });
       break;
+    case 'pitch': {
+      // The ball sets off at 0.9 s and arrives at max(1.7 s, 80%); a goal lands with an impact
+      const end = Math.max(1.7, d * 0.8);
+      cues.push({ at: 0.9, sound: 'whoosh', gain: 0.45 });
+      if (plan.pitch?.outcome === 'goal') cues.push({ at: end, sound: 'impact', gain: 0.85 });
+      break;
+    }
+    case 'evidence_board': {
+      // Each clue is pinned 0.18 s after the last, from 0.15 s
+      const n = Math.min(6, plan.evidence?.items.length ?? 3);
+      for (let i = 0; i < n; i++) cues.push({ at: 0.15 + i * 0.18, sound: 'paper', gain: 0.45 });
+      break;
+    }
+    case 'letter':
+      cues.push({ at: 0, sound: 'paper', gain: 0.6 });
+      break;
+    case 'race_bars': {
+      // Times race: each bar finishes after a time proportional to its value
+      const items = plan.race?.items ?? [];
+      const max = Math.max(...items.map((i) => i.value), 1);
+      const span = Math.max(0.8, d * 0.6);
+      for (const it of items) cues.push({ at: 0.5 + (plan.race?.lower_is_better ? (span * it.value) / max : span), sound: 'tick', gain: 0.55 });
+      break;
+    }
+    case 'spec_card': {
+      const n = plan.spec?.rows.length ?? 3;
+      for (let i = 0; i < n; i++) cues.push({ at: 0.5 + i * Math.min(0.35, (d * 0.5) / n), sound: 'tick', gain: 0.5 });
+      break;
+    }
+    case 'money':
+      cues.push({ at: 0.4, sound: 'whoosh', gain: 0.4 }, { at: 0.4 + Math.max(0.8, d * 0.6), sound: 'chime', gain: 0.5 });
+      break;
+    case 'scale': {
+      const n = plan.scale?.items.length ?? 2;
+      const step = Math.max(0.6, (d * 0.85 - 0.3) / n);
+      for (let i = 0; i < n; i++) cues.push({ at: 0.3 + step * i, sound: 'whoosh', gain: 0.4 });
+      break;
+    }
     case 'geo_map': {
       // map-scene: the camera settles over min(2.4, 55%); pins drop as each arc arrives
       cues.push({ at: 0, sound: 'swoosh', gain: 0.5 });

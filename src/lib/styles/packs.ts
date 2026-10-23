@@ -69,6 +69,12 @@ export interface StylePack {
    * its voicing job is created, so existing videos keep the pace they were voiced at.
    */
   narration?: NarrationPacing;
+  /** Signature shots the director may use in this style (pitch, evidence board, letter, race bars, scale). */
+  signatureShots?: Array<'pitch' | 'evidence_board' | 'letter' | 'race_bars' | 'scale' | 'spec_card' | 'money'>;
+  /** How still photos are shown: 'collage' cuts them out and tapes them onto paper (the Vox look). */
+  photoLook?: 'collage';
+  /** Charts may carry callouts on points or bars ("the crash"). */
+  chartCallouts?: boolean;
   /** Emphasis effects that suit the style: letterbox bars (cinematic), a zoom punch into chapters (fast styles). */
   emphasis?: { letterbox?: boolean; chapterZoom?: boolean };
   /** Starting settings for new videos in this style (changeable per video). */
@@ -120,6 +126,8 @@ society rather than a quick tutorial. Build tension toward a payoff.`,
 
   modernmba: pack({
     id: 'modernmba',
+    chartCallouts: true,
+    signatureShots: ['money'],
     emphasis: { chapterZoom: true },
     name: 'Business & Data Analysis',
     label: 'Business/data analysis (modernmba-style)',
@@ -181,6 +189,7 @@ narrative pull toward the payoff.`,
 
   comparison: pack({
     id: 'comparison',
+    signatureShots: ['race_bars', 'spec_card'],
     emphasis: { chapterZoom: true },
     name: 'Comparison Breakdown',
     label: 'Comparison / "X vs Y" breakdown',
@@ -221,6 +230,7 @@ condescending.`,
 
   true_crime_pov: pack({
     id: 'true_crime_pov',
+    signatureShots: ['evidence_board'],
     emphasis: { letterbox: true },
     name: 'Investigative / POV',
     label: 'True crime / POV explainer',
@@ -244,6 +254,7 @@ than dramatizing it as fact.`,
 
   vox_explainer: pack({
     id: 'vox_explainer',
+    photoLook: 'collage',
     emphasis: { chapterZoom: true },
     name: 'Vox Explainer',
     label: 'Vox-style visual explainer',
@@ -273,6 +284,7 @@ that answers the opening question.`,
 
   car: pack({
     id: 'car',
+    signatureShots: ['race_bars', 'spec_card'],
     emphasis: { chapterZoom: true },
     name: 'Car Culture',
     label: 'Car culture / automotive',
@@ -299,6 +311,7 @@ clearly framed as opinions.`,
 
   sport: pack({
     id: 'sport',
+    signatureShots: ['pitch', 'race_bars'],
     emphasis: { chapterZoom: true },
     name: 'Sports Story',
     label: 'Sports storytelling',
@@ -323,6 +336,8 @@ people involved: no mocking injuries, private lives or rival fans.`,
 
   finance: pack({
     id: 'finance',
+    chartCallouts: true,
+    signatureShots: ['money'],
     emphasis: { chapterZoom: true },
     name: 'Money & Finance',
     label: 'Personal finance / markets',
@@ -347,6 +362,7 @@ Prices, rates and dates come only from the research.`,
 
   space_science: pack({
     id: 'space_science',
+    signatureShots: ['scale'],
     name: 'Space & Science',
     label: 'Space & science explainer',
     description: 'Scale, wonder and evidence: diagrams, comparisons and NASA imagery.',
@@ -370,6 +386,7 @@ the ear; they come only from the research.`,
 
   tech_review: pack({
     id: 'tech_review',
+    signatureShots: ['race_bars', 'spec_card'],
     emphasis: { chapterZoom: true },
     name: 'Tech Review',
     label: 'Tech product review',
@@ -395,6 +412,7 @@ no hype and no pile-ons; say when the answer depends on the buyer.`,
 
   history: pack({
     id: 'history',
+    signatureShots: ['letter'],
     name: 'History Documentary',
     label: 'Narrative history',
     description: 'Real people and turning points, anchored in dates, maps and primary sources.',
@@ -419,6 +437,7 @@ words in a historical figure's mouth.`,
 
   mystery: pack({
     id: 'mystery',
+    signatureShots: ['evidence_board'],
     emphasis: { letterbox: true },
     name: 'Unsolved Mystery',
     label: 'Mystery / unsolved',

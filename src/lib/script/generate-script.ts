@@ -37,8 +37,20 @@ export const SHOT_TYPES = [
   'title',
   'kinetic_text',
   'diagram',
+  // Signature shots: offered only to the styles that list them (StylePack.signatureShots)
+  'pitch',
+  'evidence_board',
+  'letter',
+  'race_bars',
+  'scale',
+  'spec_card',
+  'money',
 ] as const;
 export type ShotType = (typeof SHOT_TYPES)[number];
+
+/** Shot types only some styles get. */
+export const SIGNATURE_SHOT_TYPES = ['pitch', 'evidence_board', 'letter', 'race_bars', 'scale', 'spec_card', 'money'] as const satisfies readonly ShotType[];
+export type SignatureShotType = (typeof SIGNATURE_SHOT_TYPES)[number];
 
 /** Diagram limits, shared by the shot planner and the renderer. */
 export const DIAGRAM_LIMITS = {
@@ -64,7 +76,15 @@ export interface ShotPlan {
   word_start: number;
   word_count: number;
   fact_ids?: string[];
-  chart?: { chart_type: 'line' | 'bar' | 'pie'; title: string; unit?: string; labels: string[]; values: number[] };
+  chart?: {
+    chart_type: 'line' | 'bar' | 'pie';
+    title: string;
+    unit?: string;
+    labels: string[];
+    values: number[];
+    /** Callouts on points or bars (styles with chartCallouts). */
+    annotations?: Array<{ index: number; text: string }>;
+  };
   stat?: { value: number; prefix?: string; suffix?: string; label: string };
   quote?: { text: string; attribution: string };
   map?: { places: string[]; mode: 'route' | 'spread' | 'locate' };
@@ -82,6 +102,29 @@ export interface ShotPlan {
     center?: string;
     steps: Array<{ label: string; detail?: string }>;
   };
+  /** Sport: a move on a top-down pitch (positions 0-100 along and across the pitch). */
+  pitch?: {
+    title?: string;
+    players: Array<{ label: string; x: number; y: number; team: 'a' | 'b'; to?: { x: number; y: number } }>;
+    ball: Array<{ x: number; y: number }>;
+    outcome?: 'goal' | 'save' | 'miss' | null;
+  };
+  /** Mystery / True Crime: pinned clues joined by red string. */
+  evidence?: {
+    title?: string;
+    items: Array<{ kind: 'photo' | 'note' | 'clipping' | 'place'; label: string; detail?: string }>;
+    links: Array<[number, number]>;
+  };
+  /** History: a letter's quoted words, inked in. */
+  letter?: { writer: string; recipient?: string; date?: string; text: string };
+  /** Car / Tech review: bars racing (times: lowest wins). */
+  race?: { title: string; unit?: string; lower_is_better: boolean; items: Array<{ label: string; value: number }> };
+  /** Space: things at true relative size. */
+  scale?: { title?: string; items: Array<{ label: string; size: number; unit: string }> };
+  /** Car / Tech review: a spec sheet. */
+  spec?: { title: string; subject?: string; rows: Array<{ label: string; value: string }> };
+  /** Finance: money growing (compounding) or shrinking (inflation). */
+  money?: { kind: 'growth' | 'shrink'; from: number; to: number; currency: string; label: string };
   /** Lower-third name caption over footage (stock/archive) of a named person or place. */
   caption?: { name: string; detail?: string };
   /**
