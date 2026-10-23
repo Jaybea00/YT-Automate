@@ -100,7 +100,7 @@ export type QueueAssemblyResult =
 export async function queueAssemblyJob(
   supabase: SupabaseClient,
   id: string,
-  options: { draft?: boolean } = {},
+  options: { draft?: boolean; beats?: number[] } = {},
 ): Promise<QueueAssemblyResult> {
   // Every beat needs an asset before assembly can start
   const gate = await checkAssemblyGate(supabase, id);
@@ -126,6 +126,7 @@ export async function queueAssemblyJob(
         visual_style: video.style,
         scenes,
         ...(draft ? { draft: true } : {}),
+        ...(draft && options.beats?.length ? { preview_beats: options.beats } : {}),
       },
       script_fingerprint: scriptFingerprint,
     })

@@ -5,6 +5,7 @@ import { invalidateBeatAssemblyCache } from '../utils/media-upload';
 import { concatClips } from './clips';
 import { upsertVideoAssetProvenance } from './provenance';
 import { summarizeLicenses, type ComposedShot, type RenderedShot, type ShotSlot } from './shot-composer';
+import type { ShotPlan } from '@/lib/script/generate-script';
 
 /**
  * Edits a composed beat one shot at a time: a shot is re-rendered at exactly its original length,
@@ -76,6 +77,8 @@ export async function replaceShot(options: {
   beat: ComposedBeatRecord;
   shotIndex: number;
   render: (slot: ShotSlot, clipPath: string) => Promise<RenderedShot>;
+  /** A new plan for the shot (a new search, say), kept so a later redo follows it. */
+  plan?: ShotPlan;
 }): Promise<ComposedShot> {
   const { supabase, videoId, beat, shotIndex, render } = options;
   const current = beat.shots[shotIndex];
@@ -83,7 +86,8 @@ export async function replaceShot(options: {
 
   const clipPath = shotClipPath(beat.trackPath, beat.beatIndex, shotIndex);
   const tempPath = clipPath.replace(/\.mp4$/, '.new.mp4');
-  const slot: ShotSlot = { shot: current.plan, startSec: current.startSec, frames: current.frames };
+  const plan = options.plan ?? current.plan;
+  const slot: ShotSlot = { shot: plan, startSec: current.startSec, frames: current.frames };
   let rendered: RenderedShot;
   try {
     rendered = await render(slot, tempPath);
@@ -102,7 +106,7 @@ export async function replaceShot(options: {
     startSec: current.startSec,
     durationSec: current.durationSec,
     frames: current.frames,
-    plan: current.plan,
+    plan,
   };
   const shots = beat.shots.map((s, i) => (i === shotIndex ? updated : s));
   const clips = shots.map((_, i) => shotClipPath(beat.trackPath, beat.beatIndex, i));

@@ -33,8 +33,11 @@ export interface GenerateCaptionsOptions {
    * When omitted, beats are laid back-to-back using their speech durations.
    */
   beatStartMs?: number[];
-  /** The narrator's word timings per beat (seconds from the beat's voice start), by beat index. */
-  words?: Record<number, Array<{ word: string; start: number; end: number }>>;
+  /**
+   * The narrator's word timings per beat (seconds from the beat's voice start), by beat index,
+   * with the caption editor's marks. An empty list means no captions for that beat.
+   */
+  words?: Record<number, Array<{ word: string; start: number; end: number; breakBefore?: boolean; emphasis?: boolean }>>;
   /** The video's accent colour (#rrggbb) for the active word. */
   highlightHex?: string;
   /** Where captions hide (full-screen text) or rise (lower-thirds). */
@@ -53,6 +56,10 @@ export interface CaptionWord {
   word: string;
   startMs: number;
   endMs: number;
+  /** The caption editor starts a new line here. */
+  breakBefore?: boolean;
+  /** The caption editor keeps this word in the accent colour. */
+  emphasis?: boolean;
 }
 
 export interface CaptionDialogue {
@@ -128,7 +135,8 @@ export function groupPhrases(words: CaptionWord[], maxWords: number, maxChars: n
     const prev = words[i - 1];
     const breakBefore =
       current.length > 0 &&
-      (current.length >= maxWords ||
+      (w.breakBefore ||
+        current.length >= maxWords ||
         length([...current, w]) > maxChars ||
         (prev !== undefined && w.startMs - prev.endMs > PHRASE_GAP_MS) ||
         /[.?!;:…]["”’']?$/.test(prev?.word ?? '') ||
@@ -148,7 +156,7 @@ export function groupPhrases(words: CaptionWord[], maxWords: number, maxChars: n
     const before = phrases[i - 1];
     const last = before[before.length - 1];
     const continuous = only.startMs - last.endMs <= PHRASE_GAP_MS && !/[.?!;:…,—–]["”’']?$/.test(last.word);
-    if (phrases[i].length === 1 && continuous && length([...before, only]) <= maxChars + 8) {
+    if (phrases[i].length === 1 && continuous && !only.breakBefore && length([...before, only]) <= maxChars + 8) {
       before.push(only);
       phrases.splice(i, 1);
     }
@@ -210,8 +218,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const unit = units.find((u) => u.unit_index === beat.index && u.duration_ms != null && u.duration_ms > 0);
     const durationMs = unit?.duration_ms ?? Math.round((beat.duration_estimate_seconds ?? 4) * 1000);
     const timed = timedWords[beat.index];
+    // Captions hidden for this beat in the caption editor
+    if (timed && timed.length === 0) {
+      cursorMs += durationMs;
+      continue;
+    }
     const beatWords = timed?.length
-      ? timed.map((w) => ({ word: cleanWord(w.word), startMs: cursorMs + w.start * 1000, endMs: cursorMs + w.end * 1000 }))
+      ? timed.map((w) => ({
+          word: cleanWord(w.word),
+          startMs: cursorMs + w.start * 1000,
+          endMs: cursorMs + w.end * 1000,
+          ...(w.breakBefore ? { breakBefore: true } : {}),
+          ...(w.emphasis ? { emphasis: true } : {}),
+        }))
       : evenlyTimed(cleanWord(beat.text || '').replace(/\s+/g, ' '), cursorMs, durationMs).map((w) => ({ ...w, word: cleanWord(w.word) }));
     allWords.push(...beatWords.filter((w) => w.word));
     cursorMs += durationMs;
@@ -237,7 +256,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       if (endMs <= startMs) return;
       const text = shown
         .map((word, k) => {
-          if (k !== i || !look.highlight) return word;
+          if (k !== i || !look.highlight) return phrase[k].emphasis ? `{\\c${highlightColour}}${word}{\\r}` : word;
           const pop = look.popScale !== 100 ? `\\fscx${look.popScale}\\fscy${look.popScale}` : '';
           return `{\\c${highlightColour}${pop}}${word}{\\r}`;
         })

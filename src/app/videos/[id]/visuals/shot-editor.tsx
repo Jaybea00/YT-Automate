@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ShotAlternative } from '@/pipeline/visuals/shot-composer';
+import { AlternativeCard } from './alternative-card';
 
 interface EditorShot {
   index: number;
@@ -325,34 +326,19 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                   pool.length > 0 ? (
                     <div className="grid grid-cols-3 gap-1.5 pt-1">
                       {pool.map((alt) => (
-                        <button
+                        <AlternativeCard
                           key={`${alt.provider}-${alt.id}`}
-                          type="button"
-                          disabled={Boolean(isBusy)}
-                          onClick={() => apply(s.index, { action: 'swap', candidate: alt }, 'Rendering your pick…')}
-                          className="group relative aspect-video rounded-md overflow-hidden border border-zinc-800 hover:border-indigo-500 bg-zinc-950 disabled:opacity-50"
+                          thumbnailUrl={alt.thumbnailUrl}
                           title={alt.title}
-                        >
-                          {alt.thumbnailUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={alt.thumbnailUrl} alt={alt.title ?? 'Alternative'} className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-zinc-600 text-[10px]">No preview</span>
-                          )}
-                          <span className="absolute bottom-0.5 left-0.5 px-1 rounded text-[9px] bg-black/80 text-zinc-300">
-                            {alt.provider}
-                            {alt.mediaType === 'video' ? ' ▶' : ''}
-                          </span>
-                          {alt.score !== undefined && (
-                            <span
-                              className={`absolute top-0.5 right-0.5 px-1 rounded text-[9px] font-bold bg-black/80 ${
-                                alt.score >= 6 ? 'text-emerald-300' : 'text-amber-300'
-                              }`}
-                            >
-                              {alt.score}/10
-                            </span>
-                          )}
-                        </button>
+                          provider={alt.provider}
+                          isVideo={alt.mediaType === 'video'}
+                          videoUrl={alt.mediaType === 'video' ? alt.downloadUrl : undefined}
+                          pageUrl={alt.pageUrl}
+                          license={alt.license}
+                          score={alt.score}
+                          disabled={Boolean(isBusy)}
+                          onPick={() => apply(s.index, { action: 'swap', candidate: alt }, 'Rendering your pick…')}
+                        />
                       ))}
                     </div>
                   ) : (

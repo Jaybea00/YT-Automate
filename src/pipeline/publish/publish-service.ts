@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import yazl from 'yazl';
 import { withWritingModel } from '@/lib/script/generate-script';
 import { loadCaptionWords } from '../assembly/caption-sources';
+import { applyCaptionEdits, type CaptionEdits } from '../assembly/caption-edits';
 import { resolveForStage } from '../providers/registry';
 import type { LLMProvider } from '../providers/types';
 import { buildDescriptionCredits } from '../utils/credits';
@@ -241,7 +242,8 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
   if (plans.length === 0) plans = fallbackShortPlans(timeline, (sj.sections?.sections ?? []).map((s) => s.start_beat), title);
   if (plans.length === 0) throw new Error('No stretch of the video fits a Short (20-59 seconds of whole beats)');
 
-  const words = await loadCaptionWords(timeline.beats.map((b) => ({ index: b.index, text: beats[b.index]?.text ?? '', audioPath: b.audioPath })));
+  const captionBeats = timeline.beats.map((b) => ({ index: b.index, text: beats[b.index]?.text ?? '', audioPath: b.audioPath, durationSec: (b.voiceMs ?? 0) / 1000 }));
+  const words = applyCaptionEdits(captionBeats, await loadCaptionWords(captionBeats), (sj as { caption_edits?: CaptionEdits }).caption_edits);
   const dir = path.join(rendersDir(video.id), 'shorts');
   await fsp.rm(dir, { recursive: true, force: true });
   const shorts: ShortClip[] = [];

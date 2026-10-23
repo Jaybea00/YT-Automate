@@ -18,6 +18,8 @@ export type ShotEdit =
   | { action: 'redo' }
   /** Show the narration as animated type. */
   | { action: 'text' }
+  /** Footage for a new search (also turns a graphic or text card into footage). */
+  | { action: 'footage'; query: string; archive?: boolean }
   /** The creator's own file (already saved on disk), with its licence and, for a video, an optional start. */
   | { action: 'upload'; filePath: string; mediaType: 'video' | 'image'; license: string; attribution?: string | null; startSec?: number };
 
@@ -64,6 +66,15 @@ export async function editShot(options: {
   const typed = MOTION_RENDERERS[plan.visual_type];
   const needsBrowser = edit.action === 'text' || Boolean(current.plan.caption) || (edit.action === 'redo' && Boolean(typed));
   const { ctx, close } = await editorContext(supabase, videoId, beat, needsBrowser);
+  // A new search becomes the shot's plan: footage of what was asked for
+  const newPlan =
+    edit.action === 'footage'
+      ? {
+          ...plan,
+          visual_type: (edit.archive ?? plan.visual_type === 'archive') ? ('archive' as const) : ('stock' as const),
+          visual_query: edit.query.trim().slice(0, 200),
+        }
+      : undefined;
   // What is on screen now is excluded when picking again
   if (current.sourceUrl) ctx.usedSources.add(current.sourceUrl);
   if (edit.action === 'swap') ctx.usedSources.delete(edit.candidate.pageUrl || edit.candidate.downloadUrl);
@@ -74,7 +85,9 @@ export async function editShot(options: {
       videoId,
       beat,
       shotIndex,
+      plan: newPlan,
       render: async (slot, clipPath) => {
+        if (newPlan) return renderFootageShot(newPlan, slot, clipPath, ctx);
         if (edit.action === 'upload') {
           const footagePlan = plan.visual_type === 'archive' || plan.visual_type === 'stock' ? plan : { ...plan, visual_type: 'stock' as const };
           const rendered = await renderCandidateShot(

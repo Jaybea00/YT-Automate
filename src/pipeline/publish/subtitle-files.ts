@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadCaptionWords } from '../assembly/caption-sources';
+import { applyCaptionEdits, type CaptionEdits } from '../assembly/caption-edits';
 import { generateSubtitles, type BeatTimingLike, type SubtitlesResult, type UnitDurationLike } from '../utils/subtitles';
 import { readTimeline } from '../utils/timeline';
 
@@ -39,10 +40,12 @@ export async function subtitlesForVideo(
 
   const timeline = readTimeline(video.script_json);
   const voiceStartMs = timeline ? Object.fromEntries(timeline.beats.map((b) => [b.index, b.voiceStartMs])) : undefined;
+  const fileBeats = timeline
+    ? timeline.beats.map((b) => ({ index: b.index, text: String(beats.find((x) => x.index === b.index)?.text ?? ''), audioPath: b.audioPath, durationSec: (b.voiceMs ?? 0) / 1000 }))
+    : [];
+  // Word fixes from the caption editor apply to the files too (hidden beats and styling don't)
   const words = timeline
-    ? await loadCaptionWords(
-        timeline.beats.map((b) => ({ index: b.index, text: String(beats.find((x) => x.index === b.index)?.text ?? ''), audioPath: b.audioPath })),
-      )
+    ? applyCaptionEdits(fileBeats, await loadCaptionWords(fileBeats), (video.script_json as { caption_edits?: CaptionEdits } | null)?.caption_edits, { forFiles: true })
     : undefined;
   return generateSubtitles({ beats, units, voiceStartMs, words });
 }

@@ -18,6 +18,7 @@ import {
   computeSceneStartOffsetsSec,
 } from '../assembly/assemble-beat';
 import { isCaptionPreset, writeAssCaptionsFile } from '../assembly/captions';
+import { applyCaptionEdits } from '../assembly/caption-edits';
 import { masterFinalVideo, TARGET_LUFS } from '../assembly/master';
 import { DEFAULT_BEAT_PAUSE_SEC, planPacing, type BeatPacing } from '../assembly/pacing';
 import { ensureSections } from '../assembly/sections';
@@ -724,6 +725,12 @@ export class JobRunner {
     // Preview: cuts instead of transitions, no emphasis, a small fast master, into preview.mp4.
     // Its beat scenes are the ones the final render reuses, so a preview also speeds that up.
     const draft = Boolean((job.script as { draft?: boolean } | null)?.draft);
+    // A preview of chosen beats only (Vibedit's "Preview this beat"); every other beat is skipped
+    const previewBeatList = (job.script as { preview_beats?: unknown } | null)?.preview_beats;
+    const previewBeats =
+      draft && Array.isArray(previewBeatList) && previewBeatList.length
+        ? new Set(previewBeatList.filter((n): n is number => Number.isInteger(n)))
+        : null;
 
     const finalRenderPath = videoId
       ? path.join(process.cwd(), 'storage', 'renders', videoId, draft ? 'preview.mp4' : 'final_video.mp4')
@@ -774,6 +781,9 @@ export class JobRunner {
       if (!scriptBeats || !Array.isArray(scriptBeats) || scriptBeats.length === 0) {
         throw new Error('No script beats available for assembly');
       }
+      // A scene's own beat, by beat index (a preview of chosen beats skips the others, so never by position)
+      const beatAt = (beatIndex: number) =>
+        scriptBeats.find((b, i) => (!usingVideoBeats && typeof b?.scene_number === 'number' ? b.scene_number : i) === beatIndex);
 
       // 3. Resolve TTS units (measured duration_ms and audio output_path)
       // Query completed TTS units for this job or from previous jobs for this video
@@ -900,6 +910,7 @@ export class JobRunner {
           !usingVideoBeats && typeof scriptBeats[i]?.scene_number === 'number'
             ? scriptBeats[i].scene_number
             : i;
+        if (previewBeats && !previewBeats.has(beatIndex)) continue;
 
         // Resolve beat audio and measured duration
         const ttsUnit = ttsMap.get(beatIndex);
@@ -1281,9 +1292,9 @@ export class JobRunner {
       const captionPreset = videoRecord?.script_json?.captions?.preset;
       if (isCaptionPreset(captionPreset)) {
         assPath = path.join(tempDir, 'captions.ass');
-        const captionBeats = sceneBeatIndexes.map((beatIndex, pos) => ({
+        const captionBeats = sceneBeatIndexes.map((beatIndex) => ({
           index: beatIndex,
-          text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+          text: String(beatAt(beatIndex)?.text ?? beatAt(beatIndex)?.narration ?? ''),
           audioPath: ttsMap.get(beatIndex)?.output_path,
         }));
         await writeAssCaptionsFile(
@@ -1293,7 +1304,12 @@ export class JobRunner {
             preset: captionPreset,
             // Each beat's voice starts after its lead-in
             beatStartMs: beatStartMs.map((ms, pos) => ms + (sceneLeadInMs[pos] ?? 0)),
-            words: await loadCaptionWords(captionBeats),
+            // With the caption editor's fixes, line breaks, emphasis and hidden beats
+            words: applyCaptionEdits(
+              captionBeats.map((b) => ({ ...b, durationSec: (ttsMap.get(b.index)?.duration_ms ?? 0) / 1000 })),
+              await loadCaptionWords(captionBeats),
+              videoRecord?.script_json?.caption_edits,
+            ),
             highlightHex: themeForStyle(videoRecord?.style).accent,
             zones: await captionZonesFromTracks(
               sceneBeatIndexes.map((b, pos) => ({ sceneStartMs: beatStartMs[pos], trackPath: trackByBeat.get(b) ?? null })),
@@ -1367,9 +1383,9 @@ export class JobRunner {
           let sting: { path: string; atSec: number[] } | undefined;
           if (videoId && videoRecord?.script_json?.bgm?.accents !== false) {
             try {
-              const beatsForMusic = sceneBeatIndexes.map((beatIndex, pos) => ({
+              const beatsForMusic = sceneBeatIndexes.map((beatIndex) => ({
                 index: beatIndex,
-                text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+                text: String(beatAt(beatIndex)?.text ?? beatAt(beatIndex)?.narration ?? ''),
               }));
               const plan = await ensureMusicMoments(this.supabase, videoId, beatsForMusic.filter((b) => b.text.trim()));
               const voices = Object.fromEntries(
@@ -1430,7 +1446,7 @@ export class JobRunner {
                 style: videoRecord?.style,
                 beats: sceneBeatIndexes.map((beatIndex, pos) => ({
                   index: beatIndex,
-                  text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+                  text: String(beatAt(beatIndex)?.text ?? beatAt(beatIndex)?.narration ?? ''),
                   audioPath: ttsMap.get(beatIndex)?.output_path,
                   voiceStartMs: beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0),
                   sceneStartMs: beatStartMs[pos],
@@ -1474,7 +1490,7 @@ export class JobRunner {
                 const start = beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0);
                 return {
                   index: beatIndex,
-                  text: String(scriptBeats[pos]?.text ?? scriptBeats[pos]?.narration ?? ''),
+                  text: String(beatAt(beatIndex)?.text ?? beatAt(beatIndex)?.narration ?? ''),
                   voiceStartMs: start,
                   voiceEndMs: start + (ttsMap.get(beatIndex)?.duration_ms ?? 0),
                 };
@@ -1525,7 +1541,7 @@ export class JobRunner {
           if (latest?.script_json) {
             await this.supabase
               .from('videos')
-              .update({ script_json: { ...latest.script_json, preview: { renderedAt: new Date().toISOString(), error: null, rebuiltBeats, beats: sceneBeatIndexes.length } } })
+              .update({ script_json: { ...latest.script_json, preview: { renderedAt: new Date().toISOString(), error: null, rebuiltBeats, beats: sceneBeatIndexes.length, ...(previewBeats ? { only: [...previewBeats].sort((a, b) => a - b) } : {}) } } })
               .eq('id', videoId);
           }
         }
