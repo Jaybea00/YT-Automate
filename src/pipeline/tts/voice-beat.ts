@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage, type ResolvedStageProvider } from '../providers/registry';
 import type { TTSProvider } from '../providers/types';
@@ -93,6 +94,59 @@ export function ttsUnitInput(setup: TtsSetup, narration: string): { spokenText: 
   return { spokenText, input };
 }
 
+/**
+ * One beat's own voice settings from Vibedit (script_json.beat_voice, by beat index):
+ *  - speed: a multiple of the job's pace (0.75 slower ... 1.25 faster)
+ *  - narratorId: another narrator for this line (a quote, a different speaker)
+ *  - recorded: the creator's own recording, used instead of a synthesized voice
+ */
+export interface BeatVoice {
+  speed?: number;
+  narratorId?: string;
+  recorded?: { path: string; durationMs: number };
+}
+
+/** A submitted setting kept sane; null when it changes nothing. */
+export function normalizeBeatVoice(raw: unknown): BeatVoice | null {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const out: BeatVoice = {};
+  const speed = Number(r.speed);
+  if (r.speed !== undefined && r.speed !== null && Number.isFinite(speed) && Math.abs(speed - 1) > 0.001) {
+    out.speed = Math.round(Math.max(0.6, Math.min(1.5, speed)) * 100) / 100;
+  }
+  if (typeof r.narratorId === 'string' && /^[\w-]{1,80}$/.test(r.narratorId)) out.narratorId = r.narratorId;
+  const rec = r.recorded as { path?: unknown; durationMs?: unknown } | undefined;
+  if (rec && typeof rec.path === 'string' && Number(rec.durationMs) > 0) out.recorded = { path: rec.path, durationMs: Math.round(Number(rec.durationMs)) };
+  return Object.keys(out).length ? out : null;
+}
+
+export function readBeatVoices(raw: unknown): Record<number, BeatVoice> {
+  const out: Record<number, BeatVoice> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const i = Number(k);
+    const voice = normalizeBeatVoice(v);
+    if (Number.isInteger(i) && i >= 0 && voice) out[i] = voice;
+  }
+  return out;
+}
+
+/** The setup for one beat: its own pace, and its own narrator when it has one. */
+export async function setupForBeat(supabase: SupabaseClient, base: TtsSetup, voice: BeatVoice | undefined): Promise<TtsSetup> {
+  if (!voice || (!voice.speed && !voice.narratorId)) return base;
+  let setup = base;
+  if (voice.narratorId) {
+    const { data: narrator } = await supabase.from('narrators').select('provider_config_id, voice_id').eq('id', voice.narratorId).maybeSingle();
+    if (!narrator) throw new Error('That narrator no longer exists');
+    const resolved = await resolveForStage<TTSProvider>('tts', supabase, narrator.provider_config_id ?? undefined, narrator.voice_id ?? undefined);
+    setup = { ...setup, resolved, voiceId: (resolved.options.voiceId as string) || (resolved.options.voice as string) || narrator.voice_id || setup.voiceId };
+  }
+  if (voice.speed) {
+    setup = { ...setup, pacing: { speed: Math.round((base.pacing?.speed ?? 1) * voice.speed * 100) / 100, sentencePauseSec: base.pacing?.sentencePauseSec ?? 0 } };
+  }
+  return setup;
+}
+
 export interface VoiceBeatOptions {
   supabase: SupabaseClient;
   setup: TtsSetup;
@@ -101,13 +155,20 @@ export interface VoiceBeatOptions {
   narration: string;
   outputDir: string;
   signal?: AbortSignal;
+  /** This beat's own voice settings (speed, narrator, the creator's recording). */
+  beatVoice?: BeatVoice;
 }
 
 /** Voices one beat through the checkpointed unit runner and saves its word timings. */
 export async function voiceBeat(options: VoiceBeatOptions): Promise<UnitRunResult> {
-  const { supabase, setup, jobId, unitIndex, narration, outputDir, signal } = options;
+  const { supabase, jobId, unitIndex, narration, outputDir, signal, beatVoice } = options;
+  const recorded = beatVoice?.recorded;
+  const setup = recorded ? options.setup : await setupForBeat(supabase, options.setup, beatVoice);
   const { provider, ctx, maxRetries, configId, providerId, model, options: providerOptions } = setup.resolved;
-  const { spokenText, input } = ttsUnitInput(setup, narration);
+  const voiced = ttsUnitInput(setup, narration);
+  const spokenText = voiced.spokenText;
+  // A recording is its own checkpoint: voicing runs keep it until it's replaced or removed
+  const input = recorded ? { recorded: recorded.path, durationMs: recorded.durationMs } : voiced.input;
 
   let providerWords: WordTiming[] | undefined;
   const result = await runJobUnit({
@@ -125,6 +186,9 @@ export async function voiceBeat(options: VoiceBeatOptions): Promise<UnitRunResul
     outputDir,
     signal,
     execute: async () => {
+      if (recorded) {
+        return { bytes: new Uint8Array(await readFile(recorded.path)), mimeType: 'audio/mpeg', durationMs: recorded.durationMs, usage: {} };
+      }
       const synthesized = await provider.synthesize(
         { text: spokenText, voiceId: setup.voiceId, format: 'mp3', direction: setup.direction, speed: setup.pacing?.speed },
         ctx,

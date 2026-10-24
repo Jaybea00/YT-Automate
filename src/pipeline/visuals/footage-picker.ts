@@ -104,6 +104,9 @@ export const SPACE_SUBJECT =
 /** Bonus for film over a still when both clearly show the shot (and never enough to make an unfit film fit). */
 export const MOTION_BONUS = 0.8;
 
+/** YouTube is asked only when fewer moving clips than this were found elsewhere. */
+const YOUTUBE_WHEN_FEWER_VIDEOS = 3;
+
 export interface GatherOptions {
   shot: ShotPlan;
   stockProvider?: StockProvider;
@@ -115,6 +118,8 @@ export interface GatherOptions {
   broad?: boolean;
   /** For the broad attempt: short searches for the main subject, suggested by the vision check. */
   queries?: string[];
+  /** Creative Commons YouTube footage may fill in when moving footage is thin (youtube-cc.ts). */
+  youtubeCc?: boolean;
 }
 
 /**
@@ -214,6 +219,11 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
     // Unsplash's hourly allowance is small: ask it only when the stock library came back thin
     if (out.length < UNSPLASH_WHEN_FEWER_THAN) add(await safe(searchUnsplash(stockQueryFor(shot.visual_query), { limit: 5 })), maxCandidates - 2);
     add(await safe(searchWikimediaCommons(variants[1] ?? variants[0] ?? shot.visual_query, { limit: 4 })));
+  }
+  // Few moving clips found: Creative Commons YouTube footage joins in (its daily searches are few)
+  if (options.youtubeCc && out.filter((c) => c.mediaType === 'video').length < YOUTUBE_WHEN_FEWER_VIDEOS) {
+    const { searchYoutubeCc } = await import('./youtube-cc');
+    add(await safe(searchYoutubeCc(stockQueryFor(shot.visual_query), { limit: 4 })), maxCandidates + 4);
   }
   return withFilmFrames(out);
 }

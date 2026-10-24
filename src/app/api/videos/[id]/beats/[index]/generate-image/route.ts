@@ -3,6 +3,8 @@ import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { getSafeUploadPath, deleteExistingBeatUploads, invalidateBeatAssemblyCache } from '@/pipeline/utils/media-upload';
 import { upsertVideoAssetProvenance } from '@/pipeline/visuals/provenance';
 import { generateAiVisualCandidate, downloadAndSaveAiImage } from '@/pipeline/visuals/ai-image-step';
+import { tagImageAsIllustration } from '@/pipeline/visuals/illustration';
+import { themeForStyle } from '@/pipeline/visuals/motion/theme';
 
 interface RouteContext {
   params: Promise<{ id: string; index: string }>;
@@ -25,7 +27,7 @@ export async function POST(req: Request, context: RouteContext) {
     // 1. Fetch video and beat text
     const { data: video, error: videoError } = await supabase
       .from('videos')
-      .select('id, script_json')
+      .select('id, style, script_json')
       .eq('id', videoId)
       .maybeSingle();
 
@@ -53,6 +55,8 @@ export async function POST(req: Request, context: RouteContext) {
     const { filePath } = getSafeUploadPath(videoId, beatIndex, 'jpg');
 
     await downloadAndSaveAiImage(candidate, filePath);
+    // Labelled on the picture itself, so it always reads as an illustration, not a photograph
+    await tagImageAsIllustration(filePath, themeForStyle(video?.style)).catch((err) => console.warn('[GenerateAI] Could not add the Illustration tag:', err));
 
     // 4. Update video_assets and candidate store
     const { data: existingAsset } = await supabase

@@ -30,6 +30,7 @@ import {
   type RhythmRule,
 } from './visual-rhythm';
 import { stylePack } from '@/lib/styles/packs';
+import { indicatorMenu, normalizeDataSpec } from '@/lib/data/indicators';
 
 const {
   minSteps: MIN_DIAGRAM_STEPS,
@@ -86,9 +87,38 @@ export interface SignatureOptions {
   signature?: readonly SignatureShotType[];
   /** Charts may carry callouts. */
   chartCallouts?: boolean;
+  /** Labelled AI illustrations may stand in for what no camera could capture. */
+  illustrations?: boolean;
 }
 
 const MAX_CALLOUTS = 2;
+/** Illustrations stay rare: one in so many shots at most, and a ceiling per video. */
+export const MIN_SHOTS_BETWEEN_ILLUSTRATIONS = 8;
+export const MAX_ILLUSTRATIONS = 6;
+
+/**
+ * Keeps illustrations rare across the whole video: any closer than MIN_SHOTS_BETWEEN_ILLUSTRATIONS
+ * shots to the last one, or beyond MAX_ILLUSTRATIONS, becomes footage of the same subject.
+ */
+export function capIllustrations(beats: ScriptBeat[]): ScriptBeat[] {
+  let count = 0;
+  let since = MIN_SHOTS_BETWEEN_ILLUSTRATIONS;
+  return beats.map((beat) => {
+    if (!beat.shots?.length) return beat;
+    const shots = beat.shots.map((s) => {
+      since++;
+      if (s.visual_type !== 'illustration') return s;
+      if (count < MAX_ILLUSTRATIONS && since > MIN_SHOTS_BETWEEN_ILLUSTRATIONS) {
+        count++;
+        since = 0;
+        return s;
+      }
+      const { illustration, ...rest } = s;
+      return { ...rest, visual_type: beat.visual_type === 'archive' ? ('archive' as const) : ('stock' as const), visual_query: toStockQuery(illustration?.prompt ?? s.visual_query) || s.visual_query };
+    });
+    return { ...beat, shots };
+  });
+}
 const MAX_CALLOUT_WORDS = 6;
 const SECONDS_PER_TIMELINE_EVENT = 1.6;
 
@@ -115,16 +145,17 @@ SHOT TYPES (fill the matching spec object; leave the others out)
 - "chart": data over time or a comparison. chart = {chart_type: "line"|"bar"|"pie", title, unit, labels, values}. Needs at least 2 values; labels and values have the same length.
 - "stat": one striking number as a full-screen animated figure. stat = {value, prefix, suffix, label}, e.g. {value: 14, prefix: "$", suffix: " billion", label: "lost on Black Tuesday"}.
 - "quote": a pull-quote card. quote = {text, attribution}. Only words the narration or the research actually attributes to that person.
-- "geo_map": places at city, country, or continent scale. map = {places: [...], mode: "route"|"spread"|"locate"}. Never streets or buildings.
+- "geo_map": places at city, country, or continent scale. map = {places: [...], mode: "route"|"spread"|"locate"|"fly"}. Never streets or buildings. "fly" is one place: the globe turns to it and the camera dives in, landing on satellite imagery of it; for the moment the story first arrives somewhere far off, at most twice a video.
 - "newspaper": a real front page. newspaper = {outlet, date, headline}. Only headlines quoted in the research facts.
 - "screen_recording": a named website or app shown live. visual_query: its URL.
 - "timeline": 2-6 dated events in order. timeline = {events: [{date, label}]}, e.g. {date: "Oct 24", label: "Black Thursday"}. Only dates stated in the narration or research.
+- "split": two to four pictures side by side: then and now, two rivals, several people or places at once. split = {title, panels: [{query, label, archive}]}; query is a footage search like a stock or archive visual_query, label at most 4 words naming what that panel shows (as the narration names it), archive true for historical pictures. Only when the narration compares or groups things you can film.
 - "comparison": two figures side by side. comparison = {title, left: {value, label}, right: {value, label}}, e.g. left {value: "3%", label: "unemployed in 1929"}. Values must be stated in the narration or research.
 - "title": a chapter card where the story turns to a new part. title_card = {text, kicker}; text at most ${MAX_TITLE_WORDS} words, kicker a short label like "Part two". Use rarely: at most once every ${MIN_BEATS_BETWEEN_TITLES} beats.
 - "kinetic_text": the narrator's own words set as bold animated type, for the single most important line of a passage. kinetic = {phrase, emphasis}; phrase is copied exactly from the shot's narration, at most ${MAX_KINETIC_WORDS} words; emphasis is 1-3 key words from it.
 - "diagram": how something works, step by step. diagram = {kind: "process"|"cycle"|"breakdown", title, center, steps: [{label, detail}]}. process = steps in order ("Ship enters the lock" -> "Gates close" -> "Lake water flows in" -> "Ship rises"); cycle = steps that repeat in a loop; breakdown = the parts of one thing, with center naming it. ${MIN_DIAGRAM_STEPS}-${MAX_DIAGRAM_STEPS} steps; label at most 5 words, detail at most 10; each step restates what the narration explains, in the order it says it. Needs about ${Math.round(SECONDS_PER_DIAGRAM_STEP * 2.3)} words of narration per step. Use for mechanisms and processes the viewer must understand, not for lists of facts. A diagram may take the place of up to 3 of the beat's shots: return fewer shots, with the diagram's covers spanning the whole passage it explains, so every step gets its own words.
 - Footage of a specific named person or place may carry caption = {name, detail}, a lower-third such as {name: "Herbert Hoover", detail: "U.S. President, 1929-33"}. Only names and details stated in the narration or research.
-- An archive or stock PHOTO where one part matters may carry annotation = {target, label, detail} instead of a caption: the camera pushes in, circles that part and labels it (the Vox look). target says what to find in the photo, e.g. "the lock gates" or "the man in the top hat"; label names it, e.g. "Gatun Locks"; detail is optional, e.g. "opened 1914". Best for structures, sites, machines, and one key person in a group. Label and detail must be stated in the narration or research. Use sparingly: at most one in every ${MIN_SHOTS_BETWEEN_ANNOTATIONS} shots.
+- An archive or stock shot (a photo, or moving footage) where one part matters may carry annotation = {target, label, detail} instead of a caption: on a photo the camera pushes in, circles that part and labels it (the Vox look); on moving footage the ring and label follow it as it moves. target says what to find in the photo, e.g. "the lock gates" or "the man in the top hat"; label names it, e.g. "Gatun Locks"; detail is optional, e.g. "opened 1914". Best for structures, sites, machines, and one key person in a group. Label and detail must be stated in the narration or research. Use sparingly: at most one in every ${MIN_SHOTS_BETWEEN_ANNOTATIONS} shots.
 
 DATA INTEGRITY
 - Every value in a chart or stat must be a number stated in the beat's narration or its research facts. Never estimate, interpolate, or invent data points. If you only have one number, use "stat", not "chart".
@@ -151,6 +182,21 @@ const DirectorShotSchema = z.object({
     labels: z.array(z.string()),
     values: z.array(z.number()),
     annotations: z.array(z.object({ index: z.number(), text: z.string() })).nullable().optional(),
+    data: z
+      .object({
+        indicator: z.string(),
+        countries: z.array(z.string()),
+        from_year: z.number().nullable().optional(),
+        to_year: z.number().nullable().optional(),
+        kind: z.enum(['trend', 'compare', 'race']),
+      })
+      .nullable()
+      .optional(),
+  }),
+  illustration: nullableObject({ prompt: z.string() }),
+  split: nullableObject({
+    title: z.string().nullable().optional(),
+    panels: z.array(z.object({ query: z.string(), label: z.string().nullable().optional(), archive: z.boolean().nullable().optional() })),
   }),
   stat: nullableObject({
     value: z.number(),
@@ -159,7 +205,7 @@ const DirectorShotSchema = z.object({
     label: z.string(),
   }),
   quote: nullableObject({ text: z.string(), attribution: z.string() }),
-  map: nullableObject({ places: z.array(z.string()), mode: z.enum(['route', 'spread', 'locate']) }),
+  map: nullableObject({ places: z.array(z.string()), mode: z.enum(['route', 'spread', 'locate', 'fly']) }),
   newspaper: nullableObject({ outlet: z.string(), date: z.string(), headline: z.string() }),
   timeline: nullableObject({ events: z.array(z.object({ date: z.string(), label: z.string() })) }),
   comparison: nullableObject({
@@ -255,6 +301,10 @@ function buildBatchPrompt(
 
   const signatureRules = [
     ...(signature.signature ?? []).map((t) => SIGNATURE_RULES[t]),
+    ...(signature.illustrations
+      ? [`- "illustration": a picture made by AI, shown with the label "Illustration". ONLY for what no camera could ever have captured: things in space (a black hole, an exoplanet's surface), prehistory and the ancient past before photography, the inside of the body or an atom, a legend or myth. Never real identifiable people, never real events from the age of photography, never anything that footage or archive photos could show. illustration = {prompt}: a concrete visual description in 10-30 words (subject, setting, light, era). At most 1 in every ${MIN_SHOTS_BETWEEN_ILLUSTRATIONS} shots.`]
+      : []),
+    `- A "chart" can draw real World Bank figures instead of typed ones: chart.data = {indicator, countries, from_year, to_year, kind}, with labels and values left empty and a short title. Only where the narration is about one of these measures for whole countries: ${indicatorMenu()}. countries are ISO alpha-3 codes ("GBR", "USA", "WLD" for the world). kind "trend": one country over the years; "compare": 2-10 countries side by side (latest year); "race": 3-10 countries as a bar-chart race over the years, for who overtook whom (at most one per video).`,
     ...(signature.chartCallouts
       ? [`- A "chart" may carry annotations = [{index, text}]: up to ${MAX_CALLOUTS} callouts on the points or bars that matter ("the crash", "peak"), index into its values, text at most ${MAX_CALLOUT_WORDS} words.`]
       : []),
@@ -660,6 +710,22 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
         .slice(0, 6);
       return events.length >= 2 ? { ...shot, timeline: { events } } : footageFallback(beat, shot);
     }
+    case 'illustration': {
+      const prompt = shot.illustration?.prompt.trim().replace(/\s+/g, ' ') ?? '';
+      const words = prompt.split(' ').filter(Boolean).length;
+      return words >= 4 && words <= 45 ? { ...shot, illustration: { prompt } } : footageFallback(beat, shot);
+    }
+    case 'split': {
+      const spec = shot.split;
+      const panels = (spec?.panels ?? [])
+        .map((p) => ({ query: toStockQuery(p.query) || p.query.trim(), label: p.label?.trim() || null, archive: Boolean(p.archive) }))
+        .filter((p) => p.query)
+        .map((p) => ({ ...p, label: p.label && wordsIn(p.label) <= 4 && groundValues(quantitiesIn(p.label)) !== null ? p.label : null }))
+        .slice(0, 4);
+      if (panels.length < 2 || new Set(panels.map((p) => p.query.toLowerCase())).size < panels.length) return footageFallback(beat, shot);
+      const title = spec?.title?.trim() && wordsIn(spec.title) <= MAX_TITLE_WORDS && groundValues(quantitiesIn(spec.title)) !== null ? spec.title.trim() : null;
+      return { ...shot, split: { title, panels } };
+    }
     case 'comparison': {
       const cmp = shot.comparison;
       if (!cmp) return footageFallback(beat, shot);
@@ -696,6 +762,14 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
     case 'chart': {
       const chart = shot.chart;
       if (!chart) return footageFallback(beat, shot);
+      // Real World Bank figures: the numbers come from the data when the chart renders
+      const data = chart.data ? normalizeDataSpec(chart.data) : null;
+      if (data) {
+        return {
+          ...shot,
+          chart: { chart_type: data.kind === 'trend' ? 'line' : 'bar', title: chart.title?.trim() || '', unit: chart.unit ?? undefined, labels: [], values: [], data },
+        };
+      }
       const n = Math.min(chart.labels.length, chart.values.length);
       const labels = chart.labels.slice(0, n);
       const values = chart.values.slice(0, n);
@@ -738,8 +812,12 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
       const places = (shot.map?.places ?? []).filter(
         (p) => p.trim() && !STREET_LEVEL_PLACE.test(p) && (groundNorm.includes(normalizeText(p)) || anyFactNorm.includes(normalizeText(p))),
       );
-      const needed = shot.map?.mode === 'locate' ? 1 : 2;
-      return shot.map && places.length >= needed ? { ...shot, map: { ...shot.map, places } } : footageFallback(beat, shot);
+      const single = shot.map?.mode === 'locate' || shot.map?.mode === 'fly';
+      const needed = single ? 1 : 2;
+      // A flyover lands on one place
+      return shot.map && places.length >= needed
+        ? { ...shot, map: { ...shot.map, places: shot.map.mode === 'fly' ? places.slice(0, 1) : places } }
+        : footageFallback(beat, shot);
     }
     default:
       return shot;
@@ -873,8 +951,9 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   };
   if (shot.fact_ids?.length) plan.fact_ids = shot.fact_ids;
   if (shot.visual_type === 'chart' && shot.chart) {
-    const { annotations, ...chart } = shot.chart;
-    plan.chart = { ...chart, unit: chart.unit ?? undefined, ...(annotations?.length ? { annotations } : {}) };
+    const { annotations, data, ...chart } = shot.chart;
+    const real = data ? normalizeDataSpec(data) : null;
+    plan.chart = { ...chart, unit: chart.unit ?? undefined, ...(annotations?.length ? { annotations } : {}), ...(real ? { data: real } : {}) };
   }
   if (shot.visual_type === 'pitch' && shot.pitch) {
     plan.pitch = {
@@ -911,6 +990,13 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   if (shot.visual_type === 'geo_map' && shot.map) plan.map = shot.map;
   if (shot.visual_type === 'newspaper' && shot.newspaper) plan.newspaper = shot.newspaper;
   if (shot.visual_type === 'timeline' && shot.timeline) plan.timeline = shot.timeline;
+  if (shot.visual_type === 'illustration' && shot.illustration) plan.illustration = { prompt: shot.illustration.prompt };
+  if (shot.visual_type === 'split' && shot.split) {
+    plan.split = {
+      title: shot.split.title ?? undefined,
+      panels: shot.split.panels.map((p) => ({ query: p.query, archive: Boolean(p.archive), ...(p.label ? { label: p.label } : {}) })),
+    };
+  }
   if (shot.visual_type === 'comparison' && shot.comparison) {
     plan.comparison = { ...shot.comparison, title: shot.comparison.title ?? undefined };
   }
@@ -977,6 +1063,8 @@ export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts
   const verified = shots
     // A signature shot outside its style becomes footage; callouts only where the style has them
     .map((s) => ((SIGNATURE_SHOT_TYPES as readonly string[]).includes(s.visual_type) && !allowed.has(s.visual_type) ? footageFallback(beat, s) : s))
+    // Illustrations only where the video allows them
+    .map((s) => (s.visual_type === 'illustration' && !signature.illustrations ? footageFallback(beat, s) : s))
     .map((s) => (s.chart?.annotations && !signature.chartCallouts ? { ...s, chart: { ...s.chart, annotations: null } } : s))
     .map((s) => verifyShot(s, beat, facts));
   return fitGraphicsToTime(beat, alignShotsToNarration(beat.text, verified).map(toShotPlan));
@@ -995,6 +1083,8 @@ export interface PlanShotsOptions {
   onlyBeats?: number[];
   /** The video's style: its pack adds director notes and sets the graphics limit. */
   style?: string | null;
+  /** Labelled AI illustrations allowed (default: the style's choice; the video's setting overrides). */
+  illustrations?: boolean | null;
 }
 
 export async function planShots(
@@ -1023,7 +1113,11 @@ export async function planShotsWith(
   const facts = script.research?.facts ?? [];
   const pack = stylePack(options.style);
   const maxGraphicsShare = pack?.maxGraphicsShare ?? MAX_GRAPHICS_SHARE;
-  const signature: SignatureOptions = { signature: pack?.signatureShots, chartCallouts: pack?.chartCallouts };
+  const signature: SignatureOptions = {
+    signature: pack?.signatureShots,
+    chartCallouts: pack?.chartCallouts,
+    illustrations: options.illustrations ?? pack?.illustrations ?? false,
+  };
   const planned = new Map<number, ShotPlan[]>();
   let previousTypes: ShotType[] = [];
   const toPlan = options.onlyBeats
@@ -1053,7 +1147,7 @@ export async function planShotsWith(
   }
 
   const { beats, fixes } = repairRhythm(
-    script.beats.map((beat) => (planned.has(beat.index) ? { ...beat, shots: planned.get(beat.index) } : beat)),
+    capIllustrations(script.beats.map((beat) => (planned.has(beat.index) ? { ...beat, shots: planned.get(beat.index) } : beat))),
     maxGraphicsShare,
   );
   const rhythm = analyzeRhythm(planToRhythmShots(beats), 'plan', fixes, maxGraphicsShare);

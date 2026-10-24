@@ -110,6 +110,31 @@ describe('Shot planner: grounding graphic shots', () => {
     assert.equal(invented.visual_type, 'archive', 'interpolated 250 is not stated anywhere');
     assert.equal(invented.visual_query, 'Dow 1929, 1932');
 
+    // Real World Bank figures need no typed numbers: they're fetched when the chart renders
+    const real = verifyShot(
+      {
+        visual_type: 'chart',
+        covers: '',
+        visual_query: 'US GDP growth',
+        chart: { chart_type: 'line', title: 'US growth', labels: [], values: [], data: { indicator: 'NY.GDP.MKTP.KD.ZG', countries: ['usa'], from_year: 1990, to_year: 2020, kind: 'trend' } },
+      },
+      b,
+      facts,
+    );
+    assert.equal(real.visual_type, 'chart');
+    assert.deepEqual(real.chart?.data, { indicator: 'NY.GDP.MKTP.KD.ZG', countries: ['USA'], from_year: 1990, to_year: 2020, kind: 'trend' });
+    const unknown = verifyShot(
+      {
+        visual_type: 'chart',
+        covers: '',
+        visual_query: 'happiness',
+        chart: { chart_type: 'bar', title: 'Happiness', labels: [], values: [], data: { indicator: 'HAPPY.INDEX', countries: ['USA', 'FRA'], kind: 'compare' } },
+      },
+      b,
+      facts,
+    );
+    assert.notEqual(unknown.visual_type, 'chart', 'an indicator not on the list falls back to footage');
+
     assert.equal(
       verifyShot({ visual_type: 'stat', covers: '', visual_query: '$14B', stat: { value: 14, prefix: '$', suffix: ' billion', label: 'lost' } }, b, facts).visual_type,
       'stat',

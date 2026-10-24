@@ -32,6 +32,7 @@ export async function handlePlanShots(req: Request, id: string, supabaseClient?:
   const planned = await planShots(supabase, script, video.topic || video.title || 'Video', {
     onlyBeats: beatIndexes,
     style: video.style,
+    illustrations: video.script_json?.illustrations,
   });
 
   const { error: updateError } = await supabase

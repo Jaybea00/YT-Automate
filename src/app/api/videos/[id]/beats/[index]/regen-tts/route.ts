@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import { resolveTtsSetup, voiceBeat } from '@/pipeline/tts/voice-beat';
+import { readBeatVoices, resolveTtsSetup, voiceBeat } from '@/pipeline/tts/voice-beat';
 
 interface RouteContext {
   params: Promise<{ id: string; index: string }>;
@@ -54,7 +54,15 @@ export async function handleRegenTts(req: Request, videoId: string, indexStr: st
   if (newText !== beat.text) {
     // The shot plan's word ranges belong to the old narration
     beats[beatIndex] = { ...beat, text: newText, shots: undefined };
-    await supabase.from('videos').update({ script_json: { ...scriptJson, beats } }).eq('id', videoId);
+    // A recording of the old words no longer fits
+    const beatVoice = { ...(scriptJson.beat_voice ?? {}) };
+    if (beatVoice[beatIndex]?.recorded) {
+      const rest = { ...beatVoice[beatIndex] };
+      delete rest.recorded;
+      if (Object.keys(rest).length) beatVoice[beatIndex] = rest;
+      else delete beatVoice[beatIndex];
+    }
+    await supabase.from('videos').update({ script_json: { ...scriptJson, beats, beat_voice: beatVoice } }).eq('id', videoId);
 
     const scenes = Array.isArray(job.script?.scenes) ? job.script.scenes : [];
     await supabase
@@ -76,6 +84,11 @@ export async function handleRegenTts(req: Request, videoId: string, indexStr: st
     unitIndex: beatIndex,
     narration: newText,
     outputDir: path.join(process.cwd(), 'storage', 'jobs', job.id, 'audio'),
+    // A recording was made for the old words, so new narration is voiced again
+    beatVoice: (() => {
+      const voice = readBeatVoices(scriptJson.beat_voice)[beatIndex];
+      return voice && newText !== beat.text ? { ...voice, recorded: undefined } : voice;
+    })(),
   });
 
   if (!result.success) {

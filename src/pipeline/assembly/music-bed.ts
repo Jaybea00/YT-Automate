@@ -43,13 +43,21 @@ export function buildExpression(boundariesSec: number[]): string {
  * section outlasts it), crossfaded into the next at the section change, with builds into each
  * change. The result is mixed under the voice by applyBackgroundMusic (which ducks it).
  */
-export async function buildMusicBed(segments: MusicSegment[], outputPath: string): Promise<string> {
+export async function buildMusicBed(
+  segments: MusicSegment[],
+  outputPath: string,
+  /** Where each segment's track starts (seconds in), so cuts land on its beat (music-beats.ts). */
+  offsetsSec: number[] = [],
+): Promise<string> {
   if (segments.length === 0) throw new Error('No music segments');
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const durations = segmentDurations(segments);
   const inputs = segments.flatMap((s) => ['-stream_loop', '-1', '-i', s.track.path]);
   const graph: string[] = segments.map(
-    (_, i) => `[${i}:a]atrim=0:${durations[i]},asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[m${i}]`,
+    (_, i) => {
+      const from = Math.max(0, offsetsSec[i] ?? 0);
+      return `[${i}:a]atrim=${from.toFixed(3)}:${(from + durations[i]).toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[m${i}]`;
+    },
   );
   let last = '[m0]';
   for (let i = 1; i < segments.length; i++) {

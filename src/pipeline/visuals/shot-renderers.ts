@@ -14,6 +14,8 @@ import { pickVideoSegment } from './segment-picker';
 import type { MotionTheme } from './motion/theme';
 import { FPS, renderMotionClip } from './motion/frame-renderer';
 import { annotatedPhotoTemplate, locateTarget, photoForRender } from './annotated-photo';
+import { labelMovingSubject } from './tracked-label';
+import { sharpenSmallPhoto } from './upscale';
 import { ensureArchiveTextures, treatmentFor, type ArchiveTreatment } from './archive-look';
 import type { RenderedShot, ShotAlternative, ShotRenderer, ShotSlot } from './shot-composer';
 import type { MediaCandidate } from './types';
@@ -44,6 +46,12 @@ export interface ShotRenderContext {
   collage?: { count: { next: number } };
   /** 2.5D parallax for landscape still photos (parallax.ts); counts shots so the glide alternates. */
   parallax?: { count: { next: number } };
+  /** "Source: UEFA" for a stat or chart, from the research facts it cites (source-tags.ts). */
+  sourceTag?: (shot: ShotPlan) => string | null;
+  /** Sharpen small photos with the super-resolution model before use (upscale.ts). */
+  upscale?: boolean;
+  /** Creative Commons YouTube footage may fill in where other sources are thin (youtube-cc.ts). */
+  youtubeCc?: boolean;
 }
 
 /** Archives whose footage is genuinely old; NASA's library is mostly modern. */
@@ -97,6 +105,7 @@ export async function renderFootageShot(
     exclude: ctx.usedSources,
     llmProvider: ctx.llmProvider,
     llmCtx: ctx.llmCtx,
+    youtubeCc: ctx.youtubeCc,
   });
   if (ranked.length === 0) {
     if (unavailable) {
@@ -173,12 +182,18 @@ export async function renderCandidateShot(
 ): Promise<RenderedShot> {
   const isVideo = candidate.mediaType === 'video';
   const local = !/^https?:/i.test(candidate.downloadUrl);
+  // AI images are JPEGs whose URLs end in the prompt text, not a file name
+  const generated = candidate.provider === 'pollinations' || candidate.provider === 'openai';
   const ext = isVideo
     ? '.mp4'
-    : path.extname(local ? candidate.downloadUrl : new URL(candidate.downloadUrl).pathname).toLowerCase().replace(/[^.a-z]/g, '') || '.jpg';
+    : generated
+      ? '.jpg'
+      : path.extname(local ? candidate.downloadUrl : new URL(candidate.downloadUrl).pathname).toLowerCase().replace(/[^.a-z]/g, '') || '.jpg';
   const hash = crypto.createHash('sha1').update(sourceKey(candidate)).digest('hex').slice(0, 16);
-  const sourcePath = path.join(ctx.downloadDir, `${candidate.provider}_${hash}${ext}`);
-  await downloadCandidateAsset(candidate, sourcePath, ctx.stockCtx, ctx.stockProvider);
+  const downloadPath = path.join(ctx.downloadDir, `${candidate.provider}_${hash}${ext}`);
+  await downloadCandidateAsset(candidate, downloadPath, ctx.stockCtx, ctx.stockProvider);
+  // A small still is sharpened first when the video asks for it (slow; see upscale.ts)
+  const sourcePath = ctx.upscale && !isVideo ? await sharpenSmallPhoto(downloadPath) : downloadPath;
   const fromArchive = ['archive_org', 'wikimedia', 'nasa'].includes(candidate.provider);
   const source = {
     sourceUrl: candidate.pageUrl || candidate.downloadUrl,
@@ -279,11 +294,19 @@ export async function renderCandidateShot(
   });
   if (archive && historical) archive.lastStill = isVideo ? undefined : { path: sourcePath, key: sourceKey(candidate) };
   ctx.usedSources.add(sourceKey(candidate));
+  // Moving footage with an annotation: a label that follows its subject, when it can be found and followed
+  let tracked = false;
+  if (isVideo && annotation && ctx.llmProvider?.supportsVision && ctx.llmCtx) {
+    tracked = await labelMovingSubject({ clipPath, annotation, theme: ctx.theme, llm: ctx.llmProvider, llmCtx: ctx.llmCtx, title: candidate.title, browser: ctx.browser }).catch((err) => {
+      console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: tracked label failed (${err instanceof Error ? err.message.slice(0, 160) : err}); showing the footage plainly`);
+      return false;
+    });
+  }
   return applyCaption(options.captionShot ?? shot, slot, {
     clipPath,
     renderedType: fromArchive ? 'archive' : 'stock',
     ...source,
-    note: options.note,
+    note: [options.note, tracked ? `tracked label: ${annotation!.label}` : null].filter(Boolean).join('; ') || undefined,
     still: !isVideo,
   }, ctx);
 }

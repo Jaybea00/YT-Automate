@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg';
+import { overlayInputs, overlaysGraph } from './overlays';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,6 +89,8 @@ export interface MasterOptions {
   emphasis?: { graph: string; inputs: string[]; letterbox?: string | null } | null;
   /** A quick preview: half size and the fastest encode. */
   draft?: boolean;
+  /** The creator's text, callouts and arrows (see overlays.ts): each PNG and when it shows. */
+  overlays?: { windows: Array<{ atSec: number; endSec: number }>; pngs: string[] } | null;
 }
 
 /**
@@ -95,7 +98,7 @@ export interface MasterOptions {
  * captions need burning in, so a video without captions loses no picture quality here.
  */
 export async function masterFinalVideo(options: MasterOptions): Promise<{ outputPath: string; measured: LoudnessMeasurement }> {
-  const { inputPath, outputPath, assPath, lookFilter, emphasis, draft } = options;
+  const { inputPath, outputPath, assPath, lookFilter, emphasis, draft, overlays } = options;
   const videoEncode = draft ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-movflags', '+faststart'] : MASTER_VIDEO_ENCODE;
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const measured = await measureLoudness(inputPath);
@@ -109,13 +112,25 @@ export async function masterFinalVideo(options: MasterOptions): Promise<{ output
   const effects = [lookFilter, emphasis?.letterbox, assPath ? `ass=${path.basename(assPath)}` : null, draft ? 'scale=960:540' : null].filter(Boolean);
   // A full-range source (e.g. from an older render) must be converted, not just copied
   const needsRange = (await videoColorRange(inputPath)) === 'pc';
-  if (emphasis && emphasis.graph !== '[vin]null[vfx]') {
-    // Emphasis first (captions must not shake or freeze), then the grade, bars and captions
+  const hasEmphasis = Boolean(emphasis && emphasis.graph !== '[vin]null[vfx]');
+  const hasOverlays = Boolean(overlays && overlays.pngs.length);
+  // Overlay PNGs come after the emphasis inputs
+  const firstOverlay = 1 + (hasEmphasis ? emphasis!.inputs.filter((a) => a === '-i').length : 0);
+  if (hasEmphasis || hasOverlays) {
+    // Emphasis first (captions must not shake or freeze), then the creator's overlays, then the
+    // grade, bars and captions
     args.splice(args.indexOf('-map'), 4);
+    const graph = [
+      '[0:v]scale=out_range=tv[vin]',
+      hasEmphasis ? emphasis!.graph : '[vin]null[vfx]',
+      hasOverlays ? overlaysGraph(overlays!.windows, firstOverlay) : '[vfx]null[vov]',
+      `[vov]${[...effects, 'format=yuv420p'].join(',')}[vout]`,
+    ].join(';');
     args.push(
-      ...emphasis.inputs,
+      ...(hasEmphasis ? emphasis!.inputs : []),
+      ...(hasOverlays ? overlayInputs(overlays!.windows, overlays!.pngs) : []),
       '-filter_complex',
-      `[0:v]scale=out_range=tv[vin];${emphasis.graph};[vfx]${[...effects, 'format=yuv420p'].join(',')}[vout]`,
+      graph,
       '-map', '[vout]', '-map', '0:a:0',
       ...videoEncode,
     );

@@ -46,7 +46,7 @@ const TYPE_LABEL: Record<string, { label: string; bar: string }> = {
 };
 const typeLabel = (t: string) => TYPE_LABEL[t]?.label ?? t;
 
-type Edit = { action: 'swap'; candidate: ShotAlternative } | { action: 'redo' } | { action: 'text' };
+type Edit = { action: 'swap'; candidate: ShotAlternative } | { action: 'redo' } | { action: 'text' } | { action: 'illustration'; prompt?: string };
 
 /**
  * The shots a composed beat is cut from, each previewable and replaceable on its own: swap to an
@@ -277,6 +277,22 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                     className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-50"
                   >
                     Text card
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(isBusy)}
+                    onClick={() => {
+                      const prompt = window.prompt(
+                        'AI illustration (free, labelled "Illustration" on screen). Describe the picture, or leave it empty to illustrate this shot\'s narration.\nBest for what no camera could capture: space, the ancient past, inside the body, legends.',
+                        '',
+                      );
+                      if (prompt === null) return;
+                      apply(s.index, { action: 'illustration', ...(prompt.trim() ? { prompt: prompt.trim() } : {}) }, 'Making the illustration… (free, about a minute)');
+                    }}
+                    className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 disabled:opacity-50"
+                    title="A free AI illustration of this moment, labelled 'Illustration' on screen"
+                  >
+                    ✨ Illustration
                   </button>
                   <label
                     className={`px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 ${isBusy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}

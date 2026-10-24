@@ -75,6 +75,11 @@ export interface StylePack {
   photoLook?: 'collage';
   /** Charts may carry callouts on points or bars ("the crash"). */
   chartCallouts?: boolean;
+  /**
+   * Labelled AI illustrations (free) may stand in for what no camera could capture: space,
+   * the distant past, the very small, legends. On by default only for these styles.
+   */
+  illustrations?: boolean;
   /** Emphasis effects that suit the style: letterbox bars (cinematic), a zoom punch into chapters (fast styles). */
   emphasis?: { letterbox?: boolean; chapterZoom?: boolean };
   /** Starting settings for new videos in this style (changeable per video). */
@@ -106,6 +111,7 @@ Short sentences. No filler.`,
 
   cinematic: pack({
     id: 'cinematic',
+    illustrations: true,
     emphasis: { letterbox: true },
     name: 'Cinematic Documentary',
     label: 'Cinematic documentary (ColdFusion-style)',
@@ -210,6 +216,7 @@ criteria you walked through. Avoid strawmanning either side.`,
 
   eli5: pack({
     id: 'eli5',
+    illustrations: true,
     emphasis: { chapterZoom: true },
     name: 'ELI5 / Beginner Explainer',
     label: 'ELI5 / beginner explainer',
@@ -254,6 +261,7 @@ than dramatizing it as fact.`,
 
   vox_explainer: pack({
     id: 'vox_explainer',
+    illustrations: true,
     photoLook: 'collage',
     emphasis: { chapterZoom: true },
     name: 'Vox Explainer',
@@ -362,6 +370,7 @@ Prices, rates and dates come only from the research.`,
 
   space_science: pack({
     id: 'space_science',
+    illustrations: true,
     signatureShots: ['scale'],
     name: 'Space & Science',
     label: 'Space & science explainer',
@@ -412,6 +421,7 @@ no hype and no pile-ons; say when the answer depends on the buyer.`,
 
   history: pack({
     id: 'history',
+    illustrations: true,
     signatureShots: ['letter'],
     name: 'History Documentary',
     label: 'Narrative history',
@@ -437,6 +447,7 @@ words in a historical figure's mouth.`,
 
   mystery: pack({
     id: 'mystery',
+    illustrations: true,
     signatureShots: ['evidence_board'],
     emphasis: { letterbox: true },
     name: 'Unsolved Mystery',

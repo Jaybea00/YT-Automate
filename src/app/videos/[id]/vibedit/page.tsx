@@ -12,6 +12,10 @@ import { VersionsPanel } from './versions-panel';
 import { AlternativeCard } from '../visuals/alternative-card';
 import { ShotEditor } from '../visuals/shot-editor';
 import { ReviewNotes } from './review-notes';
+import { BeatSoundControls } from './beat-sound-controls';
+import { BeatVoiceControls } from './beat-voice-controls';
+import { OverlaysPanel } from './overlays-panel';
+import { BeatTimeline } from './beat-timeline';
 
 interface VibeditPageProps {
   params: Promise<{ id: string }>;
@@ -54,6 +58,8 @@ interface VideoProgressData {
       beats?: ScriptBeat[];
       still_motion?: 'zoom' | 'static';
       preview?: { renderedAt: string | null; error: string | null; only?: number[] };
+      beat_sound?: Record<number, { music?: number; muteSfx?: boolean; pauseAfterSec?: number }>;
+      beat_voice?: Record<number, { speed?: number; narratorId?: string; recorded?: { path: string; durationMs: number } }>;
     } | null;
   };
   job: {
@@ -230,6 +236,18 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
   }
 
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // Placing an overlay: the next click on the frame answers this (Esc cancels)
+  const [pointPick, setPointPick] = useState<((p: { x: number; y: number } | null) => void) | null>(null);
+  useEffect(() => {
+    if (!pointPick) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      pointPick(null);
+      setPointPick(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pointPick]);
   // After a chat edit or bulk fix: fresh thumbnails and data (stable, for the bulk poller's effect)
   const refreshAfterEdit = useStableCallback(() => {
     setCacheBuster(Date.now());
@@ -645,6 +663,18 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
           {/* Video Player Card */}
           <div className="relative aspect-video w-full bg-black rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl flex items-center justify-center">
+            {pointPick && (
+              <div
+                className="absolute inset-0 z-30 cursor-crosshair bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-2xl"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  pointPick({ x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height });
+                  setPointPick(null);
+                }}
+              >
+                <span className="absolute top-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-black/80 text-[11px] text-indigo-200">Click where it goes · Esc to cancel</span>
+              </div>
+            )}
             {videoLoadError ? (
               <div className="flex flex-col items-center justify-center p-6 text-center space-y-3 bg-zinc-950/90 z-10 w-full h-full">
                 <span className="text-3xl">🎬</span>
@@ -801,6 +831,23 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
             onJumpToBeat={handleJumpToBeat}
           />
 
+          <OverlaysPanel
+            videoId={id}
+            activeBeat={activeBeatIndex}
+            offsetInBeat={playerMode === 'master' ? Math.max(0, currentTime - (beatTimeRanges[activeBeatIndex]?.start ?? 0)) : 0}
+            onPickPoint={() => new Promise((resolve) => setPointPick(() => resolve))}
+            onSeek={(beat, offsetSec) => {
+              const range = beatTimeRanges[beat];
+              if (playerMode === 'master' && videoRef.current && range) {
+                videoRef.current.pause();
+                videoRef.current.currentTime = range.start + offsetSec;
+                setActiveBeatIndex(beat);
+              } else {
+                handleJumpToBeat(beat);
+              }
+            }}
+          />
+
           <BulkFixes videoId={id} onApplied={refreshAfterEdit} />
 
           <VersionsPanel videoId={id} onRestored={refreshAfterEdit} onJumpToBeat={handleJumpToBeat} />
@@ -919,6 +966,52 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                     <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">📝 Captions: fix words, highlight, line breaks</summary>
                     <div className="px-3 pb-3">
                       <CaptionEditor key={index} videoId={id} beatIndex={index} />
+                    </div>
+                  </details>
+                )}
+
+                {/* This beat's voice */}
+                {isActive && (
+                  <details className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">
+                      🗣️ Voice: pace, another narrator, record it yourself{data.video.script_json?.beat_voice?.[index] ? ' (changed)' : ''}
+                    </summary>
+                    <div className="px-3 pb-3">
+                      <BeatVoiceControls
+                        key={index}
+                        videoId={id}
+                        beatIndex={index}
+                        initial={data.video.script_json?.beat_voice?.[index] ?? null}
+                        onSaved={refreshAfterEdit}
+                      />
+                    </div>
+                  </details>
+                )}
+
+                {/* Sound under this beat */}
+                {isActive && (
+                  <details className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">
+                      🔊 Sound: music level, effects, dramatic pause{data.video.script_json?.beat_sound?.[index] ? ' (changed)' : ''}
+                    </summary>
+                    <div className="px-3 pb-3">
+                      <BeatSoundControls
+                        key={index}
+                        videoId={id}
+                        beatIndex={index}
+                        initial={data.video.script_json?.beat_sound?.[index] ?? null}
+                        onSaved={refreshAfterEdit}
+                      />
+                    </div>
+                  </details>
+                )}
+
+                {/* The beat's timeline: reorder shots, move cuts against the voice (composed beats) */}
+                {isActive && asset?.visual_type === 'composite' && (
+                  <details open className="rounded-xl border border-zinc-800 bg-zinc-950/40">
+                    <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">⏱️ Timeline: reorder shots, move cuts</summary>
+                    <div className="px-3 pb-3">
+                      <BeatTimeline key={index} videoId={id} beatIndex={index} onChanged={refreshAfterEdit} />
                     </div>
                   </details>
                 )}
