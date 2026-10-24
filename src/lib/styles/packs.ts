@@ -70,7 +70,7 @@ export interface StylePack {
    */
   narration?: NarrationPacing;
   /** Signature shots the director may use in this style (pitch, evidence board, letter, race bars, scale). */
-  signatureShots?: Array<'pitch' | 'evidence_board' | 'letter' | 'race_bars' | 'scale' | 'spec_card' | 'money'>;
+  signatureShots?: Array<'pitch' | 'evidence_board' | 'letter' | 'race_bars' | 'scale' | 'spec_card' | 'money' | 'shot_map'>;
   /** How still photos are shown: 'collage' cuts them out and tapes them onto paper (the Vox look). */
   photoLook?: 'collage';
   /** Charts may carry callouts on points or bars ("the crash"). */
@@ -319,7 +319,7 @@ clearly framed as opinions.`,
 
   sport: pack({
     id: 'sport',
-    signatureShots: ['pitch', 'race_bars'],
+    signatureShots: ['pitch', 'race_bars', 'shot_map'],
     emphasis: { chapterZoom: true },
     name: 'Sports Story',
     label: 'Sports storytelling',

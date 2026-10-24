@@ -19,6 +19,7 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   comparison: { label: 'Compare', icon: '⚖️', bar: 'bg-lime-500/80', chip: 'text-lime-300 border-lime-500/30 bg-lime-500/10' },
   split: { label: 'Split', icon: '🪟', bar: 'bg-sky-500/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },
   illustration: { label: 'Illustration', icon: '🎨', bar: 'bg-pink-500/70', chip: 'text-pink-300 border-pink-500/30 bg-pink-500/10' },
+  shot_map: { label: 'Shot map', icon: '🥅', bar: 'bg-green-500/80', chip: 'text-green-300 border-green-500/30 bg-green-500/10' },
   title: { label: 'Title', icon: '🔖', bar: 'bg-rose-500/80', chip: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
   kinetic_text: { label: 'Kinetic', icon: '🔤', bar: 'bg-violet-500/80', chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10' },
   diagram: { label: 'Diagram', icon: '🧩', bar: 'bg-sky-400/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },

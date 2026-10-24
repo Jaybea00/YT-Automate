@@ -4,7 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { normalizeDataSpec } from '../../src/lib/data/indicators.ts';
-import { chartFromObservations, fetchObservations, raceFromObservations, type Observation } from '../../src/pipeline/visuals/real-data.ts';
+import { chartFromObservations, fetchObservations, owidRows, parseCsvLine, raceFromObservations, type Observation } from '../../src/pipeline/visuals/real-data.ts';
 import { sourceTagFor } from '../../src/pipeline/visuals/source-tags.ts';
 import { barRaceTemplate } from '../../src/pipeline/visuals/motion/data-templates.ts';
 import { themeForStyle } from '../../src/pipeline/visuals/motion/theme.ts';
@@ -78,6 +78,41 @@ describe('Real-data charts (World Bank)', () => {
     assert.deepEqual(rows.map((r) => [r.country, r.year]), [['UK', 2020], ['France', 2020]], 'short names, empty years dropped');
     await fetchObservations(spec, fake);
     assert.equal(calls, 1);
+  });
+
+  it('reads Our World in Data series: quoted names, the world, the chosen countries and years, cached', async () => {
+    assert.deepEqual(parseCsvLine('"Bonaire, Sint Eustatius and Saba",BES,2020,12.5'), ['Bonaire, Sint Eustatius and Saba', 'BES', '2020', '12.5']);
+    assert.deepEqual(parseCsvLine('"He said ""hi""",X,1,2'), ['He said "hi"', 'X', '1', '2']);
+    const csv = 'entity,code,year,renewable_share\nGermany,DEU,2010,16.6\nGermany,DEU,2023,54.7\nWorld,OWID_WRL,2023,30.3\nFrance,FRA,2023,\nGermany,DEU,1990,3.5\n';
+    const spec = { indicator: 'owid:share-electricity-renewables', countries: ['DEU', 'WLD', 'FRA'], from_year: 2000, to_year: 2023, kind: 'compare' as const };
+    assert.deepEqual(owidRows(csv, spec), [
+      { code: 'DEU', country: 'Germany', year: 2010, value: 16.6 },
+      { code: 'DEU', country: 'Germany', year: 2023, value: 54.7 },
+      { code: 'WLD', country: 'World', year: 2023, value: 30.3 },
+    ]);
+
+    process.env.OWID_CACHE_DIR = path.join(dir, 'owid');
+    try {
+      let calls = 0;
+      const fake = (async (url: string) => {
+        calls++;
+        assert.match(String(url), /ourworldindata\.org\/grapher\/share-electricity-renewables\.csv/);
+        return new Response(csv);
+      }) as typeof fetch;
+      assert.equal((await fetchObservations(spec, fake)).length, 3);
+      await fetchObservations({ ...spec, countries: ['DEU'] }, fake);
+      assert.equal(calls, 1, 'the whole series is fetched once');
+      const chart = chartFromObservations(spec, await fetchObservations(spec, fake))!;
+      assert.deepEqual([chart.title, chart.labels, chart.values], ['Electricity from renewables', ['Germany', 'World'], [54.7, 30.3]]);
+    } finally {
+      delete process.env.OWID_CACHE_DIR;
+    }
+  });
+
+  it('tags real-data charts with where the figures come from', () => {
+    const owid = { visual_type: 'chart' as const, chart: { chart_type: 'bar' as const, title: '', labels: [], values: [], data: { indicator: 'owid:happiness-cantril-ladder', countries: ['FIN', 'DNK'], from_year: 2015, to_year: 2023, kind: 'compare' as const } } };
+    assert.equal(sourceTagFor(owid, null), 'Source: Our World in Data');
+    assert.ok(normalizeDataSpec({ indicator: 'owid:happiness-cantril-ladder', countries: ['FIN', 'DNK'], kind: 'compare' }), 'on the list');
   });
 
   it('tags real-data charts as World Bank figures', () => {
