@@ -133,6 +133,7 @@ interface FreesoundResult {
   license: string;
   duration: number;
   previews?: Record<string, string>;
+  tags?: string[];
 }
 
 /** Freesound search: CC0 only, short, best rated first. */
@@ -141,8 +142,8 @@ export function freesoundSearchUrl(sound: RealSound, apiKey: string): string {
     query: sound.query,
     filter: `license:"Creative Commons 0" duration:[0.2 TO ${Math.max(3, sound.maxSec * 3)}]`,
     sort: 'rating_desc',
-    fields: 'id,name,username,license,duration,previews',
-    page_size: '5',
+    fields: 'id,name,username,license,duration,previews,tags',
+    page_size: '10',
     token: apiKey,
   });
   return `https://freesound.org/apiv2/search/text/?${params.toString()}`;
@@ -150,10 +151,16 @@ export function freesoundSearchUrl(sound: RealSound, apiKey: string): string {
 
 /** Downloads the best CC0 match into the sound's folder, with a note of where it came from. */
 export async function fetchFromFreesound(id: RealSoundId, apiKey: string, dir = realSoundsDir()): Promise<string | null> {
-  const res = await fetch(freesoundSearchUrl(REAL_SOUNDS[id], apiKey));
-  if (!res.ok) throw new Error(`Freesound search failed (${res.status})`);
-  const body = (await res.json()) as { results?: FreesoundResult[] };
-  const pick = (body.results ?? []).find((r) => /creativecommons\.org\/publicdomain\/zero|Creative Commons 0/i.test(r.license) && r.previews?.['preview-hq-mp3']);
+  // Freesound needs every word to match, so a phrase that finds nothing is tried shorter
+  let pick: FreesoundResult | undefined;
+  for (const query of broaderQueries(REAL_SOUNDS[id].query)) {
+    const res = await fetchPolitely(freesoundSearchUrl({ ...REAL_SOUNDS[id], query }, apiKey));
+    if (!res.ok) throw new Error(`Freesound search failed (${res.status})`);
+    const body = (await res.json()) as { results?: FreesoundResult[] };
+    const usable = (body.results ?? []).filter((r) => /creativecommons\.org\/publicdomain\/zero|Creative Commons 0/i.test(r.license) && r.previews?.['preview-hq-mp3']);
+    pick = bestMatches(usable, REAL_SOUNDS[id].query)[0];
+    if (pick) break;
+  }
   if (!pick) return null;
   const audio = await fetch(pick.previews!['preview-hq-mp3']);
   if (!audio.ok) throw new Error(`Freesound download failed (${audio.status})`);
@@ -210,5 +217,58 @@ export async function prepareRealSound(id: RealSoundId, apiKey = process.env.FRE
     return null;
   } finally {
     await fs.unlink(raw).catch(() => {});
+  }
+}
+
+/** A search phrase and its shorter forms, most specific first ("stadium crowd cheer goal" ... "stadium crowd"). */
+export function broaderQueries(query: string): string[] {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (let n = words.length; n >= Math.min(2, words.length); n--) out.push(words.slice(0, n).join(' '));
+  return out;
+}
+
+/** Words that say little about what a sound is. */
+const GENERIC_WORDS = new Set(['single', 'distant', 'sound', 'effect', 'ambience', 'ambient', 'heavy', 'short', 'long', 'loud', 'soft', 'close', 'small', 'large', 'fast', 'slow', 'deep', 'dark']);
+
+/**
+ * Whether a result is the sound asked for: its name or tags contain one of the phrase's telling
+ * words (so "typewriter single key" doesn't settle for a computer keyboard).
+ */
+export function isAbout(result: { name: string; tags?: string[] }, query: string): boolean {
+  const words = tellingWords(query);
+  if (!words.length) return true;
+  // Any telling word in the name, or the first in the tags ("referee whistle" -> a sound named "whistle")
+  const name = result.name.toLowerCase();
+  return words.some((w) => name.includes(w)) || (result.tags ?? []).join(' ').toLowerCase().includes(words[0]);
+}
+
+/** The phrase's telling words, cut to stems ("stadium crowd ambience" -> ["stadi", "crowd"]). */
+export function tellingWords(query: string): string[] {
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !GENERIC_WORDS.has(w))
+    .map((w) => w.slice(0, 5));
+}
+
+/** Results that are about the sound, those that name it first (a name says more than a tag). */
+export function bestMatches<T extends { name: string; tags?: string[] }>(results: T[], query: string): T[] {
+  const words = tellingWords(query);
+  const about = results.filter((r) => isAbout(r, query));
+  const named = (r: T) => words.some((w) => r.name.toLowerCase().includes(w));
+  return [...about.filter(named), ...about.filter((r) => !named(r))];
+}
+
+/**
+ * A Freesound request that waits and tries again when told to slow down (they allow 60 a minute),
+ * rather than giving up on the sound.
+ */
+export async function fetchPolitely(url: string, tries = 3, wait = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url);
+    if (res.status !== 429 || attempt >= tries) return res;
+    const after = Number(res.headers.get('retry-after'));
+    await wait(Number.isFinite(after) && after > 0 ? Math.min(60, after) * 1000 : 15_000 * attempt);
   }
 }

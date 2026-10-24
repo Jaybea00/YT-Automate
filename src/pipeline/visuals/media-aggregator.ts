@@ -134,6 +134,12 @@ export async function downloadCandidateAsset(
     return downloadAndSaveAiImage(candidate, targetPath);
   }
 
+  // Creative Commons YouTube footage: the start of the video, picture only
+  if (candidate.provider === 'youtube_cc') {
+    const { downloadYoutubeCc } = await import('./youtube-cc');
+    return downloadYoutubeCc(candidate.downloadUrl, targetPath);
+  }
+
   if (candidate.provider === 'fal' || candidate.provider === 'veo') {
     const { downloadAndSaveAiVideo } = await import('./ai-video-step');
     return downloadAndSaveAiVideo(candidate.downloadUrl, targetPath);

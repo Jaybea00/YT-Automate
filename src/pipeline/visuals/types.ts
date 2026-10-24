@@ -63,7 +63,8 @@ export interface MediaCandidate {
     | 'openai'
     | 'fal'
     | 'google_veo'
-    | 'veo';
+    | 'veo'
+    | 'youtube_cc';
   mediaType: 'video' | 'image';
   title?: string;
   thumbnailUrl: string;

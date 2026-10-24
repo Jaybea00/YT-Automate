@@ -14,7 +14,7 @@ export const STILL_MOTIONS: StillMotion[] = ['zoom_in', 'pan_right', 'zoom_out',
 
 // JPEG stills and some sources are full-range; every clip is converted to (and tagged) TV range
 // so a joined track never inherits a full-range tag that skews the footage's contrast
-const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-r', String(FPS), '-an'];
+export const ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-r', String(FPS), '-an'];
 
 /**
  * Camera move for a still, as zoompan expressions over `frames` output frames. Stills are
@@ -162,5 +162,18 @@ export async function concatClips(clipPaths: string[], outputPath: string): Prom
   } finally {
     await fs.unlink(listPath).catch(() => {});
   }
+  return outputPath;
+}
+
+/**
+ * A shot clip at a new length, same picture: cut short, or held on its last frame when longer.
+ * Encoded like every shot clip, so the beat still joins by stream copy.
+ */
+export async function retimeClip(inputPath: string, frames: number, outputPath: string): Promise<string> {
+  await execFileAsync(getFfmpegPath(), [
+    '-y', '-v', 'error', '-i', inputPath,
+    '-vf', 'tpad=stop_mode=clone:stop=-1,scale=out_range=tv,format=yuv420p',
+    '-frames:v', String(frames), ...ENCODE, outputPath,
+  ]);
   return outputPath;
 }

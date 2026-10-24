@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { readTimeline } from '../utils/timeline';
+import { voicePathsForVideo } from '../tts/voice-paths';
 import { loadCaptionWords } from './caption-sources';
 import { baseCaptionWords, editMatches, isEmptyEdit, normalizeCaptionEdit, type CaptionEdit, type CaptionEdits } from './caption-edits';
 
@@ -21,23 +21,8 @@ export async function captionEditorBeats(supabase: SupabaseClient, videoId: stri
   if (!video) throw new Error('Video not found');
   const sj = (video.script_json ?? {}) as { beats?: Array<{ text?: string }>; caption_edits?: CaptionEdits };
   const beats = (sj.beats ?? []).map((b, index) => ({ index, text: String(b.text ?? '') }));
-  // The voice files the render will use: from the last render's timeline, or (not rendered yet)
-  // the latest voicing of each beat, so the editor sees the same timed words as the render
-  const timeline = readTimeline(video.script_json);
-  const audio = new Map<number, string | null>((timeline?.beats ?? []).map((b) => [b.index, b.audioPath]));
-  if (audio.size < beats.length) {
-    const { data: jobs } = await supabase.from('yt_jobs').select('id, created_at').eq('video_id', videoId).order('created_at', { ascending: false });
-    for (const job of jobs ?? []) {
-      const { data: units } = await supabase
-        .from('yt_job_units')
-        .select('unit_index, output_path')
-        .eq('job_id', job.id)
-        .eq('stage', 'tts')
-        .eq('status', 'done');
-      for (const u of units ?? []) if (!audio.has(u.unit_index) && u.output_path) audio.set(u.unit_index, u.output_path);
-      if (audio.size >= beats.length) break;
-    }
-  }
+  // The voice files the render will use, so the editor sees the same timed words as the render
+  const audio = await voicePathsForVideo(supabase, videoId, video.script_json, beats.length);
   const timings = await loadCaptionWords(beats.map((b) => ({ ...b, audioPath: audio.get(b.index) ?? null })));
   return beats.map((b) => {
     const words = baseCaptionWords(b.text, timings[b.index], 1);

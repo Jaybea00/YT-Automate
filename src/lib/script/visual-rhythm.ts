@@ -12,7 +12,7 @@ import { SPEECH_WORDS_PER_SECOND } from './script-quality';
 /** How a viewer perceives a shot. */
 export type ShotKind = 'footage' | 'graphic' | 'text' | 'blank';
 
-const FOOTAGE_TYPES = new Set(['stock', 'archive', 'screen_recording']);
+const FOOTAGE_TYPES = new Set(['stock', 'archive', 'screen_recording', 'split', 'illustration']);
 const TEXT_TYPES = new Set(['kinetic_text', 'title']);
 
 export function kindOf(type: string): ShotKind {

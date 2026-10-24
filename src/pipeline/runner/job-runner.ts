@@ -21,6 +21,9 @@ import { isCaptionPreset, writeAssCaptionsFile } from '../assembly/captions';
 import { applyCaptionEdits } from '../assembly/caption-edits';
 import { masterFinalVideo, TARGET_LUFS } from '../assembly/master';
 import { DEFAULT_BEAT_PAUSE_SEC, planPacing, type BeatPacing } from '../assembly/pacing';
+import { beatMusicExpression, readBeatSounds, withPauses, withoutMutedSfx } from '../assembly/beat-sound';
+import { overlayWindows, readOverlays, renderOverlayPngs } from '../assembly/overlays';
+import { sourceTagFor } from '../visuals/source-tags';
 import { ensureSections } from '../assembly/sections';
 import { readSidecar } from '../visuals/shot-editor';
 import { captionZonesFromTracks, loadCaptionWords } from '../assembly/caption-sources';
@@ -30,7 +33,8 @@ import { applyPalette } from '../assembly/palettes';
 import { prepareEmphasis } from '../assembly/emphasis';
 import { planTransitions, startsFromOverlaps, type TransitionIntensity } from '../assembly/transitions';
 import { ensureMusicPlan, musicCredits, pickMusic } from '../assembly/music-plan';
-import { buildMusicBed } from '../assembly/music-bed';
+import { buildMusicBed, MUSIC_CROSSFADE_SEC } from '../assembly/music-bed';
+import { bestMusicOffset, cutsOnBeat, detectBeatGrid, MIN_CONFIDENCE, programCuts } from '../assembly/music-beats';
 import { accentExpression, accentTimes, ensureMusicMoments, stingPath } from '../assembly/music-accents';
 import { lookFilter } from '../assembly/look';
 import { runFinalQualityCheck, type QualityReport } from '../assembly/final-check';
@@ -41,11 +45,11 @@ import type { VideoTimeline } from '../utils/timeline';
 import { resolveBgmTrackPath, applyBackgroundMusic } from '../assembly/bgm';
 import { ensureDefaultSfxPresets, resolveSfxPath } from '../assembly/sfx';
 import { generateYouTubeChapters } from '../utils/chapters';
-import { mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
+import { readBeatVoices, mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
 import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visual';
 import { saveRenderedRhythm } from '../visuals/rhythm-report';
 import { themeForStyle } from '../visuals/motion/theme';
-import { withWritingModel, type ScriptBeat } from '@/lib/script/generate-script';
+import { withWritingModel, type ScriptBeat, type ShotPlan } from '@/lib/script/generate-script';
 import { stylePack } from '@/lib/styles/packs';
 
 export const ScriptSceneSchema = z.object({
@@ -373,10 +377,13 @@ export class JobRunner {
       const theme = themeForStyle(videoRow?.style);
       // Pacing is built into composed tracks (no frozen frames), so it's planned before composing
       const pacing = job.video_id && plannedBeats.length
-        ? planPacing(
-            plannedBeats.map((b, i) => ({ index: i, text: b.text })),
-            await ensureSections({ supabase: this.supabase, videoId: job.video_id, scriptJson: videoRow!.script_json, topic: videoRow?.topic, llm }),
-            Number(videoRow?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+        ? withPauses(
+            planPacing(
+              plannedBeats.map((b, i) => ({ index: i, text: b.text })),
+              await ensureSections({ supabase: this.supabase, videoId: job.video_id, scriptJson: videoRow!.script_json, topic: videoRow?.topic, llm }),
+              Number(videoRow?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+            ),
+            readBeatSounds(videoRow?.script_json?.beat_sound),
           )
         : new Map<number, BeatPacing>();
       const archiveLookOn = videoRow?.script_json?.archive_look !== 'off';
@@ -386,6 +393,12 @@ export class JobRunner {
         ...(archiveLookOn ? { archiveLook: { count: { next: 0 } } } : {}),
         ...(stylePack(videoRow?.style)?.photoLook === 'collage' ? { collage: { count: { next: 0 } } } : {}),
         ...(videoRow?.script_json?.parallax !== false ? { parallax: { count: { next: 0 } } } : {}),
+        ...(videoRow?.script_json?.source_tags !== false
+          ? { sourceTag: (shot: ShotPlan) => sourceTagFor(shot, videoRow?.script_json?.research) }
+          : {}),
+        ...(videoRow?.script_json?.upscale === true ? { upscale: true } : {}),
+        // On when a YouTube key is set, unless the video turns it off
+        ...(process.env.YOUTUBE_API_KEY && videoRow?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
       };
 
       const outputDir = path.join(this.baseOutputDir, 'visuals');
@@ -694,6 +707,11 @@ export class JobRunner {
     const outputDir = path.join(this.baseOutputDir, 'audio');
     // Cloud voices can run several beats at once; a local engine on one CPU stays sequential
     const concurrency = setup.resolved.provider.maxConcurrency ?? 1;
+    // Each beat's own voice settings from Vibedit (speed, narrator, the creator's recording)
+    const { data: voiceVideo } = job.video_id
+      ? await this.supabase.from('videos').select('script_json').eq('id', job.video_id).maybeSingle()
+      : { data: null };
+    const beatVoices = readBeatVoices(voiceVideo?.script_json?.beat_voice);
 
     const results = await mapWithConcurrency(job.script.scenes, concurrency, (scene) => {
       if (this.signal?.aborted) {
@@ -707,6 +725,7 @@ export class JobRunner {
         narration: scene.narration,
         outputDir,
         signal: this.signal,
+        beatVoice: beatVoices[scene.scene_number],
       });
     });
     const hasFailure = results.some((r) => !r.success);
@@ -861,10 +880,15 @@ export class JobRunner {
               llm: await resolveForStage<LLMProvider>('script', this.supabase).catch(() => null),
             })
           : [];
-      const pacingPlan = planPacing(
-        scriptBeats.map((b, i) => ({ index: beatIndexAt(i), text: String(b.text ?? b.narration ?? '') })),
-        sections,
-        Number(videoRecord?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+      // Per-beat sound controls from Vibedit: music level, muted effects, dramatic pauses
+      const beatSounds = readBeatSounds(videoRecord?.script_json?.beat_sound);
+      const pacingPlan = withPauses(
+        planPacing(
+          scriptBeats.map((b, i) => ({ index: beatIndexAt(i), text: String(b.text ?? b.narration ?? '') })),
+          sections,
+          Number(videoRecord?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+        ),
+        beatSounds,
       );
 
       // Ensure SFX presets exist and resolve active SFX path
@@ -1337,6 +1361,15 @@ export class JobRunner {
       if (bgmEnabled && bgmTrack !== 'none') {
         // "story": music chosen per section from the mood library, crossfading where the story turns
         let bgmTrackPath: string | null = null;
+        // Cuts on the beat (music-beats.ts): the music slides under the cuts, which stay on the words
+        const beatSync = videoRecord?.script_json?.bgm?.beatSync !== false;
+        let musicStartOffset = 0;
+        let cutsCache: number[] | null = null;
+        const allCuts = async () =>
+          (cutsCache ??= await programCuts(
+            sceneBeatIndexes.map((b, pos) => ({ sceneStartMs: beatStartMs[pos], trackPath: trackByBeat.get(b) ?? null })),
+            readSidecar,
+          ));
         if (bgmTrack === 'story' && videoId && usingVideoBeats && sections.length > 0) {
           try {
             const totalMs = beatStartMs.length
@@ -1362,7 +1395,26 @@ export class JobRunner {
             if (segments) {
               bgmTrackPath = path.join(tempDir, `music_bed_${Date.now()}.m4a`);
               workingFiles.push(bgmTrackPath);
-              await buildMusicBed(segments, bgmTrackPath);
+              // Cuts on the beat: each piece of music starts where its beats meet the most cuts
+              const offsets: number[] = [];
+              if (beatSync) {
+                const cuts = await allCuts();
+                let onBeat = 0;
+                for (const [i, seg] of segments.entries()) {
+                  const grid = await detectBeatGrid(seg.track.path).catch(() => null);
+                  // A segment's music starts half a crossfade before its section (all but the first)
+                  const audioStart = seg.startMs / 1000 - (i > 0 ? MUSIC_CROSSFADE_SEC / 2 : 0);
+                  const local = cuts.filter((c) => c >= seg.startMs / 1000 && c < seg.endMs / 1000).map((c) => c - audioStart);
+                  if (!grid || grid.confidence < MIN_CONFIDENCE || !local.length) {
+                    offsets.push(0);
+                    continue;
+                  }
+                  offsets.push(bestMusicOffset(local, grid));
+                  onBeat += cutsOnBeat(local, grid, offsets[i]);
+                }
+                if (offsets.some((o) => o > 0)) console.log(`[Assembly] Music on the beat: ${onBeat} of ${cuts.length} cuts land on a beat`);
+              }
+              await buildMusicBed(segments, bgmTrackPath, offsets);
               musicCreditLines = musicCredits(segments);
               console.log(`[Assembly] Music: ${segments.map((s) => `${s.mood} "${s.track.title}"`).join(' → ')}`);
             }
@@ -1375,6 +1427,15 @@ export class JobRunner {
             customUrl: bgmCustomUrl,
             videoId,
           });
+          // Cuts on the beat: start the track where its beats meet the most cuts
+          if (bgmTrackPath && beatSync) {
+            const grid = await detectBeatGrid(bgmTrackPath).catch(() => null);
+            const cuts = await allCuts();
+            if (grid && grid.confidence >= MIN_CONFIDENCE && cuts.length) {
+              musicStartOffset = bestMusicOffset(cuts, grid);
+              console.log(`[Assembly] Music on the beat: ${cutsOnBeat(cuts, grid, musicStartOffset)} of ${cuts.length} cuts land on a beat`);
+            }
+          }
         }
 
         if (bgmTrackPath) {
@@ -1408,6 +1469,15 @@ export class JobRunner {
               console.warn('[Assembly] Music accents skipped:', accentErr instanceof Error ? accentErr.message.slice(0, 200) : accentErr);
             }
           }
+          const beatMusic = beatMusicExpression(
+            beatSounds,
+            sceneBeatIndexes.map((index, pos) => ({
+              index,
+              startSec: beatStartMs[pos] / 1000,
+              endSec: (beatStartMs[pos] + Math.round((clipDurationsSec[pos] ?? 0) * 1000)) / 1000,
+            })),
+          );
+          if (beatMusic) accentExpr = accentExpr && accentExpr !== '1' ? `${accentExpr}*${beatMusic}` : beatMusic;
           const withMusicPath = path.join(tempDir, `program_music_${Date.now()}.mp4`);
           workingFiles.push(withMusicPath);
           await applyBackgroundMusic({
@@ -1418,6 +1488,7 @@ export class JobRunner {
             stemPath: musicStemPath,
             accentExpression: accentExpr,
             sting,
+            startOffsetSec: musicStartOffset,
           });
           programPath = withMusicPath;
         }
@@ -1462,7 +1533,15 @@ export class JobRunner {
           videoRecord?.script_json?.sfx?.palette === false
             ? shotCuesPlanned
             : await applyPalette(shotCuesPlanned, videoRecord?.style).catch(() => shotCuesPlanned);
-        const cues = [...shotCuesVoiced, ...narrationPlanned.cues].sort((a, b) => a.atMs - b.atMs);
+        const cues = withoutMutedSfx(
+          [...shotCuesVoiced, ...narrationPlanned.cues].sort((a, b) => a.atMs - b.atMs),
+          beatSounds,
+          sceneBeatIndexes.map((index, pos) => ({
+            index,
+            startMs: beatStartMs[pos],
+            endMs: beatStartMs[pos] + Math.round((clipDurationsSec[pos] ?? 0) * 1000),
+          })),
+        );
         if (cues.length > 0 || narrationPlanned.beds.length > 0) {
           const withSfxPath = path.join(tempDir, `program_sfx_${Date.now()}.mp4`);
           workingFiles.push(withSfxPath);
@@ -1508,22 +1587,41 @@ export class JobRunner {
             })
           : null;
       if (emphasis) console.log(`[Assembly] Emphasis: ${emphasis.summary}`);
+      // The creator's own text, callouts and arrows (Vibedit), anchored to their beats
+      let overlays: { windows: Array<{ atSec: number; endSec: number }>; pngs: string[] } | null = null;
+      const overlayList = readOverlays(videoRecord?.script_json?.overlays);
+      if (overlayList.length) {
+        try {
+          const lastPos = beatStartMs.length - 1;
+          const totalSec = lastPos >= 0 ? (beatStartMs[lastPos] + Math.round((clipDurationsSec[lastPos] ?? 0) * 1000)) / 1000 : 0;
+          const windows = overlayWindows(
+            overlayList,
+            Object.fromEntries(sceneBeatIndexes.map((b, pos) => [b, beatStartMs[pos] / 1000])),
+            totalSec,
+          );
+          const pngs = await renderOverlayPngs(themeForStyle(videoRecord?.style), windows, path.join(tempDir, 'overlays'));
+          overlays = windows.length ? { windows, pngs } : null;
+          if (overlays) console.log(`[Assembly] Overlays: ${windows.length} (text, callouts, arrows)`);
+        } catch (overlayErr) {
+          console.warn('[Assembly] Overlays skipped:', overlayErr instanceof Error ? overlayErr.message.slice(0, 200) : overlayErr);
+        }
+      }
       try {
         try {
-          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis, draft });
+          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis, draft, overlays });
           console.log(
             `[Assembly] Mastered to ${TARGET_LUFS} LUFS (programme measured ${measured.input_i} LUFS)` +
               `${grade ? `, ${themeForStyle(videoRecord?.style).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
           );
         } catch (masterErr) {
-          // Emphasis is the newest part of the graph: drop it first, keeping the look and captions
-          const retried = emphasis
-            ? await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade })
+          // Emphasis and overlays are the newest parts of the graph: drop them first, keeping the look and captions
+          const retried = emphasis || overlays
+            ? await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, draft })
                 .then(() => true)
                 .catch(() => false)
             : false;
           if (retried) {
-            console.warn('[Assembly] Mastering with emphasis effects failed; mastered without them:', masterErr instanceof Error ? masterErr.message.slice(0, 300) : masterErr);
+            console.warn('[Assembly] Mastering with emphasis effects or overlays failed; mastered without them:', masterErr instanceof Error ? masterErr.message.slice(0, 300) : masterErr);
           } else {
             if (!assPath && !grade) throw masterErr;
             // Keep a plain master rather than failing the whole assembly

@@ -21,6 +21,8 @@ export interface ApplyBgmOptions {
   sting?: { path: string; atSec: number[] };
   /** Also writes the ducked music on its own here (for editing elsewhere, e.g. DaVinci Resolve). */
   stemPath?: string;
+  /** Start this far into the track (cuts on the beat, see music-beats.ts). */
+  startOffsetSec?: number;
 }
 
 export const PRESET_TRACKS = [
@@ -192,6 +194,7 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     accentExpression,
     sting,
     stemPath,
+    startOffsetSec,
   } = options;
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -240,6 +243,7 @@ export async function applyBackgroundMusic(options: ApplyBgmOptions): Promise<st
     videoPath,
     '-stream_loop',
     '-1',
+    ...(startOffsetSec && startOffsetSec > 0 ? ['-ss', startOffsetSec.toFixed(3)] : []),
     '-i',
     bgmPath,
     ...(stings.length ? ['-i', sting!.path] : []),

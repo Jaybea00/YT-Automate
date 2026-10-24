@@ -17,6 +17,8 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   screen_recording: { label: 'Screen', icon: '💻', bar: 'bg-indigo-500/80', chip: 'text-indigo-300 border-indigo-500/30 bg-indigo-500/10' },
   timeline: { label: 'Timeline', icon: '🕰️', bar: 'bg-cyan-500/80', chip: 'text-cyan-300 border-cyan-500/30 bg-cyan-500/10' },
   comparison: { label: 'Compare', icon: '⚖️', bar: 'bg-lime-500/80', chip: 'text-lime-300 border-lime-500/30 bg-lime-500/10' },
+  split: { label: 'Split', icon: '🪟', bar: 'bg-sky-500/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },
+  illustration: { label: 'Illustration', icon: '🎨', bar: 'bg-pink-500/70', chip: 'text-pink-300 border-pink-500/30 bg-pink-500/10' },
   title: { label: 'Title', icon: '🔖', bar: 'bg-rose-500/80', chip: 'text-rose-300 border-rose-500/30 bg-rose-500/10' },
   kinetic_text: { label: 'Kinetic', icon: '🔤', bar: 'bg-violet-500/80', chip: 'text-violet-300 border-violet-500/30 bg-violet-500/10' },
   diagram: { label: 'Diagram', icon: '🧩', bar: 'bg-sky-400/80', chip: 'text-sky-300 border-sky-500/30 bg-sky-500/10' },

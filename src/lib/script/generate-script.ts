@@ -1,3 +1,4 @@
+import type { DataSpec } from '@/lib/data/indicators';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '@/pipeline/providers/registry';
@@ -37,6 +38,8 @@ export const SHOT_TYPES = [
   'title',
   'kinetic_text',
   'diagram',
+  'split',
+  'illustration',
   // Signature shots: offered only to the styles that list them (StylePack.signatureShots)
   'pitch',
   'evidence_board',
@@ -84,10 +87,17 @@ export interface ShotPlan {
     values: number[];
     /** Callouts on points or bars (styles with chartCallouts). */
     annotations?: Array<{ index: number; text: string }>;
+    /** Real figures from the World Bank instead of typed values (filled in when the chart renders). */
+    data?: DataSpec | null;
   };
+  /** A labelled AI illustration (free) of something no camera could capture. */
+  illustration?: { prompt: string };
+  /** Two to four pictures side by side (then vs now, rivals, several people), each found like footage. */
+  split?: { title?: string; panels: Array<{ query: string; label?: string; archive: boolean }> };
   stat?: { value: number; prefix?: string; suffix?: string; label: string };
   quote?: { text: string; attribution: string };
-  map?: { places: string[]; mode: 'route' | 'spread' | 'locate' };
+  /** fly: a globe turning to one place and diving in onto satellite imagery. */
+  map?: { places: string[]; mode: 'route' | 'spread' | 'locate' | 'fly' };
   newspaper?: { outlet: string; date: string; headline: string };
   timeline?: { events: Array<{ date: string; label: string }> };
   comparison?: { title?: string; left: { value: string; label: string }; right: { value: string; label: string } };

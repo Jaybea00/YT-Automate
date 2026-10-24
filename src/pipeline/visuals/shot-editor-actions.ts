@@ -10,6 +10,9 @@ import type { ComposedShot, ShotAlternative } from './shot-composer';
 import { replaceShot, type ComposedBeatRecord } from './shot-editor';
 import { candidateFromAlternative, renderCandidateShot, renderFootageShot, toAlternative, type ShotRenderContext } from './shot-renderers';
 import { stylePack } from '@/lib/styles/packs';
+import type { ShotPlan } from '@/lib/script/generate-script';
+import { sourceTagFor } from './source-tags';
+import { illustrationPrompt, renderIllustration } from './illustration';
 
 export type ShotEdit =
   /** Use one of the shot's alternatives, or a search result. */
@@ -20,10 +23,12 @@ export type ShotEdit =
   | { action: 'text' }
   /** Footage for a new search (also turns a graphic or text card into footage). */
   | { action: 'footage'; query: string; archive?: boolean }
+  /** A labelled AI illustration (free): of `prompt`, or of the shot's subject and narration. */
+  | { action: 'illustration'; prompt?: string }
   /** The creator's own file (already saved on disk), with its licence and, for a video, an optional start. */
   | { action: 'upload'; filePath: string; mediaType: 'video' | 'image'; license: string; attribution?: string | null; startSec?: number };
 
-async function editorContext(supabase: SupabaseClient, videoId: string, beat: ComposedBeatRecord, needsBrowser: boolean) {
+export async function editorContext(supabase: SupabaseClient, videoId: string, beat: ComposedBeatRecord, needsBrowser: boolean) {
   const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
   const stock = await resolveForStage<StockProvider>('visuals', supabase).catch(() => null);
   const llm = await resolveForStage<LLMProvider>('script', supabase).catch(() => null);
@@ -45,6 +50,11 @@ async function editorContext(supabase: SupabaseClient, videoId: string, beat: Co
     ...(video?.script_json?.archive_look !== 'off' ? { archiveLook: { count: { next: beat.beatIndex } } } : {}),
     ...(stylePack(video?.style)?.photoLook === 'collage' ? { collage: { count: { next: beat.beatIndex } } } : {}),
     ...(video?.script_json?.parallax !== false ? { parallax: { count: { next: beat.beatIndex } } } : {}),
+    ...(video?.script_json?.source_tags !== false
+      ? { sourceTag: (shot: ShotPlan) => sourceTagFor(shot, video?.script_json?.research) }
+      : {}),
+    ...(video?.script_json?.upscale === true ? { upscale: true } : {}),
+    ...(process.env.YOUTUBE_API_KEY && video?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
   };
   return { ctx, close: async () => browser?.close().catch(() => {}) };
 }
@@ -66,7 +76,7 @@ export async function editShot(options: {
   const typed = MOTION_RENDERERS[plan.visual_type];
   const needsBrowser = edit.action === 'text' || Boolean(current.plan.caption) || (edit.action === 'redo' && Boolean(typed));
   const { ctx, close } = await editorContext(supabase, videoId, beat, needsBrowser);
-  // A new search becomes the shot's plan: footage of what was asked for
+  // A new search becomes the shot's plan: footage of what was asked for, or an illustration
   const newPlan =
     edit.action === 'footage'
       ? {
@@ -74,7 +84,9 @@ export async function editShot(options: {
           visual_type: (edit.archive ?? plan.visual_type === 'archive') ? ('archive' as const) : ('stock' as const),
           visual_query: edit.query.trim().slice(0, 200),
         }
-      : undefined;
+      : edit.action === 'illustration'
+        ? { ...plan, visual_type: 'illustration' as const, illustration: { prompt: (edit.prompt?.trim() || illustrationPrompt(plan)).slice(0, 400) } }
+        : undefined;
   // What is on screen now is excluded when picking again
   if (current.sourceUrl) ctx.usedSources.add(current.sourceUrl);
   if (edit.action === 'swap') ctx.usedSources.delete(edit.candidate.pageUrl || edit.candidate.downloadUrl);
@@ -87,6 +99,7 @@ export async function editShot(options: {
       shotIndex,
       plan: newPlan,
       render: async (slot, clipPath) => {
+        if (newPlan?.visual_type === 'illustration') return { ...(await renderIllustration(newPlan, slot, clipPath, ctx)), alternatives: current.alternatives };
         if (newPlan) return renderFootageShot(newPlan, slot, clipPath, ctx);
         if (edit.action === 'upload') {
           const footagePlan = plan.visual_type === 'archive' || plan.visual_type === 'stock' ? plan : { ...plan, visual_type: 'stock' as const };

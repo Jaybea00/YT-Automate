@@ -56,6 +56,7 @@ const EditSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('swap'), candidate: AlternativeSchema }),
   z.object({ action: z.literal('redo') }),
   z.object({ action: z.literal('text') }),
+  z.object({ action: z.literal('illustration'), prompt: z.string().max(400).optional() }),
 ]);
 
 /** Replaces the shot: a chosen alternative, a fresh pick, or the narration as type. */

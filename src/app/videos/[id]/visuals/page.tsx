@@ -122,6 +122,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [paletteSounds, setPaletteSounds] = useState(true);
   // Music swells into reveals, drops out before key lines, and stings at chapter changes
   const [musicAccents, setMusicAccents] = useState(true);
+  const [beatSync, setBeatSync] = useState(true);
   const [previewingSfx, setPreviewingSfx] = useState<string | null>(null);
 
   // Beat Pacing & Breathing Room state (default 0.5s pause)
@@ -134,6 +135,11 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   const [archiveLook, setArchiveLook] = useState<'auto' | 'off'>('auto');
   const [emphasisEnabled, setEmphasisEnabled] = useState(true);
   const [parallax, setParallax] = useState(true);
+  const [sourceTags, setSourceTags] = useState(true);
+  const [upscale, setUpscale] = useState(false);
+  const [youtubeCc, setYoutubeCc] = useState(false);
+  const [youtubeKey, setYoutubeKey] = useState(false);
+  const [illustrations, setIllustrations] = useState(false);
   const [letterbox, setLetterbox] = useState<'auto' | 'on' | 'off'>('auto');
 
   // Batch Uploader state
@@ -232,6 +238,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     sfxNarration?: boolean;
     sfxPalette?: boolean;
     musicAccents?: boolean;
+    beatSync?: boolean;
     beatPauseSeconds?: number;
     captionPreset?: string;
     look?: 'auto' | 'off';
@@ -240,6 +247,10 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     transitionRendered?: boolean;
     emphasisEnabled?: boolean;
     parallax?: boolean;
+    sourceTags?: boolean;
+    upscale?: boolean;
+    youtubeCc?: boolean;
+    illustrations?: boolean;
     letterbox?: 'auto' | 'on' | 'off';
   }) {
     const nextEnabled = updates.enabled !== undefined ? updates.enabled : bgmEnabled;
@@ -258,6 +269,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextSfxNarration = updates.sfxNarration !== undefined ? updates.sfxNarration : narrationSounds;
     const nextSfxPalette = updates.sfxPalette !== undefined ? updates.sfxPalette : paletteSounds;
     const nextMusicAccents = updates.musicAccents !== undefined ? updates.musicAccents : musicAccents;
+    const nextBeatSync = updates.beatSync !== undefined ? updates.beatSync : beatSync;
     const nextBeatPause =
       updates.beatPauseSeconds !== undefined ? updates.beatPauseSeconds : beatPauseSeconds;
     const nextCaptionPreset =
@@ -266,7 +278,15 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     const nextArchiveLook = updates.archiveLook !== undefined ? updates.archiveLook : archiveLook;
     const nextEmphasis = updates.emphasisEnabled !== undefined ? updates.emphasisEnabled : emphasisEnabled;
     const nextParallax = updates.parallax !== undefined ? updates.parallax : parallax;
+    const nextSourceTags = updates.sourceTags !== undefined ? updates.sourceTags : sourceTags;
+    const nextUpscale = updates.upscale !== undefined ? updates.upscale : upscale;
+    const nextYoutubeCc = updates.youtubeCc !== undefined ? updates.youtubeCc : youtubeCc;
+    const nextIllustrations = updates.illustrations !== undefined ? updates.illustrations : illustrations;
     setParallax(nextParallax);
+    setSourceTags(nextSourceTags);
+    setUpscale(nextUpscale);
+    setYoutubeCc(nextYoutubeCc);
+    setIllustrations(nextIllustrations);
     const nextLetterbox = updates.letterbox !== undefined ? updates.letterbox : letterbox;
     setEmphasisEnabled(nextEmphasis);
     setLetterbox(nextLetterbox);
@@ -283,6 +303,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
     setNarrationSounds(nextSfxNarration);
     setPaletteSounds(nextSfxPalette);
     setMusicAccents(nextMusicAccents);
+    setBeatSync(nextBeatSync);
     setBeatPauseSeconds(nextBeatPause);
     setCaptionPreset(nextCaptionPreset);
     setFilmLook(nextLook);
@@ -308,12 +329,17 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           sfxNarration: nextSfxNarration,
           sfxPalette: nextSfxPalette,
           musicAccents: nextMusicAccents,
+          beatSync: nextBeatSync,
           beatPauseSeconds: nextBeatPause,
           captionPreset: nextCaptionPreset,
           look: nextLook,
           archiveLook: nextArchiveLook,
           emphasisEnabled: nextEmphasis,
           parallax: nextParallax,
+          sourceTags: nextSourceTags,
+          upscale: nextUpscale,
+          youtubeCc: nextYoutubeCc,
+          illustrations: nextIllustrations,
           letterbox: nextLetterbox,
         }),
       });
@@ -377,6 +403,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             setBgmTrack(bData.bgm.track || 'story');
             setBgmVolume(Number(bData.bgm.volume ?? 0.2));
             setMusicAccents(bData.bgm.accents !== false);
+            setBeatSync(bData.bgm.beatSync !== false);
           }
           if (bData.padStyle) {
             setPadStyle(bData.padStyle);
@@ -407,6 +434,11 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             setFilmLook(bData.look);
           }
           if (bData.parallax !== undefined) setParallax(bData.parallax !== false);
+          if (bData.sourceTags !== undefined) setSourceTags(bData.sourceTags !== false);
+          if (bData.upscale !== undefined) setUpscale(bData.upscale === true);
+          if (bData.youtubeCc !== undefined) setYoutubeCc(bData.youtubeCc === true);
+          if (bData.youtubeKey !== undefined) setYoutubeKey(bData.youtubeKey === true);
+          if (bData.illustrations !== undefined) setIllustrations(bData.illustrations === true);
           if (bData.emphasis) {
             setEmphasisEnabled(bData.emphasis.enabled !== false);
             if (['auto', 'on', 'off'].includes(bData.emphasis.letterbox)) setLetterbox(bData.emphasis.letterbox);
@@ -883,6 +915,18 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   <span>
                     <span className="text-zinc-200 font-semibold">Music hits moments</span>
                     <span className="text-zinc-500"> · swells into reveals, goes silent before key lines, a sting at each chapter change</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 pt-1 text-[11px] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={beatSync}
+                    onChange={(e) => updateBgmConfig({ beatSync: e.target.checked })}
+                    className="accent-indigo-500 mt-0.5"
+                  />
+                  <span>
+                    <span className="text-zinc-200 font-semibold">Cuts on the beat</span>
+                    <span className="text-zinc-500"> · the music starts where its beats meet the most cuts (the cuts stay on the words)</span>
                   </span>
                 </label>
               </div>
@@ -1405,6 +1449,81 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   <span className="text-sm font-bold text-white">🏔️ 2.5D parallax on photos</span>
                   <span className="block text-[11px] text-zinc-400 mt-0.5">
                     Landscape photos move in depth (near things slide against the background as the camera pushes in) instead of a flat pan. A small depth model runs on this computer (downloaded once, about 30 MB); slow on a small laptop, around half a minute per photo shot. Archive prints and collages keep their own look. Applies to beats rendered after the change.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {/* AI illustrations Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-2">
+              <label className="flex items-start gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={illustrations}
+                  onChange={(e) => updateBgmConfig({ illustrations: e.target.checked })}
+                  className="accent-indigo-500 mt-0.5"
+                />
+                <span>
+                  <span className="text-sm font-bold text-white">🎨 AI illustrations where no camera could go</span>
+                  <span className="block text-[11px] text-zinc-400 mt-0.5">
+                    The shot planner may use a free AI illustration (Pollinations, no credits) only for what was never filmed or photographed: space, the ancient past, inside the body, legends. At most 1 in 8 shots and 6 per video, each labelled &quot;Illustration&quot; on screen; real footage everywhere else. Applies when shots are planned (new videos, or re-planning on the review page). The ✨ Illustration button on any shot works either way.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {/* Creative Commons YouTube Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-2">
+              <label className={`flex items-start gap-2 text-xs ${youtubeKey ? 'cursor-pointer' : 'opacity-50'}`}>
+                <input
+                  type="checkbox"
+                  checked={youtubeCc}
+                  disabled={!youtubeKey}
+                  onChange={(e) => updateBgmConfig({ youtubeCc: e.target.checked })}
+                  className="accent-indigo-500 mt-0.5"
+                />
+                <span>
+                  <span className="text-sm font-bold text-white">▶️ Creative Commons YouTube footage</span>
+                  <span className="block text-[11px] text-zinc-400 mt-0.5">
+                    {youtubeKey
+                      ? 'When the stock libraries and archives have few moving clips for a shot, CC-licensed YouTube videos are searched too (re-uploads of broadcasts and highlights are turned away), the matching seconds are found, and the channel is credited with a link in the description. About 80 searches a day.'
+                      : 'Add YOUTUBE_API_KEY to .env.local to use Creative Commons YouTube footage.'}
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {/* Upscaling Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-2">
+              <label className="flex items-start gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={upscale}
+                  onChange={(e) => updateBgmConfig({ upscale: e.target.checked })}
+                  className="accent-indigo-500 mt-0.5"
+                />
+                <span>
+                  <span className="text-sm font-bold text-white">🔍 Sharpen small photos</span>
+                  <span className="block text-[11px] text-zinc-400 mt-0.5">
+                    Photos narrower than 960 px are upscaled 2x by an AI model on this computer before use, so old pictures look crisp full screen. Very slow on a small laptop: about 3 minutes per small photo (each is done once and kept). Applies to shots rendered after the change.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            {/* Source tags Section */}
+            <div className="pt-5 border-t border-zinc-800/80 space-y-2">
+              <label className="flex items-start gap-2 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sourceTags}
+                  onChange={(e) => updateBgmConfig({ sourceTags: e.target.checked })}
+                  className="accent-indigo-500 mt-0.5"
+                />
+                <span>
+                  <span className="text-sm font-bold text-white">🔎 Source tags on stats and charts</span>
+                  <span className="block text-[11px] text-zinc-400 mt-0.5">
+                    A small &quot;Source: UEFA&quot; in the corner of every stat, chart and comparison, from the research facts it cites. Applies to shots rendered after the change.
                   </span>
                 </span>
               </label>

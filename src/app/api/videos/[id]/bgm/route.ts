@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { stylePack } from '@/lib/styles/packs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -19,7 +20,7 @@ export async function handleGetBgm(
   const supabase = supabaseClient ?? getSupabaseServerClient();
   const { data: video, error } = await supabase
     .from('videos')
-    .select('id, bgm_track, bgm_volume, bgm_enabled, bgm_custom_url, script_json')
+    .select('id, style, bgm_track, bgm_volume, bgm_enabled, bgm_custom_url, script_json')
     .eq('id', id)
     .maybeSingle();
 
@@ -38,6 +39,8 @@ export async function handleGetBgm(
     customUrl: video.bgm_custom_url || video.script_json?.bgm?.customUrl || null,
     // Swells into reveals, silence before key lines, stings at chapter changes
     accents: video.script_json?.bgm?.accents !== false,
+    // Cuts on the beat: the music slides so the cuts land on its beats
+    beatSync: video.script_json?.bgm?.beatSync !== false,
   };
 
   const sfx = {
@@ -69,6 +72,13 @@ export async function handleGetBgm(
     look: video.script_json?.look === 'off' ? 'off' : 'auto',
     archiveLook: video.script_json?.archive_look === 'off' ? 'off' : 'auto',
     parallax: video.script_json?.parallax !== false,
+    sourceTags: video.script_json?.source_tags !== false,
+    upscale: video.script_json?.upscale === true,
+    // Creative Commons YouTube footage: needs a key; on unless the video turns it off
+    youtubeCc: Boolean(process.env.YOUTUBE_API_KEY) && video.script_json?.youtube_cc !== false,
+    youtubeKey: Boolean(process.env.YOUTUBE_API_KEY),
+    // AI illustrations in the shot plan: the video's choice, else the style's
+    illustrations: typeof video.script_json?.illustrations === 'boolean' ? video.script_json.illustrations : Boolean(stylePack(video.style)?.illustrations),
     transitionIntensity: ['subtle', 'balanced', 'bold'].includes(video.script_json?.transition_intensity) ? video.script_json.transition_intensity : 'balanced',
     transitionRendered: video.script_json?.transition_rendered !== false,
     // Shakes, freeze-frames, chapter zooms; letterbox follows the style unless set
@@ -109,6 +119,10 @@ export async function handlePostBgm(
   let archiveLook: 'auto' | 'off' | undefined;
   let emphasisEnabled: boolean | undefined;
   let parallax: boolean | undefined;
+  let sourceTags: boolean | undefined;
+  let upscale: boolean | undefined;
+  let youtubeCc: boolean | undefined;
+  let illustrations: boolean | undefined;
   let transitionIntensity: 'subtle' | 'balanced' | 'bold' | undefined;
   let transitionRendered: boolean | undefined;
   let letterbox: 'auto' | 'on' | 'off' | undefined;
@@ -119,6 +133,7 @@ export async function handlePostBgm(
   let sfxNarration: boolean | undefined;
   let sfxPalette: boolean | undefined;
   let musicAccents: boolean | undefined;
+  let beatSync: boolean | undefined;
 
   if (contentType.includes('multipart/form-data')) {
     const formData = await req.formData();
@@ -183,6 +198,10 @@ export async function handlePostBgm(
     if (body.archiveLook === 'auto' || body.archiveLook === 'off') archiveLook = body.archiveLook;
     if (body.emphasisEnabled !== undefined) emphasisEnabled = Boolean(body.emphasisEnabled);
     if (body.parallax !== undefined) parallax = Boolean(body.parallax);
+    if (body.sourceTags !== undefined) sourceTags = Boolean(body.sourceTags);
+    if (body.upscale !== undefined) upscale = Boolean(body.upscale);
+    if (body.youtubeCc !== undefined) youtubeCc = Boolean(body.youtubeCc);
+    if (body.illustrations !== undefined) illustrations = Boolean(body.illustrations);
     if (['subtle', 'balanced', 'bold'].includes(body.transitionIntensity)) transitionIntensity = body.transitionIntensity;
     if (body.transitionRendered !== undefined) transitionRendered = Boolean(body.transitionRendered);
     if (body.letterbox === 'auto' || body.letterbox === 'on' || body.letterbox === 'off') letterbox = body.letterbox;
@@ -193,6 +212,7 @@ export async function handlePostBgm(
     if (body.sfxNarration !== undefined) sfxNarration = Boolean(body.sfxNarration);
     if (body.sfxPalette !== undefined) sfxPalette = Boolean(body.sfxPalette);
     if (body.musicAccents !== undefined) musicAccents = Boolean(body.musicAccents);
+    if (body.beatSync !== undefined) beatSync = Boolean(body.beatSync);
     if (body.sfx) {
       if (body.sfx.narration !== undefined) sfxNarration = Boolean(body.sfx.narration);
       if (body.sfx.enabled !== undefined) sfxEnabled = Boolean(body.sfx.enabled);
@@ -221,6 +241,7 @@ export async function handlePostBgm(
     volume,
     customUrl,
     accents: musicAccents !== undefined ? musicAccents : scriptJson.bgm?.accents !== false,
+    beatSync: beatSync !== undefined ? beatSync : scriptJson.bgm?.beatSync !== false,
   };
   if (padStyle) {
     scriptJson.pad_style = padStyle;
@@ -242,6 +263,10 @@ export async function handlePostBgm(
   }
   if (transitionIntensity !== undefined) scriptJson.transition_intensity = transitionIntensity;
   if (parallax !== undefined) scriptJson.parallax = parallax;
+  if (sourceTags !== undefined) scriptJson.source_tags = sourceTags;
+  if (upscale !== undefined) scriptJson.upscale = upscale;
+  if (youtubeCc !== undefined) scriptJson.youtube_cc = youtubeCc;
+  if (illustrations !== undefined) scriptJson.illustrations = illustrations;
   if (transitionRendered !== undefined) scriptJson.transition_rendered = transitionRendered;
   if (emphasisEnabled !== undefined || letterbox !== undefined) {
     const current = scriptJson.emphasis ?? {};

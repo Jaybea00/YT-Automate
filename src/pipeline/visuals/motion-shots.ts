@@ -26,6 +26,12 @@ import type { ShotRenderContext, TypedShotRenderer } from './shot-renderers';
 import { renderScreenRecording } from './screen-capture';
 import { evidenceBoardTemplate, letterTemplate, pitchTemplate, raceBarsTemplate, scaleTemplate } from './motion/signature-templates';
 import { moneyTemplate, specCardTemplate } from './motion/signature-templates-2';
+import { withSourceTag } from './source-tags';
+import { renderSplitShot } from './split-shot';
+import { renderIllustration } from './illustration';
+import { renderGlobeFlyover, SATELLITE_CREDIT } from './maps/globe-flyover';
+import { barRaceTemplate } from './motion/data-templates';
+import { chartFromObservations, fetchObservations, raceFromObservations } from './real-data';
 
 /** The page for a graphic shot, or null when the shot lacks its spec. */
 export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null {
@@ -68,9 +74,26 @@ export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null
   }
 }
 
+/** A chart of real World Bank figures: a trend line, a comparison, or a bar-chart race. */
+async function dataChartPage(shot: ShotPlan, theme: MotionTheme): Promise<string> {
+  const spec = shot.chart!.data!;
+  const rows = await fetchObservations(spec);
+  if (spec.kind === 'race') {
+    const race = raceFromObservations(spec, rows);
+    if (!race) throw new Error('Not enough World Bank data for this race');
+    return barRaceTemplate(theme, { ...race, title: shot.chart!.title || race.title });
+  }
+  const chart = chartFromObservations(spec, rows);
+  if (!chart) throw new Error('Not enough World Bank data for this chart');
+  return chartTemplate(theme, { ...chart, title: shot.chart!.title || chart.title });
+}
+
 const renderGraphic: TypedShotRenderer = async (shot, slot, clipPath, ctx) => {
-  const html = motionPageFor(shot, ctx.theme);
-  if (!html) throw new Error(`${shot.visual_type} shot has no spec`);
+  const page = shot.visual_type === 'chart' && shot.chart?.data ? await dataChartPage(shot, ctx.theme) : motionPageFor(shot, ctx.theme);
+  if (!page) throw new Error(`${shot.visual_type} shot has no spec`);
+  // Figures say where they come from
+  const tag = ctx.sourceTag?.(shot);
+  const html = tag ? withSourceTag(page, tag, ctx.theme) : page;
   await renderMotionClip({ html, durationSec: slot.frames / FPS, outputPath: clipPath, browser: ctx.browser });
   return {
     clipPath,
@@ -136,6 +159,18 @@ const renderMap: TypedShotRenderer = async (shot, slot, clipPath, ctx) => {
   const places = await resolvePlaces(names);
   if (places.length === 0) throw new Error(`Could not place any of: ${names.join(', ') || '(none)'}`);
   const dropped = names.length - places.length;
+  if (shot.map?.mode === 'fly') {
+    const { satellite } = await renderGlobeFlyover({ place: places[0], theme: ctx.theme, durationSec: slot.frames / FPS, outputPath: clipPath, browser: ctx.browser });
+    return {
+      clipPath,
+      renderedType: 'geo_map',
+      // Natural Earth shapes are public domain; the satellite imagery needs its credit
+      license: satellite ? 'cc_by' : 'public_domain',
+      licenseSource: satellite ? 'eox_s2cloudless' : 'natural_earth',
+      attribution: satellite ? SATELLITE_CREDIT : undefined,
+      note: satellite ? 'globe flyover' : 'globe flyover (satellite imagery unavailable)',
+    };
+  }
   await renderMapClip({
     places,
     mode: places.length >= 2 ? (shot.map?.mode ?? 'route') : 'locate',
@@ -183,6 +218,9 @@ export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
   scale: renderGraphic,
   spec_card: renderGraphic,
   money: renderGraphic,
+  // Looked up when called: split-shot imports the footage renderer, which imports this module
+  split: (shot, slot, clipPath, ctx) => renderSplitShot(shot, slot, clipPath, ctx),
+  illustration: (shot, slot, clipPath, ctx) => renderIllustration(shot, slot, clipPath, ctx),
 };
 
 /** Longer narration doesn't fit a type card legibly. */
