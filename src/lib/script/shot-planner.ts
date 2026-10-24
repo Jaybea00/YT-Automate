@@ -79,6 +79,7 @@ const SIGNATURE_RULES: Record<SignatureShotType, string> = {
   race_bars: `- "race_bars": figures racing as bars, the winner lit. race = {title, unit, lower_is_better, items: [{label, value}]}. For times (0-60 mph in seconds, lap times) set lower_is_better true; for scores or speeds false. 2-6 items; every value stated in the narration or research.`,
   spec_card: `- "spec_card": a spec sheet for one car or product. spec = {title, subject, rows: [{label, value}]}. title is its name, subject a short kicker such as the maker and year; 3-6 rows like {label: "0-60 mph", value: "2.1 s"}. Every figure stated in the narration or research.`,
   money: `- "money": money you can see. money = {kind: "growth"|"shrink", from, to, currency, label}. growth: notes piling up as a sum compounds (from the starting amount to the end amount); shrink: one note shrinking to what it's worth after inflation. currency is the symbol, e.g. "$"; label says what it shows, e.g. "$1,000 at 10% for 36 years". from and to must be stated in the narration or research.`,
+  shot_map: `- "shot_map": a team's shots in a match as dots on the attacking half (the Tifo Football look), each sized by its chance quality, goals lit. shot_map = {title, team, shots, goals, xg, on_target, key_shots: [{label, x, y, outcome, xg}]}. shots, goals, xg and on_target are totals that must be stated in the narration or research (xg and on_target may be null). key_shots are at most 5 shots the narration describes, labelled with the player's surname and minute ("Balotelli 20'"): x runs 50-100 from the halfway line to the goal, y 0-100 across the pitch (50 is central); outcome "goal"|"saved"|"missed"|"blocked". Other shots are drawn in typical positions and marked as illustrative. For a match whose story is about chances: dominance, wastefulness, a smash-and-grab.`,
   scale: `- "scale": things shown side by side at true relative size, the camera pulling back as each bigger one arrives. scale = {title, items: [{label, size, unit}]}. 2-5 items in the same unit (e.g. diameters in km); every size stated in the narration or research.`,
 };
 
@@ -194,6 +195,18 @@ const DirectorShotSchema = z.object({
       .optional(),
   }),
   illustration: nullableObject({ prompt: z.string() }),
+  shot_map: nullableObject({
+    title: z.string(),
+    team: z.string(),
+    shots: z.number(),
+    goals: z.number(),
+    xg: z.number().nullable().optional(),
+    on_target: z.number().nullable().optional(),
+    key_shots: z
+      .array(z.object({ label: z.string(), x: z.number(), y: z.number(), outcome: z.enum(['goal', 'saved', 'missed', 'blocked']), xg: z.number().nullable().optional() }))
+      .nullable()
+      .optional(),
+  }),
   split: nullableObject({
     title: z.string().nullable().optional(),
     panels: z.array(z.object({ query: z.string(), label: z.string().nullable().optional(), archive: z.boolean().nullable().optional() })),
@@ -304,7 +317,7 @@ function buildBatchPrompt(
     ...(signature.illustrations
       ? [`- "illustration": a picture made by AI, shown with the label "Illustration". ONLY for what no camera could ever have captured: things in space (a black hole, an exoplanet's surface), prehistory and the ancient past before photography, the inside of the body or an atom, a legend or myth. Never real identifiable people, never real events from the age of photography, never anything that footage or archive photos could show. illustration = {prompt}: a concrete visual description in 10-30 words (subject, setting, light, era). At most 1 in every ${MIN_SHOTS_BETWEEN_ILLUSTRATIONS} shots.`]
       : []),
-    `- A "chart" can draw real World Bank figures instead of typed ones: chart.data = {indicator, countries, from_year, to_year, kind}, with labels and values left empty and a short title. Only where the narration is about one of these measures for whole countries: ${indicatorMenu()}. countries are ISO alpha-3 codes ("GBR", "USA", "WLD" for the world). kind "trend": one country over the years; "compare": 2-10 countries side by side (latest year); "race": 3-10 countries as a bar-chart race over the years, for who overtook whom (at most one per video).`,
+    `- A "chart" can draw real figures (World Bank or Our World in Data) instead of typed ones: chart.data = {indicator, countries, from_year, to_year, kind}, with labels and values left empty and a short title. Only where the narration is about one of these measures for whole countries: ${indicatorMenu()}. countries are ISO alpha-3 codes ("GBR", "USA", "WLD" for the world). kind "trend": one country over the years; "compare": 2-10 countries side by side (latest year); "race": 3-10 countries as a bar-chart race over the years, for who overtook whom (at most one per video).`,
     ...(signature.chartCallouts
       ? [`- A "chart" may carry annotations = [{index, text}]: up to ${MAX_CALLOUTS} callouts on the points or bars that matter ("the crash", "peak"), index into its values, text at most ${MAX_CALLOUT_WORDS} words.`]
       : []),
@@ -710,6 +723,24 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
         .slice(0, 6);
       return events.length >= 2 ? { ...shot, timeline: { events } } : footageFallback(beat, shot);
     }
+    case 'shot_map': {
+      const spec = shot.shot_map;
+      if (!spec?.team?.trim() || !Number.isInteger(spec.shots) || !Number.isInteger(spec.goals) || spec.shots < 1 || spec.goals < 0 || spec.goals > spec.shots || spec.shots > 60) {
+        return footageFallback(beat, shot);
+      }
+      // Every total on screen must be stated somewhere
+      const totals = [spec.shots, spec.goals, ...(spec.xg != null ? [spec.xg] : []), ...(spec.on_target != null ? [spec.on_target] : [])].filter((v) => v > 0);
+      const extra = groundValues(totals);
+      if (!extra) return footageFallback(beat, shot);
+      const keys = (spec.key_shots ?? [])
+        .map((k) => ({ ...k, label: k.label.trim() }))
+        .filter((k) => k.label && wordsIn(k.label) <= 4 && Number.isFinite(k.x) && Number.isFinite(k.y))
+        .slice(0, Math.min(5, spec.shots));
+      // The described shots can't hold more goals than the total
+      const keyGoals = keys.filter((k) => k.outcome === 'goal').length;
+      const key_shots = keyGoals > spec.goals ? keys.filter((k) => k.outcome !== 'goal') : keys;
+      return { ...withFacts(extra), shot_map: { ...spec, title: spec.title?.trim() || spec.team.trim(), team: spec.team.trim(), key_shots } };
+    }
     case 'illustration': {
       const prompt = shot.illustration?.prompt.trim().replace(/\s+/g, ' ') ?? '';
       const words = prompt.split(' ').filter(Boolean).length;
@@ -991,6 +1022,7 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   if (shot.visual_type === 'newspaper' && shot.newspaper) plan.newspaper = shot.newspaper;
   if (shot.visual_type === 'timeline' && shot.timeline) plan.timeline = shot.timeline;
   if (shot.visual_type === 'illustration' && shot.illustration) plan.illustration = { prompt: shot.illustration.prompt };
+  if (shot.visual_type === 'shot_map' && shot.shot_map) plan.shot_map = { ...shot.shot_map, key_shots: shot.shot_map.key_shots ?? [] };
   if (shot.visual_type === 'split' && shot.split) {
     plan.split = {
       title: shot.split.title ?? undefined,

@@ -1,6 +1,8 @@
 /**
- * World Bank indicators a chart may draw from real figures (free, open data, CC BY 4.0). Kept to
- * well-filled, widely understood series so a chart rarely comes up empty.
+ * Real-figure series a chart may draw from (free, open data, CC BY 4.0): World Bank indicators,
+ * and Our World in Data charts for what the World Bank doesn't cover (energy, emissions, food,
+ * health). Kept to well-filled, widely understood series so a chart rarely comes up empty.
+ * Our World in Data codes are "owid:<chart name>".
  */
 export interface Indicator {
   code: string;
@@ -37,7 +39,27 @@ export const INDICATORS: Indicator[] = [
   { code: 'ST.INT.ARVL', label: 'Tourist arrivals', unit: 'millions', scale: 1e6 },
   { code: 'TX.VAL.TECH.MF.ZS', label: 'High-tech exports', unit: '% of manufactured exports' },
   { code: 'PA.NUS.FCRF', label: 'Exchange rate', unit: 'local currency per US$' },
+  // Our World in Data (each checked against ourworldindata.org/grapher)
+  { code: 'owid:co2-emissions-per-capita', label: 'CO2 emissions per person', unit: 'tonnes a year' },
+  { code: 'owid:annual-co2-emissions-per-country', label: 'CO2 emissions', unit: 'million tonnes a year', scale: 1e6 },
+  { code: 'owid:share-electricity-renewables', label: 'Electricity from renewables', unit: '% of electricity' },
+  { code: 'owid:share-electricity-solar', label: 'Electricity from solar', unit: '% of electricity' },
+  { code: 'owid:share-electricity-wind', label: 'Electricity from wind', unit: '% of electricity' },
+  { code: 'owid:share-electricity-nuclear', label: 'Electricity from nuclear', unit: '% of electricity' },
+  { code: 'owid:per-capita-energy-use', label: 'Energy use per person', unit: 'kWh a year' },
+  { code: 'owid:oil-consumption-by-country', label: 'Oil consumption', unit: 'TWh a year' },
+  { code: 'owid:child-mortality', label: 'Children dying before age 5', unit: '% of births' },
+  { code: 'owid:share-of-adults-defined-as-obese', label: 'Adult obesity', unit: '% of adults' },
+  { code: 'owid:daily-per-capita-caloric-supply', label: 'Calories per person', unit: 'kcal a day' },
+  { code: 'owid:meat-supply-per-person', label: 'Meat per person', unit: 'kg a year' },
+  { code: 'owid:share-of-population-in-extreme-poverty', label: 'Extreme poverty', unit: '% of people' },
+  { code: 'owid:mean-years-of-schooling-long-run', label: 'Years of schooling', unit: 'average, ages 15-64' },
+  { code: 'owid:happiness-cantril-ladder', label: 'Happiness', unit: 'score out of 10' },
+  { code: 'owid:electric-car-sales-share', label: 'Electric car sales', unit: '% of new cars' },
 ];
+
+/** Where a series comes from, for its source tag. */
+export const sourceOf = (code: string) => (code.startsWith('owid:') ? 'Our World in Data' : 'World Bank');
 
 export const indicatorByCode = (code: string) => INDICATORS.find((i) => i.code === code);
 

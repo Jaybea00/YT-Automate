@@ -49,6 +49,7 @@ const SHORT_NAMES: Record<string, string> = {
 
 /** The observations for a spec (cached). Missing years are simply absent. */
 export async function fetchObservations(spec: DataSpec, fetcher: typeof fetch = fetch): Promise<Observation[]> {
+  if (spec.indicator.startsWith('owid:')) return fetchOwidObservations(spec, fetcher);
   const key = createHash('sha1').update(JSON.stringify([spec.indicator, [...spec.countries].sort(), spec.from_year, spec.to_year])).digest('hex').slice(0, 16);
   const file = path.join(cacheDir(), `${key}.json`);
   try {
@@ -129,4 +130,66 @@ export function raceFromObservations(spec: DataSpec, rows: Observation[]): RaceD
   const usable = frames.slice(Math.max(0, first));
   if (usable.length < 3) return null;
   return { title: ind.label, unit: ind.unit, frames: usable };
+}
+
+// ---- Our World in Data ----
+
+/** Our World in Data names the world "OWID_WRL"; charts call it WLD like the World Bank. */
+const OWID_CODES: Record<string, string> = { WLD: 'OWID_WRL' };
+
+/** One line of a CSV, honouring quoted fields ("Bonaire, Sint Eustatius and Saba"). */
+export function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      out.push(field);
+      field = '';
+    } else field += ch;
+  }
+  out.push(field);
+  return out;
+}
+
+/** A chart's rows from an Our World in Data CSV (entity, code, year, value, ...): the requested countries and years. */
+export function owidRows(csv: string, spec: DataSpec): Observation[] {
+  const wanted = new Map(spec.countries.map((c) => [OWID_CODES[c] ?? c, c]));
+  const rows: Observation[] = [];
+  for (const line of csv.split(/\r?\n/).slice(1)) {
+    if (!line.trim()) continue;
+    const [entity, code, year, value] = parseCsvLine(line);
+    const ours = wanted.get(code);
+    const y = Number(year);
+    const v = Number(value);
+    if (!ours || value === '' || !Number.isFinite(v) || !Number.isInteger(y) || y < spec.from_year || y > spec.to_year) continue;
+    rows.push({ code: ours, country: SHORT_NAMES[ours] ?? entity, year: y, value: v });
+  }
+  return rows;
+}
+
+async function fetchOwidObservations(spec: DataSpec, fetcher: typeof fetch): Promise<Observation[]> {
+  const slug = spec.indicator.slice('owid:'.length);
+  if (!/^[a-z0-9-]+$/.test(slug)) throw new Error('Invalid Our World in Data chart');
+  // The whole series is cached once; each chart takes its countries and years from it
+  const file = path.join(process.env.OWID_CACHE_DIR || path.join(/* turbopackIgnore: true */ process.cwd(), 'storage', 'data-cache', 'owid'), `${slug}.csv`);
+  let csv: string;
+  try {
+    csv = await fs.readFile(file, 'utf-8');
+  } catch {
+    const res = await fetcher(`https://ourworldindata.org/grapher/${slug}.csv?v=1&csvType=full&useColumnShortNames=true`, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`Our World in Data unavailable (${res.status})`);
+    csv = await res.text();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, csv, 'utf-8');
+  }
+  return owidRows(csv, spec);
 }

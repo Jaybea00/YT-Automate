@@ -26,6 +26,7 @@ import type { ShotRenderContext, TypedShotRenderer } from './shot-renderers';
 import { renderScreenRecording } from './screen-capture';
 import { evidenceBoardTemplate, letterTemplate, pitchTemplate, raceBarsTemplate, scaleTemplate } from './motion/signature-templates';
 import { moneyTemplate, specCardTemplate } from './motion/signature-templates-2';
+import { shotMapTemplate } from './motion/shot-map-template';
 import { withSourceTag } from './source-tags';
 import { renderSplitShot } from './split-shot';
 import { renderIllustration } from './illustration';
@@ -69,6 +70,8 @@ export function motionPageFor(shot: ShotPlan, theme: MotionTheme): string | null
       return shot.spec ? specCardTemplate(theme, shot.spec) : null;
     case 'money':
       return shot.money ? moneyTemplate(theme, shot.money) : null;
+    case 'shot_map':
+      return shot.shot_map ? shotMapTemplate(theme, shot.shot_map) : null;
     default:
       return null;
   }
@@ -218,6 +221,7 @@ export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
   scale: renderGraphic,
   spec_card: renderGraphic,
   money: renderGraphic,
+  shot_map: renderGraphic,
   // Looked up when called: split-shot imports the footage renderer, which imports this module
   split: (shot, slot, clipPath, ctx) => renderSplitShot(shot, slot, clipPath, ctx),
   illustration: (shot, slot, clipPath, ctx) => renderIllustration(shot, slot, clipPath, ctx),

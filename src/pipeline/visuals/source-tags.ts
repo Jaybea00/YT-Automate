@@ -2,6 +2,7 @@ import type { ResearchDossier, ResearchSource } from '@/lib/research/types';
 import type { ShotPlan } from '@/lib/script/generate-script';
 import type { MotionTheme } from './motion/theme';
 import { escapeHtml } from './motion/templates';
+import { sourceOf } from '@/lib/data/indicators';
 
 /**
  * On-screen source tags: a small "Source: UEFA" under stats and charts, from the research facts
@@ -9,7 +10,7 @@ import { escapeHtml } from './motion/templates';
  */
 
 /** Shot types that show figures and get a tag when they cite a fact. */
-export const SOURCE_TAGGED = new Set(['chart', 'stat', 'comparison', 'race_bars', 'money', 'spec_card', 'timeline', 'scale']);
+export const SOURCE_TAGGED = new Set(['chart', 'stat', 'comparison', 'race_bars', 'money', 'spec_card', 'timeline', 'scale', 'shot_map']);
 
 /** Publishers whose names aren't their domains. */
 const KNOWN: Record<string, string> = {
@@ -70,7 +71,7 @@ export function sourceLabel(source: Pick<ResearchSource, 'title' | 'url'>): stri
 /** The tag for a shot: its cited facts' publishers (at most two), or null when it cites none. */
 export function sourceTagFor(shot: Pick<ShotPlan, 'visual_type' | 'fact_ids' | 'chart'>, dossier: Pick<ResearchDossier, 'facts' | 'sources'> | null | undefined): string | null {
   // A chart of real figures says where they come from, research or not
-  if (shot.visual_type === 'chart' && shot.chart?.data) return 'Source: World Bank';
+  if (shot.visual_type === 'chart' && shot.chart?.data) return `Source: ${sourceOf(shot.chart.data.indicator)}`;
   if (!dossier || !SOURCE_TAGGED.has(shot.visual_type) || !shot.fact_ids?.length) return null;
   const sources = new Map(dossier.sources.map((s) => [s.id, s]));
   const names: string[] = [];

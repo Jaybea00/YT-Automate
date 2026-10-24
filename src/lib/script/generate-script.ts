@@ -48,11 +48,12 @@ export const SHOT_TYPES = [
   'scale',
   'spec_card',
   'money',
+  'shot_map',
 ] as const;
 export type ShotType = (typeof SHOT_TYPES)[number];
 
 /** Shot types only some styles get. */
-export const SIGNATURE_SHOT_TYPES = ['pitch', 'evidence_board', 'letter', 'race_bars', 'scale', 'spec_card', 'money'] as const satisfies readonly ShotType[];
+export const SIGNATURE_SHOT_TYPES = ['pitch', 'evidence_board', 'letter', 'race_bars', 'scale', 'spec_card', 'money', 'shot_map'] as const satisfies readonly ShotType[];
 export type SignatureShotType = (typeof SIGNATURE_SHOT_TYPES)[number];
 
 /** Diagram limits, shared by the shot planner and the renderer. */
@@ -89,6 +90,16 @@ export interface ShotPlan {
     annotations?: Array<{ index: number; text: string }>;
     /** Real figures from the World Bank instead of typed values (filled in when the chart renders). */
     data?: DataSpec | null;
+  };
+  /** Sport: a Tifo-style shot map (real totals; described shots placed, the rest illustrative). */
+  shot_map?: {
+    title: string;
+    team: string;
+    shots: number;
+    goals: number;
+    xg?: number | null;
+    on_target?: number | null;
+    key_shots?: Array<{ label: string; x: number; y: number; outcome: 'goal' | 'saved' | 'missed' | 'blocked'; xg?: number | null }>;
   };
   /** A labelled AI illustration (free) of something no camera could capture. */
   illustration?: { prompt: string };
