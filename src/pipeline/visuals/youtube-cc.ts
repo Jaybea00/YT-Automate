@@ -169,9 +169,12 @@ export function ytDlpArgs(url: string, outputPath: string, ffmpegDir: string | n
     '--no-warnings',
     '--quiet',
     ...cookieArgs(env),
+    // YouTube hands out video formats only after a JavaScript challenge: solved with Node (which
+    // runs this app) and yt-dlp's official solver script
+    '--js-runtimes', 'node',
+    '--remote-components', 'ejs:github',
     '-f', 'bv*[height<=1080][ext=mp4]/bv*[height<=1080]/b[height<=1080]/bv*/b',
     '--download-sections', `*0-${DOWNLOAD_SECONDS}`,
-    '--force-keyframes-at-cuts',
     '--remux-video', 'mp4',
     ...(ffmpegDir ? ['--ffmpeg-location', ffmpegDir] : []),
     '-o', outputPath,

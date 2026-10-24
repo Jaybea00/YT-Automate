@@ -140,7 +140,7 @@ describe('Signature shots: styles', () => {
   };
 
   it('gives each style its own signature shots', () => {
-    assert.deepEqual(STYLE_PACKS.sport.signatureShots, ['pitch', 'race_bars']);
+    assert.deepEqual(STYLE_PACKS.sport.signatureShots, ['pitch', 'race_bars', 'shot_map']);
     assert.deepEqual(STYLE_PACKS.mystery.signatureShots, ['evidence_board']);
     assert.deepEqual(STYLE_PACKS.history.signatureShots, ['letter']);
     assert.equal(STYLE_PACKS.finance.chartCallouts, true);
