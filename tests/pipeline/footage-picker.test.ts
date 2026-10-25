@@ -199,6 +199,53 @@ describe('Vision relevance check', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('tries Creative Commons YouTube before giving up on footage', async () => {
+    mockNetwork();
+    const queries: string[] = [];
+    const ytClip = candidate('yt_sarajevo', { provider: 'youtube_cc', mediaType: 'video', title: 'Sarajevo 1914 film' });
+    const picked = await pickFootage({
+      shot: shot({ visual_query: 'Latin Bridge Sarajevo 1914' }),
+      llmProvider: mockVision([{ index: 1, score: 8, era_ok: true, subject_match: true, reason: 'the bridge' }]),
+      llmCtx: { apiKey: 'k' },
+      youtubeCc: true,
+      searchYoutube: async (q) => {
+        queries.push(q);
+        return [ytClip];
+      },
+    });
+    assert.equal(queries.length, 1, 'one YouTube search');
+    assert.equal(picked.ranked[0]?.candidate.id, 'yt_sarajevo');
+    assert.equal(picked.checked, true);
+  });
+
+  it('turns away YouTube clips that fail the relevance check', async () => {
+    mockNetwork();
+    const picked = await pickFootage({
+      shot: shot({ visual_query: 'Latin Bridge Sarajevo 1914' }),
+      llmProvider: mockVision([{ index: 1, score: 3, era_ok: false, subject_match: false, reason: 'a modern street' }]),
+      llmCtx: { apiKey: 'k' },
+      youtubeCc: true,
+      searchYoutube: async () => [candidate('yt_street', { provider: 'youtube_cc', mediaType: 'video' })],
+    });
+    assert.deepEqual(picked.ranked, []);
+  });
+
+  it('never searches YouTube when it is switched off', async () => {
+    mockNetwork();
+    let searched = 0;
+    const picked = await pickFootage({
+      shot: shot({ visual_query: 'nothing matches this' }),
+      llmProvider: mockVision([]),
+      llmCtx: { apiKey: 'k' },
+      searchYoutube: async () => {
+        searched++;
+        return [];
+      },
+    });
+    assert.equal(searched, 0);
+    assert.deepEqual(picked.ranked, []);
+  });
 });
 
 describe('Newspaper scans', () => {

@@ -450,6 +450,15 @@ export function computeSceneStartOffsetsSec(
 export const XFADE_GROUP_SIZE = 6;
 
 /**
+ * Inputs for a join. A beat stream-copied from shots can change its colour tags mid-file (one shot
+ * tagged bt470bg, the next untagged); ffmpeg 9 then rebuilds the whole join graph on the fly, which
+ * restarts its timestamps and silently drops every later frame (a 4-minute video came out 2.5
+ * minutes long, the narration running on over the last picture). All scenes are 1080p30, so the
+ * graph never needs rebuilding.
+ */
+export const joinInputArgs = (clipPaths: string[]): string[] => clipPaths.flatMap((p) => ['-reinit_filter', '0', '-i', p]);
+
+/**
  * Crossfades clips in one ffmpeg command: each clip overlaps the next by `transSec`, picture and
  * sound together. Durations are the clips' own (probed by the caller).
  */
@@ -477,7 +486,7 @@ async function xfadeClips(clipPaths: string[], durations: number[], transSec: nu
     getFfmpegPath(),
     [
       '-y',
-      ...clipPaths.flatMap((p) => ['-i', p]),
+      ...joinInputArgs(clipPaths),
       '-filter_complex',
       [...vFilters, ...aFilters].join(';'),
       '-map', '[vout]',
@@ -569,7 +578,7 @@ async function joinMixedClips(clipPaths: string[], durations: number[], joins: A
   try {
     await execFileAsync(
       getFfmpegPath(),
-      ['-y', ...clipPaths.flatMap((p) => ['-i', p]), '-/filter_complex', scriptPath, '-map', '[vout]', '-map', '[aout]', ...SCENE_VIDEO_ENCODE, '-r', '30', ...SCENE_AUDIO_ENCODE, outputPath],
+      ['-y', ...joinInputArgs(clipPaths), '-/filter_complex', scriptPath, '-map', '[vout]', '-map', '[aout]', ...SCENE_VIDEO_ENCODE, '-r', '30', ...SCENE_AUDIO_ENCODE, outputPath],
       { maxBuffer: 16 * 1024 * 1024 },
     );
   } finally {
@@ -608,6 +617,29 @@ async function joinMixedInGroups(
     await joinMixedInGroups(groupPaths, groupDurations, groupJoins, outputPath, tempDir, level + 1);
   } finally {
     await Promise.all(groupPaths.map((p) => fs.unlink(p).catch(() => {})));
+  }
+}
+
+/** A joined video more than this short of its clips (less overlaps) lost frames on the way. */
+const MAX_JOIN_SHORTFALL_SEC = 1;
+
+/** Throws when a join lost picture, so the caller falls back to the lossless cut join. */
+async function assertJoinedLength(outputPath: string, durations: number[], overlapsSec: number[]): Promise<void> {
+  const expected = durations.reduce((a, b) => a + b, 0) - overlapsSec.reduce((a, b) => a + b, 0);
+  const actual = await probeVideoStreamSec(outputPath);
+  if (actual !== null && expected - actual > MAX_JOIN_SHORTFALL_SEC) {
+    throw new Error(`joined picture is ${actual.toFixed(1)}s, expected ${expected.toFixed(1)}s`);
+  }
+}
+
+/** The picture's own length (the file's length can include longer audio). */
+async function probeVideoStreamSec(filePath: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(getFfprobePath(), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', filePath]);
+    const sec = Number.parseFloat(stdout.trim());
+    return Number.isFinite(sec) ? sec : null;
+  } catch {
+    return null;
   }
 }
 
@@ -658,6 +690,7 @@ export async function joinSceneClips(
     try {
       await joinMixedInGroups(sceneClipPaths, durations, safe, outputPath, tempDir);
       const overlapsSec = safe.map((j) => (j.type === 'cut' ? 0 : j.sec));
+      await assertJoinedLength(outputPath, durations, overlapsSec);
       return { outputPath, overlapSec: Math.max(0, ...overlapsSec), overlapsSec };
     } catch (err) {
       const detail = err instanceof Error ? err.message.slice(-600) : String(err);
@@ -670,6 +703,7 @@ export async function joinSceneClips(
     const transSec = resolveTransitionSeconds(durations, options?.transitionDuration);
     try {
       await xfadeInGroups(sceneClipPaths, durations, transSec, transition === 'wipe' ? 'wipeleft' : 'fade', outputPath, tempDir);
+      await assertJoinedLength(outputPath, durations, sceneClipPaths.slice(1).map(() => transSec));
       return { outputPath, overlapSec: transSec, overlapsSec: sceneClipPaths.slice(1).map(() => transSec) };
     } catch (err) {
       const detail = err instanceof Error ? err.message.slice(-600) : String(err);

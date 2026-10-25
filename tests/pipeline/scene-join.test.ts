@@ -21,7 +21,50 @@ async function scene(file: string, seconds: number, colour: string, withAudio = 
   ]);
 }
 
+/**
+ * A scene whose colour tags change halfway, like a beat stream-copied from shots: the first half
+ * untagged, the second tagged bt470bg.
+ */
+async function retaggedScene(dir: string, file: string, halfSeconds: number): Promise<void> {
+  const halves = [path.join(dir, 'half_a.mp4'), path.join(dir, 'half_b.mp4')];
+  await scene(halves[0], halfSeconds, 'teal');
+  await execFileAsync('ffmpeg', [
+    '-v', 'error', '-y',
+    '-f', 'lavfi', '-i', `color=c=maroon:s=1920x1080:r=30:d=${halfSeconds}`,
+    '-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=48000:duration=${halfSeconds}`,
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-colorspace', 'bt470bg', '-color_range', 'tv',
+    '-c:a', 'aac', '-ac', '2', '-ar', '48000', '-shortest',
+    halves[1],
+  ]);
+  const list = path.join(dir, 'halves.txt');
+  await fs.writeFile(list, halves.map((h) => `file '${h.replace(/\\/g, '/')}'`).join('\n'));
+  await execFileAsync('ffmpeg', ['-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', file]);
+}
+
 describe('Joining scenes with crossfades', () => {
+  it('keeps every frame when a scene changes its colour tags halfway', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'join-'));
+    try {
+      const clips = [path.join(dir, 'a.mp4'), path.join(dir, 'b.mp4'), path.join(dir, 'retagged.mp4'), path.join(dir, 'c.mp4')];
+      await scene(clips[0], 2, 'red');
+      await scene(clips[1], 2, 'green');
+      await retaggedScene(dir, clips[2], 2);
+      await scene(clips[3], 2, 'blue');
+      const out = path.join(dir, 'joined.mp4');
+      const joined = await joinSceneClips(clips, out, dir, {
+        transition: 'style',
+        joins: [{ type: 'cut', sec: 0 }, { type: 'cut', sec: 0 }, { type: 'fade', sec: 0.4 }],
+      });
+      assert.deepEqual(joined.overlapsSec, [0, 0, 0.4], 'joined with the planned transitions, not the fallback');
+      const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=duration', '-of', 'csv=p=0', out]);
+      const durations = await Promise.all(clips.map((p) => probeClipDurationSec(p)));
+      const expected = durations.reduce((a, b) => a + b, 0) - 0.4;
+      assert.ok(Math.abs(Number(stdout.trim()) - expected) < 0.15, `picture ${stdout.trim()} s, expected ${expected.toFixed(2)} s`);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('crossfades many scenes in groups, exactly as long as one pass would be', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'join-'));
     try {
