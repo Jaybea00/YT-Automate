@@ -2,12 +2,15 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ZodType } from 'zod';
 import { ProviderError } from '../errors';
 import { mapHttpOrSdkError } from '../error-mapper';
-import type { LLMProvider, ProviderCallContext, Usage } from '../types';
+import type { LLMProvider, LlmImage, ProviderCallContext, Usage } from '../types';
+
+type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
 export class AnthropicLlmProvider implements LLMProvider {
   readonly kind = 'llm' as const;
   readonly id: string;
   readonly requiresApiKey: boolean;
+  readonly supportsVision = true;
 
   constructor(id: string = 'anthropic', requiresApiKey: boolean = true) {
     this.id = id;
@@ -55,7 +58,7 @@ export class AnthropicLlmProvider implements LLMProvider {
   }
 
   async generateJson<T>(
-    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number },
+    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number; images?: LlmImage[] },
     ctx: ProviderCallContext,
   ): Promise<{ data: T; usage: Usage }> {
     try {
@@ -66,11 +69,22 @@ export class AnthropicLlmProvider implements LLMProvider {
         ? `${req.system}\nYou must output valid JSON only — no prose before or after, no markdown fences.`
         : 'You must output valid JSON only.';
 
+      // Images go before the prompt, in the order the prompt numbers them
+      const content: Anthropic.ContentBlockParam[] | string = req.images?.length
+        ? [
+            ...req.images.map((img) => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: img.mimeType as ImageMediaType, data: img.data },
+            })),
+            { type: 'text' as const, text: req.prompt },
+          ]
+        : req.prompt;
+
       const response = await client.messages.create({
         model,
         max_tokens: req.maxTokens || 4096,
         system: systemPrompt,
-        messages: [{ role: 'user', content: req.prompt }],
+        messages: [{ role: 'user', content }],
       });
 
       const textBlock = response.content.find((block) => block.type === 'text');
