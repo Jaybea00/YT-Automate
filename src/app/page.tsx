@@ -96,6 +96,18 @@ export default function PipelineDashboard() {
               <span>🧩 Packs &amp; Voices</span>
             </Link>
             <Link
+              href="/clips"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
+            >
+              <span>✂️ Clip to Short</span>
+            </Link>
+            <Link
+              href="/hunts"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
+            >
+              <span>🎯 Stream Hunter</span>
+            </Link>
+            <Link
               href="/library"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
             >

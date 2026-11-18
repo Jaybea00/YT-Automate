@@ -118,6 +118,8 @@ export interface ClipProject {
   error?: string;
   warnings: string[];
   source?: ClipSource;
+  /** The source file was put in the folder directly (a hunted moment), so there is nothing to download. */
+  localSource?: boolean;
   analysis?: ClipAnalysis;
   plan?: ClipPlan;
   output?: { video: string; thumbnail: string; renderedAt: string; durationSec: number };
