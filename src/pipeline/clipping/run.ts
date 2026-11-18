@@ -66,7 +66,7 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
     if (!project) return;
     const warnings = from === 'all' ? [] : project.warnings.filter((w) => !/voiced|voiceover|script writer|stills/i.test(w));
 
-    if (from === 'all' || !project.source) {
+    if ((from === 'all' && !project.localSource) || !project.source) {
       await setStatus(id, 'downloading', 'Downloading the clip');
       const source = await downloadClip(project.sourceUrl, dir);
       project = await updateClip(id, (p) => {

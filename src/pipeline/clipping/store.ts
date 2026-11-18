@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { writeFileAtomic } from '../utils/atomic-write';
 import type { ClipProject } from './types';
 
 /**
@@ -37,11 +38,7 @@ export async function saveClip(project: ClipProject): Promise<ClipProject> {
   const dir = clipDir(project.id);
   await fs.mkdir(dir, { recursive: true });
   const next = { ...project, updatedAt: new Date().toISOString() };
-  // Written to a temp file first so a reader never sees half a file
-  const target = path.join(dir, 'project.json');
-  const tmp = `${target}.${randomBytes(3).toString('hex')}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf-8');
-  await fs.rename(tmp, target);
+  await writeFileAtomic(path.join(dir, 'project.json'), JSON.stringify(next, null, 2));
   return next;
 }
 

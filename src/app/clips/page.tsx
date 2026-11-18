@@ -81,7 +81,10 @@ export default function ClipsPage() {
       <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-300">← Home</Link>
+            <div className="flex gap-4 text-sm text-zinc-500">
+              <Link href="/" className="hover:text-zinc-300">← Home</Link>
+              <Link href="/hunts" className="hover:text-zinc-300">🎯 Stream Hunter</Link>
+            </div>
             <h1 className="text-2xl font-bold mt-1">✂️ Clip to Short</h1>
             <p className="text-sm text-zinc-400 mt-1">Paste a clip link (X, Twitch, YouTube, Kick, TikTok). You get a 9:16 Short with captions, hook and voiceover, plus titles and a description to upload yourself.</p>
           </div>
