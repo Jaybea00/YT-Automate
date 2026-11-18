@@ -31,7 +31,7 @@ import {
   type RhythmIssue,
   type RhythmRule,
 } from './visual-rhythm';
-import { stylePack } from '@/lib/styles/packs';
+import { stylePack, type StylePack } from '@/lib/styles/packs';
 import { indicatorMenu, normalizeDataSpec } from '@/lib/data/indicators';
 import { MAX_CARD_VERSES, formatVerseRef, parseVerseRef } from '@/lib/stickman/bible';
 import { planDrawingNotes } from '@/lib/stickman/drawing-notes';
@@ -1302,6 +1302,8 @@ export interface PlanShotsOptions {
   onlyBeats?: number[];
   /** The video's style: its pack adds director notes and sets the graphics limit. */
   style?: string | null;
+  /** The video's composed style pack, when it has one (wins over `style`). */
+  pack?: StylePack;
   /** Labelled AI illustrations allowed (default: the style's choice; the video's setting overrides). */
   illustrations?: boolean | null;
   /** Drawn styles: about how many drawings the creator wants to make for the whole video. */
@@ -1332,7 +1334,7 @@ export async function planShotsWith(
   options: PlanShotsOptions = {},
 ): Promise<GeneratedScript> {
   const facts = script.research?.facts ?? [];
-  const pack = stylePack(options.style);
+  const pack = options.pack ?? stylePack(options.style);
   const maxGraphicsShare = pack?.maxGraphicsShare ?? MAX_GRAPHICS_SHARE;
   const drawn = pack?.drawn;
   const pacing = drawn ? drawnPacing(script.beats, drawn.secondsPerShot, options.drawingBudget) : DEFAULT_PACING;

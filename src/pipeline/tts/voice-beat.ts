@@ -37,6 +37,8 @@ interface JobVoiceFields {
   voice_override?: string | null;
   narration_pacing?: { speed?: unknown; sentencePauseSec?: unknown } | null;
   dramatic_pause_sec?: unknown;
+  /** How the narrator should sound, fixed on the job (from the video's composed style). */
+  delivery?: unknown;
 }
 
 function jobDramaticPause(script: JobVoiceFields): number | undefined {
@@ -72,7 +74,7 @@ export async function resolveTtsSetup(
     voiceId,
     // Opt-in per voice config: measured on Gemini, any instruction slows narration well below
     // the pace scripts are planned for, so plain narration is the default
-    direction: resolved.options.styleDirection === true ? deliveryForStyle(job.template) : undefined,
+    direction: resolved.options.styleDirection === true ? (typeof script.delivery === 'string' && script.delivery.trim() ? script.delivery : deliveryForStyle(job.template)) : undefined,
     pronunciations: await loadPronunciations(),
     pacing: jobPacing(script),
     dramaticPauseSec: jobDramaticPause(script),

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { packForVideo } from '@/lib/styles/compose';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { adCheckScript, type AdCheckReport } from '@/lib/script/ad-check';
 import type { ScriptBeat } from '@/lib/script/generate-script';
@@ -21,7 +22,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     const beats: ScriptBeat[] = sent?.length ? sent : (video.script_json.beats ?? []);
     if (beats.length === 0) return NextResponse.json({ error: 'There is no script to check yet.' }, { status: 400 });
 
-    const report = await adCheckScript(supabase, beats, video.script_json.title_options ?? [], video.style);
+    const report = await adCheckScript(supabase, beats, video.script_json.title_options ?? [], video.style, packForVideo(video));
     const { data: latest } = await supabase.from('videos').select('script_json').eq('id', id).maybeSingle();
     const { error } = await supabase
       .from('videos')

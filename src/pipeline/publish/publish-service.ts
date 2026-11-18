@@ -10,7 +10,8 @@ import { resolveForStage } from '../providers/registry';
 import type { LLMProvider } from '../providers/types';
 import { buildDescriptionCredits } from '../utils/credits';
 import { readTimeline, type VideoTimeline } from '../utils/timeline';
-import { themeForStyle } from '../visuals/motion/theme';
+import { themeForVideo } from '../visuals/motion/theme';
+import { packForVideo } from '@/lib/styles/compose';
 import { composeDescription, descriptionSources, generateMetadata, type VideoMetadata } from './metadata';
 import { chosenPackage, type Packaging } from '@/lib/script/packaging-types';
 import { createNativeShort, draftShortIdeas, type NativeShorts } from '@/lib/script/native-shorts';
@@ -148,7 +149,7 @@ export async function regenerateMetadata(supabase: SupabaseClient, video: VideoR
   if (!llm) throw new Error('No script LLM is configured');
   const metadata = await generateMetadata({
     topic: video.topic ?? '',
-    style: video.style,
+    style: packForVideo(video)?.label ?? video.style,
     currentTitle: video.title,
     narration: (sj.beats ?? []).map((b) => b.text),
     sectionTitles: sj.sections?.sections?.map((s) => s.title) ?? [],
@@ -178,7 +179,7 @@ export async function regenerateThumbnails(supabase: SupabaseClient, video: Vide
     topic: video.topic ?? '',
     narration: (sj.beats ?? []).map((b) => b.text).join(' '),
     creatorIdeas: creatorThumbnailIdeas(sj),
-    theme: themeForStyle(video.style),
+    theme: themeForVideo(video),
     llm: await scriptLlm(supabase),
   });
   await savePublish(supabase, video.id, { thumbnails });
@@ -205,6 +206,7 @@ export async function makeNativeShort(supabase: SupabaseClient, video: VideoRow,
       style: (video.style ?? 'story_driven') as VideoStyle,
       research: (sj.research as ResearchDossier | undefined) ?? null,
       beats: (sj.beats ?? []).map((b, i) => ({ index: i, text: b.text })),
+      scriptJson: sj,
     },
     idea,
   );
@@ -255,7 +257,7 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
         timeline,
         beats,
         words,
-        highlightHex: themeForStyle(video.style).accent,
+        highlightHex: themeForVideo(video).accent,
         outPath: path.join(dir, `short_${i + 1}.mp4`),
         reframe: options.reframe !== false,
       }),

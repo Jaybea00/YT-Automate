@@ -4,6 +4,7 @@ import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider } from '@/pipeline/providers/types';
 import type { ResearchDossier } from '@/lib/research/types';
 import { withStyleDefaults } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 import { generateScript, withWritingModel, type ScriptBeat } from './generate-script';
 import { planShots } from './shot-planner';
 import { afterWriteChecks } from './after-write';
@@ -109,7 +110,7 @@ ${lines.join('\n')}`;
  */
 export async function createNativeShort(
   supabase: SupabaseClient,
-  parent: { id: string; style: VideoStyle; research?: ResearchDossier | null; beats: Array<Pick<ScriptBeat, 'index' | 'text'>> },
+  parent: { id: string; style: VideoStyle; research?: ResearchDossier | null; beats: Array<Pick<ScriptBeat, 'index' | 'text'>>; scriptJson?: unknown },
   idea: NativeShortIdea,
 ): Promise<string> {
   const { data: row, error } = await supabase
@@ -118,21 +119,27 @@ export async function createNativeShort(
     .select()
     .single();
   if (error || !row) throw new Error(`Could not create the Short: ${error?.message}`);
+  // A parent made from a format and niche passes its composed style on to its Shorts
+  const pack = packForVideo({ style: parent.style, script_json: parent.scriptJson });
+  const parentStyle = parent.scriptJson as { style_setup?: unknown; style_pack?: unknown } | null | undefined;
+  const inherited = parentStyle?.style_pack ? { style_setup: parentStyle.style_setup, style_pack: parentStyle.style_pack } : {};
 
   try {
     const written = await generateScript(supabase, {
       topic: idea.title,
       style: parent.style,
+      pack,
       targetMinutes: SHORT_TARGET_MINUTES,
       research: parent.research ?? null,
       brief: shortBrief(idea, parent.beats),
       format: 'short',
     });
     const titled = { ...written, title_options: [idea.title, ...written.title_options.filter((t) => t !== idea.title)] };
-    const planned = await planShots(supabase, titled, idea.title, { style: parent.style });
-    const checks = await afterWriteChecks(supabase, idea.title, planned, parent.style);
+    const planned = await planShots(supabase, titled, idea.title, { style: parent.style, pack });
+    const checks = await afterWriteChecks(supabase, idea.title, planned, parent.style, pack);
     const scriptJson = {
-      ...withStyleDefaults(planned, parent.style),
+      ...withStyleDefaults(planned, parent.style, pack),
+      ...inherited,
       ...checks,
       format: 'short' as const,
       short: { parent_video_id: parent.id, hook_banner: idea.hook_banner },

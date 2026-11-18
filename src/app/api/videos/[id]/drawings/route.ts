@@ -3,12 +3,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import { stylePack } from '@/lib/styles/packs';
 import { drawingCode, parseDrawingCode } from '@/lib/stickman/drawing-codes';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import { listDrawings, saveDrawing } from '@/pipeline/visuals/drawings-store';
 import { loadComposedBeat } from '@/pipeline/visuals/shot-editor';
 import { editShot } from '@/pipeline/visuals/shot-editor-actions';
+import { packForVideo } from '@/lib/styles/compose';
 import { sniffMediaType } from '@/pipeline/utils/media-upload';
 
 interface RouteContext {
@@ -21,7 +21,7 @@ async function loadDrawnVideo(videoId: string) {
   const supabase = getSupabaseServerClient();
   const { data: video } = await supabase.from('videos').select('id, style, script_json').eq('id', videoId).maybeSingle();
   if (!video) return { supabase, error: NextResponse.json({ error: 'Video not found' }, { status: 404 }) };
-  if (!stylePack(video.style)?.drawn) return { supabase, error: NextResponse.json({ error: 'This is not a stickman video' }, { status: 400 }) };
+  if (!packForVideo(video)?.drawn) return { supabase, error: NextResponse.json({ error: 'This is not a stickman video' }, { status: 400 }) };
   return { supabase, video, beats: (video.script_json?.beats ?? []) as ScriptBeat[] };
 }
 

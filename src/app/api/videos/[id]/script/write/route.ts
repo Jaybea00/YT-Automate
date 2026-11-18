@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript } from '@/lib/script/generate-script';
 import { planShots } from '@/lib/script/shot-planner';
+import { packForVideo } from '@/lib/styles/compose';
 import { normalizeOutline, type ScriptOutline } from '@/lib/script/outline';
 import { afterWriteChecks } from '@/lib/script/after-write';
 import { chosenPackage, sanitizePackaging, type Packaging } from '@/lib/script/packaging-types';
@@ -50,14 +51,15 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     const written = await generateScript(supabase, {
       topic: video.topic,
       style: video.style,
+      pack: packForVideo(video),
       targetMinutes: video.target_minutes,
       research: sj.research ?? null,
       brief: sj.brief ?? null,
       outline,
       packaging: chosenPackage(packaging),
     });
-    const planned = await planShots(supabase, written, video.topic, { style: video.style, illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
-    const checks = await afterWriteChecks(supabase, video.topic, planned, video.style);
+    const planned = await planShots(supabase, written, video.topic, { style: video.style, pack: packForVideo(video), illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
+    const checks = await afterWriteChecks(supabase, video.topic, planned, video.style, packForVideo(video));
 
     // Re-read so settings changed while the script was being written aren't lost
     const { data: latest } = await supabase.from('videos').select('script_json').eq('id', id).single();

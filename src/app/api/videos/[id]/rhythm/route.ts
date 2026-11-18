@@ -4,7 +4,7 @@ import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { analyzeRhythm, planToRhythmShots, type RhythmReport } from '@/lib/script/visual-rhythm';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import { computeRenderedRhythm } from '@/pipeline/visuals/rhythm-report';
-import { stylePack } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 
 /**
  * Visual rhythm (slideshow risk) for a video: the shot plan's (with the repairs the planner
@@ -19,7 +19,7 @@ export async function handleGetRhythm(id: string, supabaseClient?: SupabaseClien
   const beats: ScriptBeat[] = Array.isArray(video.script_json?.beats) ? video.script_json.beats : [];
   const saved = video.script_json?.rhythm as { plan?: RhythmReport } | undefined;
   const planned = beats.some((b) => b.shots?.length);
-  const plan = saved?.plan ?? (planned ? analyzeRhythm(planToRhythmShots(beats), 'plan', [], stylePack(video.style)?.maxGraphicsShare) : null);
+  const plan = saved?.plan ?? (planned ? analyzeRhythm(planToRhythmShots(beats), 'plan', [], packForVideo(video)?.maxGraphicsShare) : null);
   const render = await computeRenderedRhythm(supabase, id).catch(() => null);
   return NextResponse.json({ plan, render });
 }

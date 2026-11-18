@@ -1,4 +1,5 @@
 import { stylePack } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 import { DOCUMENTARY, type MotionTheme } from '@/lib/styles/themes';
 
 /**
@@ -9,6 +10,11 @@ export type { MotionTheme };
 
 export function themeForStyle(style: string | null | undefined): MotionTheme {
   return stylePack(style)?.theme ?? DOCUMENTARY;
+}
+
+/** A video's theme: from its composed style (format plus niche) when it has one, else its style's. */
+export function themeForVideo(video: { style?: string | null; script_json?: unknown } | null | undefined): MotionTheme {
+  return packForVideo(video)?.theme ?? DOCUMENTARY;
 }
 
 /** Shared CSS: background with overlay and a gentle film grain for texture. */

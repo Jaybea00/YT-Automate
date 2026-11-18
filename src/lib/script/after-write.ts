@@ -4,6 +4,7 @@ import { factCheckOrNull } from './fact-check';
 import { suggestPronunciationsOrNull } from './pronunciation-hints';
 import { adCheckOrLocal } from './ad-check';
 import type { GeneratedScript } from './generate-script';
+import type { StylePack } from '@/lib/styles/packs';
 
 /**
  * Checks run on every newly written script, side by side: the independent fact-check, the
@@ -15,13 +16,14 @@ export async function afterWriteChecks(
   topic: string,
   script: Pick<GeneratedScript, 'beats' | 'research' | 'title_options'>,
   style?: string | null,
+  pack?: StylePack,
 ): Promise<Pick<GeneratedScript, 'fact_check' | 'pronunciation_hints' | 'ad_check'>> {
   const [factCheck, hints, adCheck] = await Promise.all([
     factCheckOrNull(supabase, script.beats, script.research),
     loadPronunciations().then((known) =>
       suggestPronunciationsOrNull(supabase, topic, script.beats.map((b) => b.text), known),
     ),
-    adCheckOrLocal(supabase, script.beats, script.title_options ?? [], style),
+    adCheckOrLocal(supabase, script.beats, script.title_options ?? [], style, pack),
   ]);
   return {
     ...(factCheck ? { fact_check: factCheck } : {}),

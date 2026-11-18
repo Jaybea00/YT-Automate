@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider } from '@/pipeline/providers/types';
-import { stylePack } from '@/lib/styles/packs';
 import { withWritingModel, type ScriptBeat } from '@/lib/script/generate-script';
+import { packForVideo } from '@/lib/styles/compose';
 import { planDrawingNotes } from '@/lib/stickman/drawing-notes';
 
 interface RouteContext {
@@ -20,7 +20,7 @@ export async function POST(_req: Request, context: RouteContext) {
   const supabase = getSupabaseServerClient();
   const { data: video } = await supabase.from('videos').select('id, style, script_json').eq('id', id).maybeSingle();
   if (!video) return NextResponse.json({ error: 'Video not found' }, { status: 404 });
-  if (!stylePack(video.style)?.drawn) return NextResponse.json({ error: 'This is not a stickman video' }, { status: 400 });
+  if (!packForVideo(video)?.drawn) return NextResponse.json({ error: 'This is not a stickman video' }, { status: 400 });
   const beats = (video.script_json?.beats ?? []) as ScriptBeat[];
   if (!beats.some((b) => b.shots?.some((s) => s.visual_type === 'drawing'))) {
     return NextResponse.json({ error: 'Plan the drawing brief first' }, { status: 400 });

@@ -8,6 +8,7 @@ import {
 } from '@/lib/script/parser';
 import { GeneratedScript } from '@/lib/script/generate-script';
 import { planShots } from '@/lib/script/shot-planner';
+import { keptStyle, packForVideo } from '@/lib/styles/compose';
 
 export async function POST(
   req: Request,
@@ -64,8 +65,9 @@ export async function POST(
       const segmented = await parseRawTextWithAi(supabase, rawText, {
         topic: video.topic,
         style: video.style,
+        pack: packForVideo(video),
       });
-      newScript = await planShots(supabase, segmented, video.topic || video.title, { style: video.style, illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
+      newScript = await planShots(supabase, segmented, video.topic || video.title, { style: video.style, pack: packForVideo(video), illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
     } else {
       // mode === 'raw_paragraphs'
       if (!rawText || !rawText.trim()) {
@@ -85,7 +87,8 @@ export async function POST(
     const { data: updatedVideo, error: updateError } = await supabase
       .from('videos')
       .update({
-        script_json: newScript,
+        // A video made from a format and niche keeps its style through an import
+        script_json: { ...keptStyle(video.script_json), ...newScript },
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)

@@ -9,7 +9,7 @@ import { motionDocument, FRAME_HEIGHT, FRAME_WIDTH, FPS } from '../visuals/motio
 import { escapeHtml } from '../visuals/motion/templates';
 import type { MotionTheme } from '../visuals/motion/theme';
 import { narrationHash } from './sound-moments';
-import { stylePack } from '@/lib/styles/packs';
+import { stylePack, type StylePack } from '@/lib/styles/packs';
 
 /**
  * Emphasis effects, applied once at mastering (before the captions, so captions never shake or
@@ -208,6 +208,8 @@ export async function prepareEmphasis(options: {
   supabase: SupabaseClient;
   videoId: string;
   style?: string | null;
+  /** The video's composed style pack, when it has one (wins over `style`). */
+  pack?: StylePack;
   theme: MotionTheme;
   beats: Array<{ index: number; text: string; voiceStartMs: number; voiceEndMs: number }>;
   /** Narration sound cues (impact sounds get a shake). */
@@ -219,7 +221,7 @@ export async function prepareEmphasis(options: {
 }): Promise<{ graph: string; inputs: string[]; letterbox: string | null; summary: string } | null> {
   const { settings } = options;
   if (settings?.enabled === false) return null;
-  const pack = stylePack(options.style);
+  const pack = options.pack ?? stylePack(options.style);
   const shakes = options.soundCues
     .filter((c) => IMPACT_SOUNDS.has(c.sound.replace(/^real:/, '')))
     .map((c) => ({ atSec: c.atMs / 1000 }));

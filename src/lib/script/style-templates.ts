@@ -1,4 +1,4 @@
-import { STYLE_PACKS, type VideoStyle } from '@/lib/styles/packs';
+import { STYLE_PACKS, type StylePack, type VideoStyle } from '@/lib/styles/packs';
 
 /**
  * One script template per style pack (src/lib/styles/packs.ts, where styles are defined). Each
@@ -80,7 +80,19 @@ export const STYLE_TEMPLATES = Object.fromEntries(
  * A style's voice without the full-script output format, for prompts that edit
  * part of a script (beat rewrites, hooks, reviews) and return their own JSON.
  */
-export function styleVoice(style: VideoStyle): string {
+export function styleVoice(style: VideoStyle, pack?: StylePack): string {
+  if (pack) return pack.voice.trim();
   const template = STYLE_TEMPLATES[style] ?? STYLE_TEMPLATES.story_driven;
   return template.systemPrompt.replace(BEAT_STRUCTURE_INSTRUCTIONS, '').trim();
+}
+
+/** The script template for a composed style pack (a format plus a niche): its voice, then the shared rules. */
+export function templateForPack(pack: StylePack): StyleTemplate {
+  return { name: pack.name, label: pack.label, description: pack.description, systemPrompt: `${pack.voice}\n${BEAT_STRUCTURE_INSTRUCTIONS}` };
+}
+
+/** A video's script template: its composed pack's when it has one, else its original style's. */
+export function styleTemplate(style: string | null | undefined, pack?: StylePack): StyleTemplate | undefined {
+  if (pack) return templateForPack(pack);
+  return style ? STYLE_TEMPLATES[style as VideoStyle] : undefined;
 }

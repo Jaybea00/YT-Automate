@@ -90,6 +90,12 @@ export default function PipelineDashboard() {
               <span>🎙️ Narrator Voices</span>
             </Link>
             <Link
+              href="/styles"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
+            >
+              <span>🧩 Packs &amp; Voices</span>
+            </Link>
+            <Link
               href="/library"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
             >

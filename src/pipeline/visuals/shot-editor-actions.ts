@@ -5,15 +5,15 @@ import { resolveForStage } from '../providers/registry';
 import type { LLMProvider, StockProvider } from '../providers/types';
 import { gatherCandidates, heuristicRank, visionRank } from './footage-picker';
 import { MOTION_RENDERERS, renderTextCard } from './motion-shots';
-import { themeForStyle } from './motion/theme';
+import { themeForVideo } from './motion/theme';
 import type { ComposedShot, ShotAlternative } from './shot-composer';
 import { replaceShot, type ComposedBeatRecord } from './shot-editor';
 import { candidateFromAlternative, renderCandidateShot, renderFootageShot, toAlternative, type ShotRenderContext } from './shot-renderers';
-import { stylePack } from '@/lib/styles/packs';
 import type { ShotPlan } from '@/lib/script/generate-script';
 import { sourceTagFor } from './source-tags';
 import { illustrationPrompt, renderIllustration } from './illustration';
 import { renderDrawingFile, revealShots } from './drawing-shot';
+import { packForVideo } from '@/lib/styles/compose';
 import { findDrawing, saveDrawing } from './drawings-store';
 
 export type ShotEdit =
@@ -38,7 +38,7 @@ export async function editorContext(supabase: SupabaseClient, videoId: string, b
   const ctx: ShotRenderContext = {
     beatIndex: beat.beatIndex,
     downloadDir: path.join(path.dirname(beat.trackPath), 'sources'),
-    theme: themeForStyle(video?.style),
+    theme: themeForVideo(video),
     browser,
     stockProvider: stock?.provider,
     stockCtx: stock?.ctx,
@@ -50,14 +50,14 @@ export async function editorContext(supabase: SupabaseClient, videoId: string, b
     // A replaced archive shot gets the same texture as the rest of the video (no print beneath:
     // its neighbours are already rendered)
     ...(video?.script_json?.archive_look !== 'off' ? { archiveLook: { count: { next: beat.beatIndex } } } : {}),
-    ...(stylePack(video?.style)?.photoLook === 'collage' ? { collage: { count: { next: beat.beatIndex } } } : {}),
+    ...(packForVideo(video)?.photoLook === 'collage' ? { collage: { count: { next: beat.beatIndex } } } : {}),
     ...(video?.script_json?.parallax !== false ? { parallax: { count: { next: beat.beatIndex } } } : {}),
     ...(video?.script_json?.source_tags !== false
       ? { sourceTag: (shot: ShotPlan) => sourceTagFor(shot, video?.script_json?.research) }
       : {}),
     ...(video?.script_json?.upscale === true ? { upscale: true } : {}),
     ...(process.env.YOUTUBE_API_KEY && video?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
-    ...(stylePack(video?.style)?.drawn
+    ...(packForVideo(video)?.drawn
       ? {
           drawn: true,
           drawingFile: (beatIndex: number, shotIndex: number) => findDrawing(videoId, beatIndex, shotIndex),

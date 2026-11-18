@@ -16,7 +16,8 @@ import { PackagingSummary } from './packaging-card';
 import type { AdCheckReport } from '@/lib/script/ad-check-issues';
 import { BeatShots, ShotPlanSummary } from './shots-panel';
 import { DrawingsPanel } from '../drawings-panel';
-import { stylePack } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
+import { CreationProgress, creationOf, RetryCreationButton } from './creation-progress';
 import { SENTENCE_BREATH_SEC, VOICE_SPEED_OPTIONS, videoPacing } from '@/lib/script/voice-pacing';
 import { BeatRewritePanel, HookLab, RuntimeMeter, ScriptDoctor } from './editor-panels';
 
@@ -95,7 +96,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       const data: VideoRecord = await res.json();
       setVideo(data);
       // The voice pace starts at the video's own (or its style's)
-      const pace = videoPacing((data.script_json as { voice_pacing?: unknown } | null)?.voice_pacing, data.style);
+      const pace = videoPacing((data.script_json as { voice_pacing?: unknown } | null)?.voice_pacing, data.style, packForVideo(data));
       setVoiceSpeed(pace?.speed ?? 1);
       setBreathSec(pace?.sentencePauseSec ?? 0);
 
@@ -687,23 +688,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
         {/* Case 1: Status = 'scripting' (Generating/Polling) */}
         {video.status === 'scripting' && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-10 text-center space-y-6 shadow-xl">
-            <div className="relative flex items-center justify-center">
-              <div className="w-16 h-16 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-bold text-white">Script Generation in Progress...</h2>
-              <p className="text-sm text-zinc-400 max-w-md mx-auto">
-                Claude is currently drafting your script beats and candidate titles. This page will automatically update once ready.
-              </p>
-            </div>
-            <div className="pt-2">
-              <span className="inline-flex items-center gap-2 text-xs text-blue-400 bg-blue-950/40 border border-blue-800 px-3 py-1.5 rounded-full">
-                <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-                Live Polling Video Status...
-              </span>
-            </div>
-          </div>
+          <CreationProgress videoId={id} scriptJson={video.script_json} onRetried={() => fetchVideo(true)} />
         )}
 
         {/* Case 2: Status = 'failed' before a script exists (a failure after approval keeps the voicing panel below) */}
@@ -720,7 +705,8 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 </p>
               </div>
             </div>
-            <div className="pt-4 flex gap-4">
+            <div className="pt-4 flex flex-wrap items-start gap-4">
+              {creationOf(video.script_json) && <RetryCreationButton videoId={id} onRetried={() => fetchVideo(true)} />}
               <Link
                 href="/videos/new"
                 className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition"
@@ -1023,7 +1009,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                     <span className="text-xs font-normal text-zinc-400">
                       ({editableBeats.length} beats)
                     </span>
-                    <RuntimeMeter beats={editableBeats} targetMinutes={video.target_minutes} style={video.style} />
+                    <RuntimeMeter beats={editableBeats} targetMinutes={video.target_minutes} style={video.style} pack={packForVideo(video)} />
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
                     Make direct inline adjustments to narration text. Save changes directly without re-running the LLM.
@@ -1094,20 +1080,21 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 onPlanMissing={() => handlePlanShots(true)}
                 onReplanAll={() => handlePlanShots(false)}
                 style={video.style}
+                pack={packForVideo(video)}
               />
               {shotPlanError && (
                 <div className="p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-200 text-xs">
                   {shotPlanError}
                 </div>
               )}
-              {stylePack(video.style)?.drawn && (
+              {packForVideo(video)?.drawn && (
                 <DrawingsPanel
                   videoId={id}
                   beats={editableBeats}
                   showBudget
                   savedBudget={video.script_json.drawing_budget ?? null}
                   onBeats={() => fetchVideo(true)}
-                  bibleTranslation={stylePack(video.style)?.signatureShots?.includes('verse') ? (video.script_json.bible_translation ?? 'webbe') : undefined}
+                  bibleTranslation={packForVideo(video)?.signatureShots?.includes('verse') ? (video.script_json.bible_translation ?? 'webbe') : undefined}
                 />
               )}
 

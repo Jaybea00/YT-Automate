@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
+import { packForVideo } from '@/lib/styles/compose';
 import { generateOutline, normalizeOutline, BRIEF_SOURCE_ID, type ScriptOutline } from '@/lib/script/outline';
 import type { ResearchDossier } from '@/lib/research/types';
 
@@ -68,6 +69,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     const drafted = await generateOutline(supabase, {
       topic: video.topic,
       style: video.style,
+      pack: packForVideo(video),
       targetMinutes: video.target_minutes,
       brief,
       research: base,

@@ -62,10 +62,12 @@ export async function ensureMusicPlan(options: {
   scriptJson: { beats?: Array<{ text: string }>; music_plan?: SavedMusicPlan } & Record<string, unknown>;
   sections: Section[];
   style?: string | null;
+  /** The video's own fallback mood (from its composed style), when it has one. */
+  fallbackMood?: Mood;
   topic?: string;
   llm?: { provider: LLMProvider; ctx: ProviderCallContext } | null;
 }): Promise<Mood[]> {
-  const { supabase, videoId, scriptJson, sections, style, topic = '', llm } = options;
+  const { supabase, videoId, scriptJson, sections, style, fallbackMood, topic = '', llm } = options;
   const beats = scriptJson.beats ?? [];
   const signature = `${scriptSignature(beats)}|${sections.map((s) => s.start_beat).join(',')}`;
   const saved = scriptJson.music_plan;
@@ -79,7 +81,7 @@ export async function ensureMusicPlan(options: {
     });
     if (moods) plan = { moods, source: 'llm', signature };
   }
-  plan ??= { moods: sections.map(() => STYLE_MOODS[style ?? ''] ?? 'mysterious'), source: 'style', signature };
+  plan ??= { moods: sections.map(() => fallbackMood ?? STYLE_MOODS[style ?? ''] ?? 'mysterious'), source: 'style', signature };
 
   const { data: fresh } = await supabase.from('videos').select('script_json').eq('id', videoId).maybeSingle();
   await supabase.from('videos').update({ script_json: { ...(fresh?.script_json ?? scriptJson), music_plan: plan } }).eq('id', videoId);

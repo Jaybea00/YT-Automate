@@ -38,7 +38,7 @@ export interface NarrationPacing {
 }
 
 /** A little slower, with room to breathe: for story-led and documentary styles. */
-const DOCUMENTARY_PACING: NarrationPacing = { speed: 0.9, sentencePauseSec: 0.35, beatPauseSec: 1.0 };
+export const DOCUMENTARY_PACING: NarrationPacing = { speed: 0.9, sentencePauseSec: 0.35, beatPauseSec: 1.0 };
 
 export interface StylePack {
   /** videos.style value. */
@@ -554,8 +554,8 @@ export function isVideoStyle(style: unknown): style is VideoStyle {
  * A new video's script_json with its style's starting settings (caption style, transition),
  * stored where the visuals page keeps them. Settings already present are kept.
  */
-export function withStyleDefaults<T extends object>(scriptJson: T, style: string | null | undefined): T {
-  const pack = stylePack(style);
+export function withStyleDefaults<T extends object>(scriptJson: T, style: string | null | undefined, composed?: StylePack): T {
+  const pack = composed ?? stylePack(style);
   const defaults = pack?.defaults;
   const beatPause = pack?.narration?.beatPauseSec;
   if (!pack) return scriptJson;
@@ -577,8 +577,8 @@ const TYPICAL_SENTENCE_SEC = 6;
  * 0.9 speed with a 0.35 s breath per sentence comes out at about 0.85. Script budgets use it so
  * a target length still comes out at that length.
  */
-export function narrationPaceFactor(style: string | null | undefined): number {
-  const pacing = stylePack(style)?.narration;
+export function narrationPaceFactor(style: string | null | undefined, pack?: StylePack): number {
+  const pacing = (pack ?? stylePack(style))?.narration;
   if (!pacing) return 1;
   return Math.round((pacing.speed / (1 + pacing.sentencePauseSec / TYPICAL_SENTENCE_SEC)) * 1000) / 1000;
 }
@@ -587,8 +587,8 @@ export function narrationPaceFactor(style: string | null | undefined): number {
  * The pause for a pacing mark (an ellipsis the writer put in for effect): longer in documentary
  * styles, where lines are meant to land, than in fast explainers.
  */
-export function dramaticPauseSec(style: string | null | undefined): number {
-  return stylePack(style)?.narration ? 0.8 : 0.5;
+export function dramaticPauseSec(style: string | null | undefined, pack?: StylePack): number {
+  return (pack ?? stylePack(style))?.narration ? 0.8 : 0.5;
 }
 
 /** The pack for a stored style, or undefined for unknown/legacy values. */

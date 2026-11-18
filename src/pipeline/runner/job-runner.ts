@@ -48,13 +48,13 @@ import { generateYouTubeChapters } from '../utils/chapters';
 import { readBeatVoices, mapWithConcurrency, resolveTtsSetup, voiceBeat } from '../tts/voice-beat';
 import { composeShotBeat, hasUploadedVisual } from '../visuals/compose-beat-visual';
 import { saveRenderedRhythm } from '../visuals/rhythm-report';
-import { themeForStyle } from '../visuals/motion/theme';
+import { themeForVideo } from '../visuals/motion/theme';
 import { withWritingModel, type ScriptBeat, type ShotPlan } from '@/lib/script/generate-script';
-import { stylePack } from '@/lib/styles/packs';
 import { findDrawing, listDrawings } from '@/pipeline/visuals/drawings-store';
 import { revealShots } from '@/pipeline/visuals/drawing-shot';
 import { AssemblyProgressTracker, followFfmpegProgress, progressFilePath } from './assembly-progress';
 import { clearJoinCheckpoint, joinFingerprint, readJoinCheckpoint, writeJoinCheckpoint } from '../assembly/join-checkpoint';
+import { packForVideo } from '@/lib/styles/compose';
 import { drawingCode } from '@/lib/stickman/drawing-codes';
 
 export const ScriptSceneSchema = z.object({
@@ -379,7 +379,7 @@ export class JobRunner {
         ? await this.supabase.from('videos').select('style, topic, script_json').eq('id', job.video_id).maybeSingle()
         : { data: null };
       const plannedBeats: ScriptBeat[] = Array.isArray(videoRow?.script_json?.beats) ? videoRow.script_json.beats : [];
-      const theme = themeForStyle(videoRow?.style);
+      const theme = themeForVideo(videoRow);
       // Pacing is built into composed tracks (no frozen frames), so it's planned before composing
       const pacing = job.video_id && plannedBeats.length
         ? withPauses(
@@ -396,7 +396,7 @@ export class JobRunner {
         usedSources: new Set<string>(),
         motionCounter: { next: 0 },
         ...(archiveLookOn ? { archiveLook: { count: { next: 0 } } } : {}),
-        ...(stylePack(videoRow?.style)?.photoLook === 'collage' ? { collage: { count: { next: 0 } } } : {}),
+        ...(packForVideo(videoRow)?.photoLook === 'collage' ? { collage: { count: { next: 0 } } } : {}),
         ...(videoRow?.script_json?.parallax !== false ? { parallax: { count: { next: 0 } } } : {}),
         ...(videoRow?.script_json?.source_tags !== false
           ? { sourceTag: (shot: ShotPlan) => sourceTagFor(shot, videoRow?.script_json?.research) }
@@ -405,7 +405,7 @@ export class JobRunner {
         // On when a YouTube key is set, unless the video turns it off
         ...(process.env.YOUTUBE_API_KEY && videoRow?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
         // Stickman styles: only the creator's drawings, filed by code; nothing is searched
-        ...(stylePack(videoRow?.style)?.drawn && job.video_id
+        ...(packForVideo(videoRow)?.drawn && job.video_id
           ? { drawn: true, drawingFile: (beatIndex: number, shotIndex: number) => findDrawing(job.video_id!, beatIndex, shotIndex), reveal: revealShots(plannedBeats) }
           : {}),
         ...(videoRow?.script_json?.bible_translation === 'web' ? { bibleTranslation: 'web' as const } : {}),
@@ -414,7 +414,7 @@ export class JobRunner {
       const outputDir = path.join(this.baseOutputDir, 'visuals');
       let hasFailure = false;
       // Stickman videos: the drawings filed so far (a beat renders again when its own change)
-      const filedDrawings = stylePack(videoRow?.style)?.drawn && job.video_id ? await listDrawings(job.video_id) : null;
+      const filedDrawings = packForVideo(videoRow)?.drawn && job.video_id ? await listDrawings(job.video_id) : null;
 
       // Launch headless browser for rendering charts / screen recordings
       let browser: Browser | undefined;
@@ -464,7 +464,7 @@ export class JobRunner {
                     composer: 'shots-v2-paced',
                     // Switching the archive texture re-renders composed beats
                     archiveLook: archiveLookOn ? 'on' : 'off',
-                    photoLook: stylePack(videoRow?.style)?.photoLook ?? 'plain',
+                    photoLook: packForVideo(videoRow)?.photoLook ?? 'plain',
                     parallax: videoRow?.script_json?.parallax !== false ? 'on' : 'off',
                     // New drawings filed since the last render re-render the beat
                     ...(filedDrawings ? { drawings: [...filedDrawings].filter((c) => c.startsWith(`${drawingCode(scene.scene_number, 0).split('_')[0]}_`)).sort().join(',') } : {}),
@@ -1377,7 +1377,7 @@ export class JobRunner {
               videoRecord?.script_json?.caption_edits,
             ),
             // Doodle captions are dark text: the spoken word takes the style's ink colour, not its marker fill
-            highlightHex: captionPreset === 'doodle' ? themeForStyle(videoRecord?.style).accentText : themeForStyle(videoRecord?.style).accent,
+            highlightHex: captionPreset === 'doodle' ? themeForVideo(videoRecord).accentText : themeForVideo(videoRecord).accent,
             zones: await captionZonesFromTracks(
               sceneBeatIndexes.map((b, pos) => ({ sceneStartMs: beatStartMs[pos], trackPath: trackByBeat.get(b) ?? null })),
             ),
@@ -1425,6 +1425,7 @@ export class JobRunner {
               scriptJson: videoRecord.script_json,
               sections,
               style: videoRecord?.style,
+              fallbackMood: packForVideo(videoRecord)?.fallbackMood,
               topic: videoRecord?.topic,
               llm: await resolveForStage<LLMProvider>('script', this.supabase).catch(() => null),
             });
@@ -1601,7 +1602,7 @@ export class JobRunner {
 
       // 6c. Master: the style's look, captions, loudness to YouTube's reference and the end fade,
       // with one picture encode
-      const grade = lookFilter(themeForStyle(videoRecord?.style).name, videoRecord?.script_json?.look);
+      const grade = lookFilter(themeForVideo(videoRecord).name, videoRecord?.script_json?.look);
       // Emphasis: shakes on impacts, freeze-frames with titles, chapter zooms, letterbox
       const emphasis =
         videoId && usingVideoBeats && !draft
@@ -1609,7 +1610,8 @@ export class JobRunner {
               supabase: this.supabase,
               videoId,
               style: videoRecord?.style,
-              theme: themeForStyle(videoRecord?.style),
+              pack: packForVideo(videoRecord),
+              theme: themeForVideo(videoRecord),
               beats: sceneBeatIndexes.map((beatIndex, pos) => {
                 const start = beatStartMs[pos] + (sceneLeadInMs[pos] ?? 0);
                 return {
@@ -1644,7 +1646,7 @@ export class JobRunner {
             Object.fromEntries(sceneBeatIndexes.map((b, pos) => [b, beatStartMs[pos] / 1000])),
             totalSec,
           );
-          const pngs = await renderOverlayPngs(themeForStyle(videoRecord?.style), windows, path.join(tempDir, 'overlays'));
+          const pngs = await renderOverlayPngs(themeForVideo(videoRecord), windows, path.join(tempDir, 'overlays'));
           overlays = windows.length ? { windows, pngs } : null;
           if (overlays) console.log(`[Assembly] Overlays: ${windows.length} (text, callouts, arrows)`);
         } catch (overlayErr) {
@@ -1665,7 +1667,7 @@ export class JobRunner {
           const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: partialRenderPath, assPath, lookFilter: grade, emphasis, draft, overlays, progressFile: masterProgress });
           console.log(
             `[Assembly] Mastered to ${TARGET_LUFS} LUFS (programme measured ${measured.input_i} LUFS)` +
-              `${grade ? `, ${themeForStyle(videoRecord?.style).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
+              `${grade ? `, ${themeForVideo(videoRecord).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
           );
         } catch (masterErr) {
           // Emphasis and overlays are the newest parts of the graph: drop them first, keeping the look and captions
@@ -1751,7 +1753,7 @@ export class JobRunner {
             const scriptLlm = await resolveForStage<LLMProvider>('script', this.supabase);
             publishMetadata = await generateMetadata({
               topic: videoRecord?.topic ?? '',
-              style: videoRecord?.style,
+              style: packForVideo(videoRecord)?.label ?? videoRecord?.style,
               currentTitle: videoRecord?.title,
               narration: scriptBeats.map((b) => String(b.text ?? '')),
               sectionTitles: sections.map((s) => s.title),
@@ -1799,7 +1801,7 @@ export class JobRunner {
               title: publishMetadata?.titles[0]?.text ?? videoRecord?.title ?? videoRecord?.topic ?? '',
               topic: videoRecord?.topic ?? '',
               narration: scriptBeats.map((b) => String(b.text ?? '')).join(' '),
-              theme: themeForStyle(videoRecord?.style),
+              theme: themeForVideo(videoRecord),
               llm: await resolveForStage<LLMProvider>('script', this.supabase).catch(() => null),
             });
             console.log(`[Assembly] Thumbnails: ${publishThumbnails.map((t) => `"${t.text}"`).join(', ')}`);

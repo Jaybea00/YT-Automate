@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { beatsToScenes } from '@/pipeline/utils/mapper';
 import { dramaticPauseSec } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkAssemblyGate } from '@/pipeline/assembly/gate';
@@ -219,7 +220,8 @@ export async function handleVoiceRequest(
       video.script_json = { ...(video.script_json ?? {}), voice_pacing: chosen };
       await supabase.from('videos').update({ script_json: video.script_json }).eq('id', id);
     }
-    const pacing = videoPacing(video.script_json?.voice_pacing, video.style);
+    const pack = packForVideo(video);
+    const pacing = videoPacing(video.script_json?.voice_pacing, video.style, pack);
 
     // 4. Validate script and beats
     // Accepts videos with status 'voicing', 'script_review', 'failed', or 'rendered' as long as approved beats exist
@@ -382,7 +384,9 @@ export async function handleVoiceRequest(
     // The pace is fixed on the job, so the video keeps one pace even if the style changes
     if (pacing) scriptData.narration_pacing = pacing;
     // Pacing marks ("…") get a real pause; fixed on the job like the pacing
-    scriptData.dramatic_pause_sec = dramaticPauseSec(video.style);
+    scriptData.dramatic_pause_sec = dramaticPauseSec(video.style, pack);
+    // How the narrator should sound (voices that take direction), fixed on the job like the pace
+    if (pack?.delivery) scriptData.delivery = pack.delivery;
     if (targetTtsProviderConfigId) {
       scriptData.tts_provider_config_id = targetTtsProviderConfigId;
     }

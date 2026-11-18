@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider } from '@/pipeline/providers/types';
 import { STYLE_TEMPLATES } from './style-templates';
+import type { StylePack } from '@/lib/styles/packs';
 import { checkerContext } from './fact-check';
 import {
   AD_CATEGORIES,
@@ -38,8 +39,8 @@ const AdSchema = z.object({
   title_issues: z.array(z.object({ title: z.string(), problem: z.string(), suggestion: z.string().optional() })).optional(),
 });
 
-export function buildAdCheckPrompt(beats: ScriptBeat[], titles: string[], style?: string | null): string {
-  const label = style ? (STYLE_TEMPLATES[style as keyof typeof STYLE_TEMPLATES]?.label ?? style) : null;
+export function buildAdCheckPrompt(beats: ScriptBeat[], titles: string[], style?: string | null, pack?: StylePack): string {
+  const label = pack?.label ?? (style ? (STYLE_TEMPLATES[style as keyof typeof STYLE_TEMPLATES]?.label ?? style) : null);
   return `Review this YouTube narration${label ? ` (a ${label} video)` : ''} against YouTube's advertiser-friendly content guidelines.
 Flag only wording likely to get the video limited or no ads:
 - language: strong profanity (worst in the opening seconds or used often; mild words like "damn" and "hell" are fine)
@@ -104,6 +105,7 @@ export async function adCheckScript(
   beats: ScriptBeat[],
   titles: string[] = [],
   style?: string | null,
+  pack?: StylePack,
 ): Promise<AdCheckReport> {
   const resolved = await resolveForStage<LLMProvider>('script', supabase);
   const ctx = checkerContext(resolved.ctx, resolved.options);
@@ -115,7 +117,7 @@ export async function adCheckScript(
       {
         system: "You are a YouTube monetisation reviewer who knows the advertiser-friendly guidelines well. You keep creators' stories intact while protecting their ad revenue.",
         // Titles are checked once, with the first part
-        prompt: buildAdCheckPrompt(chunk, start === 0 ? titles : [], style),
+        prompt: buildAdCheckPrompt(chunk, start === 0 ? titles : [], style, pack),
         schema: AdSchema,
       },
       ctx,
@@ -144,9 +146,10 @@ export async function adCheckOrLocal(
   beats: ScriptBeat[],
   titles: string[],
   style?: string | null,
+  pack?: StylePack,
 ): Promise<AdCheckReport> {
   try {
-    const report = await adCheckScript(supabase, beats, titles, style);
+    const report = await adCheckScript(supabase, beats, titles, style, pack);
     console.log(`[adCheck] ${report.issues.length} beat issue(s), ${report.titleIssues.length} title issue(s)`);
     return report;
   } catch (err) {
