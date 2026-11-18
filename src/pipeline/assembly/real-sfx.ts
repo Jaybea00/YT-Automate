@@ -81,6 +81,13 @@ export const REAL_SOUNDS = {
   bell_ding: { label: 'Bell ding', query: 'small bell ding single', maxSec: 2, gain: 1, kind: 'palette' },
   stamp: { label: 'Rubber stamp', query: 'rubber stamp hit paper', maxSec: 0.8, gain: 1, kind: 'palette' },
   music_sting: { label: 'Music sting', query: 'cinematic sting hit orchestral', maxSec: 3, gain: 1, kind: 'palette' },
+  // Stickman styles: light cartoon effects (POV) and gentle ones (Bible stories)
+  pop_bubble: { label: 'Cartoon pop', query: 'cartoon pop bubble short', maxSec: 0.5, gain: 1, kind: 'palette' },
+  cartoon_boing: { label: 'Cartoon boing', query: 'cartoon boing spring', maxSec: 1.2, gain: 0.9, kind: 'palette' },
+  cartoon_whoosh: { label: 'Cartoon whoosh', query: 'cartoon whoosh swish fast', maxSec: 0.8, gain: 1, kind: 'palette' },
+  marker_scribble: { label: 'Marker scribble', query: 'marker pen scribble paper', maxSec: 1, gain: 1, kind: 'palette' },
+  pencil_tick: { label: 'Pencil tap', query: 'pencil tap desk single', maxSec: 0.3, gain: 1, kind: 'palette' },
+  harp_gliss: { label: 'Harp glissando', query: 'harp glissando short', maxSec: 2.5, gain: 0.9, kind: 'palette' },
 
   // Ambience beds, looped quietly under a stretch of beats
   stadium_bed: { label: 'Stadium crowd ambience', query: 'stadium crowd ambience', maxSec: 40, gain: 0.5, kind: 'bed' },

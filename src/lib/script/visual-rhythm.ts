@@ -12,7 +12,8 @@ import { SPEECH_WORDS_PER_SECOND } from './script-quality';
 /** How a viewer perceives a shot. */
 export type ShotKind = 'footage' | 'graphic' | 'text' | 'blank';
 
-const FOOTAGE_TYPES = new Set(['stock', 'archive', 'screen_recording', 'split', 'illustration']);
+// A creator's drawing is their picture of the scene, so it counts as footage
+const FOOTAGE_TYPES = new Set(['stock', 'archive', 'screen_recording', 'split', 'illustration', 'drawing']);
 const TEXT_TYPES = new Set(['kinetic_text', 'title']);
 
 export function kindOf(type: string): ShotKind {

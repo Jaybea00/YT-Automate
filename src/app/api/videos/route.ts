@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { generateScript, GeneratedScript } from '@/lib/script/generate-script';
 import { VideoStyle } from '@/lib/script/style-templates';
-import { withStyleDefaults } from '@/lib/styles/packs';
+import { narrationPaceFactor, stylePack, withStyleDefaults } from '@/lib/styles/packs';
+import { estimateSpeechSeconds } from '@/lib/script/script-quality';
 import { researchTopic } from '@/lib/research/research';
 import { planShots } from '@/lib/script/shot-planner';
 import { generateOutline, trimBrief } from '@/lib/script/outline';
@@ -32,6 +33,26 @@ export async function GET() {
     const errorMsg = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json({ error: errorMsg }, { status: 500 });
   }
+}
+
+/**
+ * Pasted scripts and subtitles skip shot planning (they're meant to be instant), but a stickman
+ * video needs its drawing brief before anything can be drawn, so those get one planned here.
+ */
+async function withDrawingBrief(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  script: GeneratedScript,
+  topic: string,
+  style: string,
+): Promise<GeneratedScript> {
+  return stylePack(style)?.drawn ? planShots(supabase, script, topic, { style }) : script;
+}
+
+/** A pasted script's spoken length in minutes, estimated as the review page's runtime meter does. */
+function scriptMinutes(beats: GeneratedScript['beats'], style: string): number {
+  const pace = narrationPaceFactor(style);
+  const seconds = beats.reduce((n, b) => n + estimateSpeechSeconds(b.text) / pace, 0) + beats.length * 0.5;
+  return Math.max(0.5, Math.round((seconds / 60) * 10) / 10);
 }
 
 export async function POST(req: Request) {
@@ -95,7 +116,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: withStyleDefaults(scriptJson, style),
+          script_json: withStyleDefaults(await withDrawingBrief(supabase, scriptJson, videoTopic, style), style),
           title: videoTopic,
         })
         .select()
@@ -144,7 +165,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: withStyleDefaults(scriptJson, style),
+          script_json: withStyleDefaults(await withDrawingBrief(supabase, scriptJson, videoTopic, style), style),
           title: videoTopic,
         })
         .select()
@@ -202,6 +223,9 @@ export async function POST(req: Request) {
             script_json: withStyleDefaults(generatedScript, style),
             status: 'script_review',
             title: generatedScript.title_options[0] || videoTopic,
+            // The creator's own words set the length, not the form's default: revisions and
+            // rewrites aim at this target, and must not squeeze the script toward it
+            target_minutes: scriptMinutes(generatedScript.beats, style),
           })
           .eq('id', newVideo.id)
           .select()

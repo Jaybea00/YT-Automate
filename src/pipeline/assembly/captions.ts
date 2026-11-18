@@ -7,9 +7,9 @@ import type { BeatTimingLike, UnitDurationLike } from '../utils/subtitles';
 
 const execFileAsync = promisify(execFile);
 
-export type CaptionPreset = 'vox' | 'social_pop' | 'clean_news';
+export type CaptionPreset = 'vox' | 'social_pop' | 'clean_news' | 'doodle';
 
-export const CAPTION_PRESETS: CaptionPreset[] = ['vox', 'social_pop', 'clean_news'];
+export const CAPTION_PRESETS: CaptionPreset[] = ['vox', 'social_pop', 'clean_news', 'doodle'];
 
 export function isCaptionPreset(value: unknown): value is CaptionPreset {
   return CAPTION_PRESETS.includes(value as CaptionPreset);
@@ -102,6 +102,11 @@ interface PresetStyle {
   popScale: number;
   uppercase: boolean;
   highlight: boolean;
+  /** Text and outline colours (&HAABBGGRR); white text on a dark outline unless set. */
+  primary?: string;
+  outlineColour?: string;
+  /** Faux-bold (fonts without a bold face, like Ink Free, are thickened by libass). */
+  bold?: boolean;
 }
 
 const PRESET_STYLES: Record<CaptionPreset, PresetStyle> = {
@@ -109,6 +114,9 @@ const PRESET_STYLES: Record<CaptionPreset, PresetStyle> = {
   vox: { name: 'VoxMinimal', font: 'Segoe UI Semibold', size: 58, outline: 4, shadow: 2, borderStyle: 1, back: '&H80000000', marginV: 70, maxWords: 6, maxChars: 38, popScale: 100, uppercase: false, highlight: true },
   social_pop: { name: 'SocialPop', font: 'Segoe UI Black', size: 74, outline: 5, shadow: 2, borderStyle: 1, back: '&H00000000', marginV: 150, maxWords: 3, maxChars: 22, popScale: 112, uppercase: true, highlight: true },
   clean_news: { name: 'CleanNews', font: 'Segoe UI', size: 46, outline: 10, shadow: 0, borderStyle: 3, back: '&H99000000', marginV: 60, maxWords: 8, maxChars: 48, popScale: 100, uppercase: false, highlight: false },
+  // Stickman: dark marker handwriting with a thick white outline, readable over line drawings;
+  // the spoken word pops in the style's ink colour
+  doodle: { name: 'Doodle', font: 'Ink Free', size: 88, outline: 10, shadow: 2, borderStyle: 1, back: '&H00000000', marginV: 80, maxWords: 4, maxChars: 26, popScale: 114, uppercase: false, highlight: true, primary: '&H001D1D1D', outlineColour: '&H00FFFFFF', bold: true },
 };
 
 /** Default active-word colour (gold), in ASS's &HBBGGRR& order. */
@@ -189,7 +197,7 @@ export function generateAssCaptions(options: GenerateCaptionsOptions): {
   const { width = 1920, height = 1080 } = options.resolution ?? {};
   const size = options.fontSize ?? look.size;
   const styleLine = (name: string, marginV: number, alignment = 2, fontSize = size) =>
-    `Style: ${name}, ${look.font}, ${fontSize}, &H00FFFFFF, &H00FFFFFF, &H00101010, ${look.back}, 0, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, ${alignment}, 60, 60, ${marginV}, 1`;
+    `Style: ${name}, ${look.font}, ${fontSize}, ${look.primary ?? '&H00FFFFFF'}, &H00FFFFFF, ${look.outlineColour ?? '&H00101010'}, ${look.back}, ${look.bold ? -1 : 0}, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, ${alignment}, 60, 60, ${marginV}, 1`;
   const banners = options.banners ?? [];
 
   const header = `[Script Info]

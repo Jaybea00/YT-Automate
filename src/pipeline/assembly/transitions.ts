@@ -38,6 +38,9 @@ const VOCABULARIES: Record<string, Vocabulary> = {
   car: { light: ['smoothleft', 'hblur'], chapter: ['zoomin', 'squeezeh'], reveal: ['fadewhite'] },
   listicle: { light: ['slideleft', 'slideright', 'circleopen'], chapter: ['zoomin', 'circleopen'], reveal: ['fadewhite'] },
   eli5: { light: ['slideleft', 'circleopen', 'slideup'], chapter: ['circleopen', 'zoomin'], reveal: ['fadewhite'] },
+  // Stickman: quick page-turns and wipes for POV; gentle dissolves and page-turns for Bible stories
+  stickman_pov: { light: ['slideleft', 'wipeleft', 'circleopen'], chapter: ['coverleft', 'zoomin'], reveal: ['fadewhite'] },
+  stickman_bible: { light: ['fade', 'dissolve'], chapter: ['coverleft', 'fadeblack'], reveal: ['fadewhite'] },
 };
 
 /** Rendered transitions (custom-transitions.ts) each style uses at chapter changes and into reveals. */
@@ -58,6 +61,8 @@ const RENDERED: Record<string, { chapter: string[]; reveal: string[] }> = {
   car: { chapter: ['whip'], reveal: ['flashshake'] },
   listicle: { chapter: ['zoompunch', 'whip'], reveal: ['flashshake'] },
   eli5: { chapter: ['ink', 'papertear'], reveal: ['zoompunch'] },
+  stickman_pov: { chapter: ['papertear', 'ink'], reveal: ['zoompunch'] },
+  stickman_bible: { chapter: ['papertear', 'ink'], reveal: ['lightleak'] },
 };
 
 /**

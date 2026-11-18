@@ -9,6 +9,9 @@ import { ShotEditor } from './shot-editor';
 import { RhythmPanel } from './rhythm-panel';
 import { NeedsCheckBar } from './needs-check-bar';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
+import { DrawingsPanel } from '../drawings-panel';
+import type { ScriptBeat as PlannedBeat } from '@/lib/script/generate-script';
+import { stylePack } from '@/lib/styles/packs';
 
 interface VisualsPageProps {
   params: Promise<{ id: string }>;
@@ -48,8 +51,11 @@ interface ProgressData {
     id: string;
     title: string | null;
     status: string;
+    style?: string | null;
     script_json?: {
       beats?: ScriptBeat[];
+      drawing_budget?: number | null;
+      bible_translation?: 'webbe' | 'web';
     } | null;
   };
   job: {
@@ -534,6 +540,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   }, [id]);
 
   const beats: ScriptBeat[] = data?.video?.script_json?.beats || [];
+  const drawn = Boolean(stylePack(data?.video?.style)?.drawn);
   const assets: VideoAsset[] = data?.assets || [];
   const ttsUnits = (data?.units || []).filter((u) => u.stage === 'tts');
 
@@ -615,6 +622,21 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   }
 
   async function handleStartAssembly() {
+    if (drawn) {
+      // Missing drawings would show as doodle text in the finished video: say so first
+      const status = await fetch(`/api/videos/${id}/drawings`)
+        .then((r) => (r.ok ? (r.json() as Promise<{ codes: string[]; filed: string[] }>) : null))
+        .catch(() => null);
+      const missing = status ? status.codes.filter((c) => !status.filed.includes(c)) : [];
+      if (
+        missing.length > 0 &&
+        !window.confirm(
+          `${missing.length} drawing${missing.length === 1 ? ' is' : 's are'} still missing (${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}). Those shots will show their narration as doodle text. Assemble anyway?`,
+        )
+      ) {
+        return;
+      }
+    }
     setIsAssembling(true);
     setAssemblyError(null);
     try {
@@ -719,12 +741,16 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 {data.video.title || 'Video Visuals'}
               </h1>
               <p className="text-sm text-zinc-400 mt-1">
-                Beats you don&apos;t upload for are auto-generated (chart, map, newspaper, archive, stock) from their visual type during voicing. Upload only to override one. Accepted formats: MP4, MOV, WebM, PNG, JPG, WebP.
+                {drawn
+                  ? 'A stickman video shows only your drawings and its doodle cards. Drop your drawings on the drawing brief below; a shot without its drawing shows its line as doodle text until it arrives.'
+                  : 'Beats you don’t upload for are auto-generated (chart, map, newspaper, archive, stock) from their visual type during voicing. Upload only to override one. Accepted formats: MP4, MOV, WebM, PNG, JPG, WebP.'}
               </p>
             </div>
 
             {/* Assemble Gate & Batch Actions */}
             <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+              {/* Stickman videos take drawings in the drawing brief below instead */}
+              {!drawn && (
               <button
                 type="button"
                 onClick={() => setShowBatchUploader((prev) => !prev)}
@@ -733,6 +759,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 <span>🚀</span>
                 <span>{showBatchUploader ? 'Hide Batch Uploader' : 'Batch Upload Visuals'}</span>
               </button>
+              )}
 
               <div className="flex flex-col items-end gap-1">
                 <button
@@ -762,8 +789,20 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           )}
         </div>
 
+        {drawn && (
+          <DrawingsPanel
+            videoId={id}
+            beats={beats as unknown as PlannedBeat[]}
+            bibleTranslation={stylePack(data.video.style)?.signatureShots?.includes('verse') ? (data.video.script_json?.bible_translation ?? 'webbe') : undefined}
+            onDrawingsChanged={() => {
+              setCacheBuster(Date.now());
+              fetchVideoData();
+            }}
+          />
+        )}
+
         {/* Batch Visuals Uploader Drawer / Card */}
-        {showBatchUploader && (
+        {!drawn && showBatchUploader && (
           <BatchVisualUploader
             videoId={id}
             totalBeats={beats.length}
@@ -1354,6 +1393,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   { id: 'vox', label: 'Vox Minimal', desc: 'White, style-colour highlight' },
                   { id: 'social_pop', label: 'Social Pop', desc: 'Bold capitals, the spoken word pops' },
                   { id: 'clean_news', label: 'Clean News', desc: 'Boxed, broadcast style' },
+                  { id: 'doodle', label: 'Doodle', desc: 'Handwritten ink, the spoken word pops (stickman)' },
                 ].map((option) => {
                   const isSelected = captionPreset === option.id;
                   return (
@@ -1405,6 +1445,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
               </div>
             </div>
 
+            {/* Footage-only settings: a stickman video shows only the creator's drawings */}
+            {!drawn && (<>
             {/* Archive Texture Section */}
             <div className="pt-5 border-t border-zinc-800/80 space-y-4">
               <div>
@@ -1510,6 +1552,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                 </span>
               </label>
             </div>
+
+            </>)}
 
             {/* Source tags Section */}
             <div className="pt-5 border-t border-zinc-800/80 space-y-2">
@@ -1775,11 +1819,11 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
                   {/* Shot-by-shot editor for beats composed from the director's shot plan */}
                   {asset?.visual_type === 'composite' && (
-                    <ShotEditor videoId={id} beatIndex={index} onChanged={() => setCacheBuster(Date.now())} />
+                    <ShotEditor videoId={id} beatIndex={index} drawn={drawn} onChanged={() => setCacheBuster(Date.now())} />
                   )}
 
                   {/* Alternative Media Candidates & 1-Click Swap Reel */}
-                  {(() => {
+                  {!drawn && (() => {
                     const pool = customCandidates[index] || (Array.isArray(asset?.candidates_json) ? asset.candidates_json : []);
                     const isSwappingThisBeat = swappingBeat === index;
                     const isSearchingThisBeat = searchingBeat === index;
@@ -1905,6 +1949,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                   })()}
 
                   {/* Upload & Provenance Form */}
+                  {/* A stickman beat takes drawings shot by shot (a whole-beat upload would replace them all) */}
+                  {!drawn && (
                   <div className="bg-zinc-950/40 p-4 rounded-xl border border-zinc-800/80 space-y-4">
                     <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
                       {asset ? 'Replace Visual Asset' : 'Upload Visual Asset'}
@@ -2014,6 +2060,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
                       </button>
                     </div>
                   </div>
+                  )}
                 </div>
               );
             })

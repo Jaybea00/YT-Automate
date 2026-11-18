@@ -14,6 +14,24 @@ export interface GroundingMetadataLike {
  * Gemini reports which text segments each search result supports; a fact keeps the
  * sources of every segment it contains. Facts no search result supports are dropped.
  */
+/** Shorter grounding segments than this ("F1", "1914") would attach a source to unrelated facts. */
+const MIN_SEGMENT_CHARS = 12;
+
+/**
+ * A fact or grounding segment reduced to its words: Gemini's segments keep the "F1:" label and
+ * drop the full stop ("F1: Franz Ferdinand was the heir"), so a plain comparison never matched
+ * and grounded research fell back to Wikipedia.
+ */
+function comparable(text: string): string {
+  return text
+    .replace(/^\s*\**F\d+\**\s*[:.)-]\s*/i, '')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.,;:!]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
 export function parseGroundedFacts(
   text: string,
   metadata: GroundingMetadataLike | undefined,
@@ -37,10 +55,11 @@ export function parseGroundedFacts(
     const match = line.match(/^\s*\**F\d+\**\s*[:.)-]\s*(.+)$/);
     if (!match) continue;
     const claim = match[1].trim();
+    const wanted = comparable(claim);
     const sourceIds = new Set<string>();
     for (const support of supports) {
-      const segment = support.segment?.text?.trim();
-      if (!segment || !(claim.includes(segment) || segment.includes(claim))) continue;
+      const segment = comparable(support.segment?.text ?? '');
+      if (segment.length < MIN_SEGMENT_CHARS || !(wanted.includes(segment) || segment.includes(wanted))) continue;
       for (const idx of support.groundingChunkIndices ?? []) {
         const id = sourceIdByChunk.get(idx);
         if (id) sourceIds.add(id);

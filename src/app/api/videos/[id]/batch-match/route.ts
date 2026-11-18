@@ -12,7 +12,7 @@ export async function POST(req: Request, context: RouteContext) {
   try {
     const { fileIds } = (await req.json()) as { fileIds?: string[] };
     if (!Array.isArray(fileIds) || fileIds.length === 0) return NextResponse.json({ error: 'fileIds are required' }, { status: 400 });
-    const staged = (await Promise.all(fileIds.slice(0, 60).map((f) => loadStaged(id, String(f))))).filter((s): s is StagedFile => Boolean(s));
+    const staged = (await Promise.all(fileIds.slice(0, 150).map((f) => loadStaged(id, String(f))))).filter((s): s is StagedFile => Boolean(s));
     if (staged.length === 0) return NextResponse.json({ error: 'None of those files were found; drop them again' }, { status: 404 });
     const matches = await matchStagedFiles(getSupabaseServerClient(), id, staged);
     return NextResponse.json({ matches });

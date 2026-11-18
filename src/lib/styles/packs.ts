@@ -5,11 +5,13 @@ import {
   BUSINESS,
   COSMOS,
   DOCUMENTARY,
+  DOODLE,
   HISTORY,
   MONEY,
   MYSTERY,
   NOIR,
   REVIEW,
+  SCROLL,
   STADIUM,
   TECH,
   VOX,
@@ -24,7 +26,7 @@ import {
  * (theme), mastering (theme.grade), music (fallback mood), and new videos' starting settings.
  */
 
-export type StyleGroup = 'explainer' | 'story' | 'niche';
+export type StyleGroup = 'explainer' | 'story' | 'niche' | 'stickman';
 
 export interface NarrationPacing {
   /** Speech speed for voices that support it (Kokoro, ElevenLabs); 1 is the voice's normal pace. */
@@ -70,7 +72,13 @@ export interface StylePack {
    */
   narration?: NarrationPacing;
   /** Signature shots the director may use in this style (pitch, evidence board, letter, race bars, scale). */
-  signatureShots?: Array<'pitch' | 'evidence_board' | 'letter' | 'race_bars' | 'scale' | 'spec_card' | 'money' | 'shot_map'>;
+  signatureShots?: Array<'pitch' | 'evidence_board' | 'letter' | 'race_bars' | 'scale' | 'spec_card' | 'money' | 'shot_map' | 'verse'>;
+  /**
+   * The creator draws the pictures (stickman channels): footage is never searched; the director
+   * plans a drawing brief instead, one shot every `secondsPerShot` seconds of narration, and
+   * each drawing shot waits for the creator's upload.
+   */
+  drawn?: { secondsPerShot: number };
   /** How still photos are shown: 'collage' cuts them out and tapes them onto paper (the Vox look). */
   photoLook?: 'collage';
   /** Charts may carry callouts on points or bars ("the crash"). */
@@ -471,6 +479,60 @@ blame without evidence.`,
     directorNotes: `Reconstruct events with "timeline", locate them with "geo_map" (mode "locate"), and quote documents or witnesses with "quote" when the research attributes them. Footage should be atmospheric and non-graphic ("foggy forest path at dusk", "old case files on desk", "empty road at night"); archive photos of real places and documents are best. When laying out competing theories, a "comparison" can set two explanations side by side. Never show anything that looks like a real victim unless it is an archive photo the research names.`,
     defaults: { captionPreset: 'vox' },
   }),
+
+  stickman_pov: pack({
+    id: 'stickman_pov',
+    drawn: { secondsPerShot: 3 },
+    emphasis: { chapterZoom: true },
+    name: 'Stickman POV',
+    label: 'Stickman POV explainer (your drawings)',
+    description: 'You are the main character: "You wake up in ancient Rome…", told over your own stickman drawings.',
+    shortName: 'Stickman POV',
+    tagline: 'Second-person stories over your drawings',
+    icon: '🧍',
+    group: 'stickman',
+    voice: `You write stickman POV explainer scripts in the second person: the viewer IS the
+main character ("You wake up in a Roman barracks..."). Walk them through the experience
+in time order (a day, a journey, a career, a life) with concrete sensory details, real
+facts woven in, light humour, and a new danger, twist or surprise about every minute.
+Mark time jumps clearly ("Day three.", "Ten years later."). Every fact, number and date
+comes from the research; never invent statistics or events. Each beat must describe
+one thing a simple drawing can show: a clear action, place or situation.`,
+    delivery: 'Friendly, curious and lively; a storyteller talking straight to the viewer, with a smile in the voice.',
+    theme: DOODLE,
+    fallbackMood: 'curious',
+    maxGraphicsShare: 0.35,
+    directorNotes: `Mark time jumps with "title" cards (text "Day 1" or "Year 10", kicker the place and date, e.g. "Rome, 73 BC"). Show survival odds, wages, distances and other single numbers as "stat", then-versus-now figures as "comparison", and journeys as "geo_map". Everything else is a drawing.`,
+    defaults: { captionPreset: 'doodle' },
+  }),
+
+  stickman_bible: pack({
+    id: 'stickman_bible',
+    drawn: { secondsPerShot: 4 },
+    signatureShots: ['verse'],
+    name: 'Stickman Bible Stories',
+    label: 'Stickman Bible stories (your drawings)',
+    description: 'Faithful, warm retellings of Bible stories with verse cards, told over your own stickman drawings.',
+    shortName: 'Stickman Bible',
+    tagline: 'Faithful Bible stories over your drawings',
+    icon: '📖',
+    group: 'stickman',
+    voice: `You write Bible story scripts for a stickman channel: faithful retellings of the
+passage, warm and respectful, easy for any viewer to follow. Follow the order of the text
+and name the book and chapter as the story moves ("In Exodus chapter fourteen..."). Keep
+what God and the characters say close to Scripture. When you quote a verse word for word,
+quote the World English Bible and say its reference. Historical and cultural background
+comes only from the research, and interpretation stays clearly separate from what the text
+says ("Many readers see this as..."). Never invent events, speeches or details the text
+does not give. Each beat must describe one thing a simple drawing can show.`,
+    delivery: 'Warm, calm and reverent storyteller; unhurried and clear, with gentle weight on the key moments.',
+    theme: SCROLL,
+    fallbackMood: 'hopeful',
+    narration: DOCUMENTARY_PACING,
+    maxGraphicsShare: 0.4,
+    directorNotes: `Use "verse" whenever the narration quotes a verse or points to a passage. Use "geo_map" for journeys (e.g. Egypt -> Sinai -> Canaan), "timeline" for generations, reigns or the days of a story, and "title" for each new part of the story. Everything else is a drawing.`,
+    defaults: { captionPreset: 'doodle' },
+  }),
 } as const satisfies Record<string, StylePack>;
 
 export type VideoStyle = keyof typeof STYLE_PACKS;
@@ -481,6 +543,7 @@ export const STYLE_GROUP_LABELS: Record<StyleGroup, string> = {
   explainer: 'Explainers',
   story: 'Story & documentary',
   niche: 'Niches',
+  stickman: 'Stickman (your drawings)',
 };
 
 export function isVideoStyle(style: unknown): style is VideoStyle {

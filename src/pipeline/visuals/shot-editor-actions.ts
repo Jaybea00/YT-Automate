@@ -13,6 +13,8 @@ import { stylePack } from '@/lib/styles/packs';
 import type { ShotPlan } from '@/lib/script/generate-script';
 import { sourceTagFor } from './source-tags';
 import { illustrationPrompt, renderIllustration } from './illustration';
+import { renderDrawingFile, revealShots } from './drawing-shot';
+import { findDrawing, saveDrawing } from './drawings-store';
 
 export type ShotEdit =
   /** Use one of the shot's alternatives, or a search result. */
@@ -55,6 +57,14 @@ export async function editorContext(supabase: SupabaseClient, videoId: string, b
       : {}),
     ...(video?.script_json?.upscale === true ? { upscale: true } : {}),
     ...(process.env.YOUTUBE_API_KEY && video?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
+    ...(stylePack(video?.style)?.drawn
+      ? {
+          drawn: true,
+          drawingFile: (beatIndex: number, shotIndex: number) => findDrawing(videoId, beatIndex, shotIndex),
+          reveal: revealShots(video?.script_json?.beats ?? []),
+        }
+      : {}),
+    ...(video?.script_json?.bible_translation === 'web' ? { bibleTranslation: 'web' as const } : {}),
   };
   return { ctx, close: async () => browser?.close().catch(() => {}) };
 }
@@ -76,6 +86,11 @@ export async function editShot(options: {
   const typed = MOTION_RENDERERS[plan.visual_type];
   const needsBrowser = edit.action === 'text' || Boolean(current.plan.caption) || (edit.action === 'redo' && Boolean(typed));
   const { ctx, close } = await editorContext(supabase, videoId, beat, needsBrowser);
+  // A stickman video shows only the creator's drawings (and its graphics): no searches, no AI pictures
+  if (ctx.drawn && (edit.action === 'footage' || edit.action === 'swap' || edit.action === 'illustration')) {
+    await close();
+    throw new Error('This is a stickman video: upload a drawing for this shot instead');
+  }
   // A new search becomes the shot's plan: footage of what was asked for, or an illustration
   const newPlan =
     edit.action === 'footage'
@@ -101,6 +116,11 @@ export async function editShot(options: {
       render: async (slot, clipPath) => {
         if (newPlan?.visual_type === 'illustration') return { ...(await renderIllustration(newPlan, slot, clipPath, ctx)), alternatives: current.alternatives };
         if (newPlan) return renderFootageShot(newPlan, slot, clipPath, ctx);
+        if (edit.action === 'upload' && edit.mediaType === 'image' && plan.visual_type === 'drawing') {
+          // Filed by code first, so the drawing survives any later re-render of the beat
+          const filed = await saveDrawing(videoId, beat.beatIndex, shotIndex, edit.filePath);
+          return renderDrawingFile(plan, slot, clipPath, ctx, { path: filed, license: edit.license, attribution: edit.attribution });
+        }
         if (edit.action === 'upload') {
           const footagePlan = plan.visual_type === 'archive' || plan.visual_type === 'stock' ? plan : { ...plan, visual_type: 'stock' as const };
           const rendered = await renderCandidateShot(

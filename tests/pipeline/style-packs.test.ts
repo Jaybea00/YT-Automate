@@ -24,11 +24,11 @@ function contrast(a: string, b: string): number {
 }
 
 describe('Style packs', () => {
-  it('includes the original nine styles and the seven niches', () => {
-    for (const id of ['tech', 'cinematic', 'modernmba', 'listicle', 'story_driven', 'comparison', 'eli5', 'true_crime_pov', 'vox_explainer', 'car', 'sport', 'finance', 'space_science', 'tech_review', 'history', 'mystery']) {
+  it('includes the original nine styles, the seven niches and the two stickman styles', () => {
+    for (const id of ['tech', 'cinematic', 'modernmba', 'listicle', 'story_driven', 'comparison', 'eli5', 'true_crime_pov', 'vox_explainer', 'car', 'sport', 'finance', 'space_science', 'tech_review', 'history', 'mystery', 'stickman_pov', 'stickman_bible']) {
       assert.ok(isVideoStyle(id), id);
     }
-    assert.equal(STYLE_IDS.length, 16);
+    assert.equal(STYLE_IDS.length, 18);
   });
 
   it('defines every pack completely and consistently', () => {

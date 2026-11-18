@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ShotAlternative } from '@/pipeline/visuals/shot-composer';
 import { AlternativeCard } from './alternative-card';
+import { drawingCode } from '@/lib/stickman/drawing-codes';
 
 interface EditorShot {
   index: number;
@@ -18,7 +19,7 @@ interface EditorShot {
   /** The relevance check was unavailable when this shot was picked: pick again once it's back. */
   needsCheck?: boolean;
   alternatives?: ShotAlternative[];
-  plan: { visual_query: string; covers: string };
+  plan: { visual_query: string; covers: string; drawing?: { scene: string; framing: string; mood: string } };
 }
 
 const TYPE_LABEL: Record<string, { label: string; bar: string }> = {
@@ -53,7 +54,8 @@ type Edit = { action: 'swap'; candidate: ShotAlternative } | { action: 'redo' } 
  * alternative that passed the relevance check, search with your own words, pick again, or show
  * the narration as type. Only the edited shot re-renders; the rest of the beat is untouched.
  */
-export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string; beatIndex: number; onChanged: () => void }) {
+/** drawn: a stickman video, where shots take the creator's drawings (no footage search or AI pictures). */
+export function ShotEditor({ videoId, beatIndex, onChanged, drawn = false }: { videoId: string; beatIndex: number; onChanged: () => void; drawn?: boolean }) {
   const [shots, setShots] = useState<EditorShot[] | null>(null);
   const [editable, setEditable] = useState(false);
   const [busy, setBusy] = useState<Record<number, string>>({});
@@ -187,7 +189,8 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
           const isBusy = busy[s.index];
           const fellBack = s.renderedType !== s.plannedType && !(s.plannedType === 'archive' && s.renderedType === 'stock');
           const pool = open[s.index] === 'search' ? results[s.index] ?? [] : s.alternatives ?? [];
-          const isFootage = s.renderedType === 'stock' || s.renderedType === 'archive' || s.plannedType === 'stock' || s.plannedType === 'archive';
+          const isFootage = !drawn && (s.renderedType === 'stock' || s.renderedType === 'archive' || s.plannedType === 'stock' || s.plannedType === 'archive');
+          const isDrawing = s.plannedType === 'drawing';
           // Same rule as shotNeedsCheck: flagged, or picked by title alone by older renders
           const unchecked = Boolean(s.needsCheck) || ((s.renderedType === 'stock' || s.renderedType === 'archive') && /unchecked relevance/.test(s.note ?? ''));
           return (
@@ -224,7 +227,13 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
 
               <div className="p-3 space-y-2 text-[11px] flex-1 flex flex-col">
                 <p className="text-zinc-300">&ldquo;{s.plan.covers}&rdquo;</p>
-                <p className="text-zinc-500 font-mono">{s.plan.visual_query}</p>
+                {isDrawing && s.plan.drawing ? (
+                  <p className="text-zinc-500">
+                    <span className="font-mono text-zinc-300">{drawingCode(beatIndex, s.index)}</span> · {s.plan.drawing.framing} · {s.plan.drawing.mood}: {s.plan.drawing.scene}
+                  </p>
+                ) : (
+                  <p className="text-zinc-500 font-mono">{s.plan.visual_query}</p>
+                )}
                 {fellBack && (
                   <p className="text-amber-300">Planned as {typeLabel(s.plannedType)}, shown as {typeLabel(s.renderedType)}.</p>
                 )}
@@ -253,6 +262,7 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                       Alternatives ({s.alternatives?.length ?? 0})
                     </button>
                   )}
+                  {!drawn && (
                   <button
                     type="button"
                     disabled={Boolean(isBusy)}
@@ -261,6 +271,7 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                   >
                     Search…
                   </button>
+                  )}
                   <button
                     type="button"
                     disabled={Boolean(isBusy)}
@@ -278,6 +289,7 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                   >
                     Text card
                   </button>
+                  {!drawn && (
                   <button
                     type="button"
                     disabled={Boolean(isBusy)}
@@ -294,14 +306,15 @@ export function ShotEditor({ videoId, beatIndex, onChanged }: { videoId: string;
                   >
                     ✨ Illustration
                   </button>
+                  )}
                   <label
                     className={`px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 ${isBusy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
                     title="Use your own photo or clip for this shot only (your own work; for licensed footage use the beat upload)"
                   >
-                    Upload your own
+                    {drawn ? (isDrawing ? 'Upload drawing' : 'Upload a drawing here') : 'Upload your own'}
                     <input
                       type="file"
-                      accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp"
+                      accept={drawn ? 'image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm' : 'video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp'}
                       className="hidden"
                       onChange={(e) => {
                         const file = e.target.files?.[0];

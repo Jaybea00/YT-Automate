@@ -56,7 +56,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       outline,
       packaging: chosenPackage(packaging),
     });
-    const planned = await planShots(supabase, written, video.topic, { style: video.style, illustrations: video.script_json?.illustrations });
+    const planned = await planShots(supabase, written, video.topic, { style: video.style, illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
     const checks = await afterWriteChecks(supabase, video.topic, planned, video.style);
 
     // Re-read so settings changed while the script was being written aren't lost

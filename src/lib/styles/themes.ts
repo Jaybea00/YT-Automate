@@ -312,4 +312,46 @@ export const MYSTERY: MotionTheme = {
   grade: "eq=contrast=1.07:saturation=0.8:gamma=0.96,lutyuv=u='val+3':v='val-2'",
 };
 
-export const ALL_THEMES: MotionTheme[] = [DOCUMENTARY, VOX, TECH, BUSINESS, WARM, NOIR, AUTOMOTIVE, STADIUM, MONEY, COSMOS, REVIEW, HISTORY, MYSTERY];
+/** Handwriting fonts that ship with Windows 10/11, for the doodle looks. */
+const HAND = '"Ink Free", "Segoe Print", "Comic Sans MS", cursive';
+const HAND_BODY = '"Segoe Print", "Ink Free", "Comic Sans MS", cursive';
+
+/** Stickman videos: black marker on white paper, so the graphics sit beside the creator's drawings. */
+export const DOODLE: MotionTheme = {
+  name: 'doodle',
+  background: '#fbfaf6',
+  backgroundOverlay: 'radial-gradient(ellipse at center, rgba(255,255,255,0.6) 0%, rgba(120,110,90,0.06) 100%)',
+  surface: '#ffffff',
+  text: '#1d1d1d',
+  muted: '#6b6b6b',
+  accent: '#ffd23f',
+  accentText: '#d64545',
+  accent2: '#3a86ff',
+  series: ['#d64545', '#3a86ff', '#2a9d8f', '#ffb703'],
+  headingFont: HAND,
+  bodyFont: HAND_BODY,
+  numberFont: HAND,
+  radius: 14,
+  map: { water: '#e6f0f5', land: '#fbfaf6', border: '#1d1d1d', highlight: '#d64545' },
+  // Drawings stay as drawn: no grade beyond a touch of contrast
+  grade: 'eq=contrast=1.02',
+};
+
+/** Stickman Bible stories: the doodle look on warm parchment, with a gold accent. */
+export const SCROLL: MotionTheme = {
+  ...DOODLE,
+  name: 'scroll',
+  background: '#f6eedb',
+  backgroundOverlay: 'radial-gradient(ellipse at center, rgba(255,250,235,0.55) 0%, rgba(140,105,50,0.14) 100%)',
+  surface: '#fffaf0',
+  text: '#2a2118',
+  muted: '#7a6a55',
+  accent: '#e3b04b',
+  accentText: '#9a3b1e',
+  accent2: '#4a7c59',
+  series: ['#9a3b1e', '#4a7c59', '#3d6a9e', '#e3b04b'],
+  map: { water: '#dfe6e0', land: '#f6eedb', border: '#2a2118', highlight: '#9a3b1e' },
+  grade: 'eq=contrast=1.02',
+};
+
+export const ALL_THEMES: MotionTheme[] = [DOCUMENTARY, VOX, TECH, BUSINESS, WARM, NOIR, AUTOMOTIVE, STADIUM, MONEY, COSMOS, REVIEW, HISTORY, MYSTERY, DOODLE, SCROLL];

@@ -91,6 +91,8 @@ export interface MasterOptions {
   draft?: boolean;
   /** The creator's text, callouts and arrows (see overlays.ts): each PNG and when it shows. */
   overlays?: { windows: Array<{ atSec: number; endSec: number }>; pngs: string[] } | null;
+  /** Where ffmpeg writes its progress (-progress), so a long master can be followed. */
+  progressFile?: string;
 }
 
 /**
@@ -139,6 +141,7 @@ export async function masterFinalVideo(options: MasterOptions): Promise<{ output
   } else {
     args.push('-c:v', 'copy', '-movflags', '+faststart');
   }
+  if (options.progressFile) args.push('-progress', path.resolve(options.progressFile), '-nostats');
   args.push('-af', af, ...MASTER_AUDIO_ENCODE, path.resolve(outputPath));
 
   await execFileAsync(getFfmpegPath(), args, {

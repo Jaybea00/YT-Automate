@@ -87,7 +87,7 @@ export async function replaceShot(options: {
   const clipPath = shotClipPath(beat.trackPath, beat.beatIndex, shotIndex);
   const tempPath = clipPath.replace(/\.mp4$/, '.new.mp4');
   const plan = options.plan ?? current.plan;
-  const slot: ShotSlot = { shot: plan, startSec: current.startSec, frames: current.frames };
+  const slot: ShotSlot = { shot: plan, startSec: current.startSec, frames: current.frames, index: shotIndex };
   let rendered: RenderedShot;
   try {
     rendered = await render(slot, tempPath);

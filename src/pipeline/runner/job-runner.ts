@@ -51,6 +51,11 @@ import { saveRenderedRhythm } from '../visuals/rhythm-report';
 import { themeForStyle } from '../visuals/motion/theme';
 import { withWritingModel, type ScriptBeat, type ShotPlan } from '@/lib/script/generate-script';
 import { stylePack } from '@/lib/styles/packs';
+import { findDrawing, listDrawings } from '@/pipeline/visuals/drawings-store';
+import { revealShots } from '@/pipeline/visuals/drawing-shot';
+import { AssemblyProgressTracker, followFfmpegProgress, progressFilePath } from './assembly-progress';
+import { clearJoinCheckpoint, joinFingerprint, readJoinCheckpoint, writeJoinCheckpoint } from '../assembly/join-checkpoint';
+import { drawingCode } from '@/lib/stickman/drawing-codes';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -399,10 +404,17 @@ export class JobRunner {
         ...(videoRow?.script_json?.upscale === true ? { upscale: true } : {}),
         // On when a YouTube key is set, unless the video turns it off
         ...(process.env.YOUTUBE_API_KEY && videoRow?.script_json?.youtube_cc !== false ? { youtubeCc: true } : {}),
+        // Stickman styles: only the creator's drawings, filed by code; nothing is searched
+        ...(stylePack(videoRow?.style)?.drawn && job.video_id
+          ? { drawn: true, drawingFile: (beatIndex: number, shotIndex: number) => findDrawing(job.video_id!, beatIndex, shotIndex), reveal: revealShots(plannedBeats) }
+          : {}),
+        ...(videoRow?.script_json?.bible_translation === 'web' ? { bibleTranslation: 'web' as const } : {}),
       };
 
       const outputDir = path.join(this.baseOutputDir, 'visuals');
       let hasFailure = false;
+      // Stickman videos: the drawings filed so far (a beat renders again when its own change)
+      const filedDrawings = stylePack(videoRow?.style)?.drawn && job.video_id ? await listDrawings(job.video_id) : null;
 
       // Launch headless browser for rendering charts / screen recordings
       let browser: Browser | undefined;
@@ -454,6 +466,8 @@ export class JobRunner {
                     archiveLook: archiveLookOn ? 'on' : 'off',
                     photoLook: stylePack(videoRow?.style)?.photoLook ?? 'plain',
                     parallax: videoRow?.script_json?.parallax !== false ? 'on' : 'off',
+                    // New drawings filed since the last render re-render the beat
+                    ...(filedDrawings ? { drawings: [...filedDrawings].filter((c) => c.startsWith(`${drawingCode(scene.scene_number, 0).split('_')[0]}_`)).sort().join(',') } : {}),
                     leadInSec: pacing.get(scene.scene_number)?.leadInSec ?? 0,
                     tailSec: pacing.get(scene.scene_number)?.tailSec ?? 0,
                   }
@@ -766,6 +780,9 @@ export class JobRunner {
     }
 
     await this.updateStageStatus('assembly', 'running');
+    // A percentage, the step and the time left for the progress page (final renders only)
+    const progress = draft ? null : new AssemblyProgressTracker(progressFilePath(this.baseOutputDir));
+    await progress?.set('scenes', 0, undefined, true);
     try {
       // 1. If videoId is present, enforce assembly gate: every beat must have an asset
       if (videoId) {
@@ -935,6 +952,7 @@ export class JobRunner {
             ? scriptBeats[i].scene_number
             : i;
         if (previewBeats && !previewBeats.has(beatIndex)) continue;
+        await progress?.set('scenes', i / scriptBeats.length, `scene ${i + 1} of ${scriptBeats.length}`);
 
         // Resolve beat audio and measured duration
         const ttsUnit = ttsMap.get(beatIndex);
@@ -1282,10 +1300,34 @@ export class JobRunner {
               { rendered: videoRecord?.script_json?.transition_rendered !== false },
             )
           : undefined;
-      const joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
-        transition: draft ? 'cut' : transition,
-        joins,
-      });
+      // The joined video is kept until the render finishes, under a fingerprint of its scenes and
+      // transitions: a run stopped later (a shutdown during mastering) reuses it instead of
+      // joining every scene again
+      const joinKey = await joinFingerprint(sceneClipPaths, { transition: draft ? 'cut' : transition, joins, draft });
+      const joinCheckpoint = path.join(tempDir, draft ? 'program_joined_preview.mp4' : 'program_joined.mp4');
+      const reused = await readJoinCheckpoint(joinCheckpoint, joinKey);
+      let joined: Awaited<ReturnType<typeof joinSceneClips>>;
+      if (reused) {
+        joined = { ...reused, outputPath: joinCheckpoint };
+        workingFiles.splice(workingFiles.indexOf(programPath), 1);
+        programPath = joinCheckpoint;
+        console.log('[Assembly] Reusing the joined scenes from an earlier run (same scenes and transitions)');
+      } else {
+        await progress?.set('join', 0, undefined, true);
+        joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
+          transition: draft ? 'cut' : transition,
+          joins,
+          onProgress: (done, total) => void progress?.set('join', done / total, `step ${done} of ${total}`),
+        });
+        await writeJoinCheckpoint(programPath, joinCheckpoint, joinKey, joined).catch((err) =>
+          console.warn('[Assembly] Could not keep the joined scenes for a later run:', err instanceof Error ? err.message : err),
+        );
+        if (await fs.stat(joinCheckpoint).then(() => true).catch(() => false)) {
+          workingFiles.splice(workingFiles.indexOf(programPath), 1);
+          programPath = joinCheckpoint;
+        }
+      }
+      await progress?.set('music', 0, undefined, true);
       if (joins) {
         const moves = joins.filter((j) => j.type !== 'cut');
         console.log(`[Assembly] Transitions: ${moves.length} of ${joins.length} joins (${[...new Set(moves.map((j) => j.type))].join(', ') || 'all cuts'})`);
@@ -1334,7 +1376,8 @@ export class JobRunner {
               await loadCaptionWords(captionBeats),
               videoRecord?.script_json?.caption_edits,
             ),
-            highlightHex: themeForStyle(videoRecord?.style).accent,
+            // Doodle captions are dark text: the spoken word takes the style's ink colour, not its marker fill
+            highlightHex: captionPreset === 'doodle' ? themeForStyle(videoRecord?.style).accentText : themeForStyle(videoRecord?.style).accent,
             zones: await captionZonesFromTracks(
               sceneBeatIndexes.map((b, pos) => ({ sceneStartMs: beatStartMs[pos], trackPath: trackByBeat.get(b) ?? null })),
             ),
@@ -1497,6 +1540,8 @@ export class JobRunner {
       // Narration sound cues, kept for emphasis (impact sounds get a camera shake)
       let narrationCuesForEmphasis: Array<{ atMs: number; sound: string }> = [];
 
+      await progress?.set('sound', 0, undefined, true);
+
       // 6b+. Smart sound design: effects placed by what's on screen, laid over voice and music
       // (after the music, so the music ducks for the voice only)
       if (sfxEnabled && sfxTrack === 'smart') {
@@ -1606,9 +1651,18 @@ export class JobRunner {
           console.warn('[Assembly] Overlays skipped:', overlayErr instanceof Error ? overlayErr.message.slice(0, 200) : overlayErr);
         }
       }
+      // Mastered to a temporary file and moved into place only when whole, so a shutdown mid-write
+      // never leaves a broken final video
+      const partialRenderPath = finalRenderPath.replace(/\.mp4$/, '.partial.mp4');
+      const masterProgress = progress ? path.join(this.baseOutputDir, 'master-progress.txt') : undefined;
+      await progress?.set('master', 0, undefined, true);
+      const programSec = await probeClipDurationSec(programPath).catch(() => 0);
+      const stopFollowing = masterProgress && programSec > 0
+        ? followFfmpegProgress(masterProgress, programSec, (f) => void progress?.set('master', f, `${Math.round(f * 100)}% of the video`))
+        : () => {};
       try {
         try {
-          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, emphasis, draft, overlays });
+          const { measured } = await masterFinalVideo({ inputPath: programPath, outputPath: partialRenderPath, assPath, lookFilter: grade, emphasis, draft, overlays, progressFile: masterProgress });
           console.log(
             `[Assembly] Mastered to ${TARGET_LUFS} LUFS (programme measured ${measured.input_i} LUFS)` +
               `${grade ? `, ${themeForStyle(videoRecord?.style).name} look` : ''}${assPath ? `, "${captionPreset}" captions` : ''}`,
@@ -1616,7 +1670,7 @@ export class JobRunner {
         } catch (masterErr) {
           // Emphasis and overlays are the newest parts of the graph: drop them first, keeping the look and captions
           const retried = emphasis || overlays
-            ? await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath, assPath, lookFilter: grade, draft })
+            ? await masterFinalVideo({ inputPath: programPath, outputPath: partialRenderPath, assPath, lookFilter: grade, draft, progressFile: masterProgress })
                 .then(() => true)
                 .catch(() => false)
             : false;
@@ -1626,12 +1680,18 @@ export class JobRunner {
             if (!assPath && !grade) throw masterErr;
             // Keep a plain master rather than failing the whole assembly
             console.warn('[Assembly] Mastering with look/captions failed; mastering without them:', masterErr);
-            await masterFinalVideo({ inputPath: programPath, outputPath: finalRenderPath });
+            await masterFinalVideo({ inputPath: programPath, outputPath: partialRenderPath, progressFile: masterProgress });
           }
         }
+        await fs.rename(partialRenderPath, finalRenderPath);
+        // Done with the joined scenes: the next render joins afresh
+        await clearJoinCheckpoint(joinCheckpoint);
       } finally {
+        stopFollowing();
+        if (masterProgress) await fs.rm(masterProgress, { force: true }).catch(() => {});
         for (const f of workingFiles) await fs.unlink(f).catch(() => {});
       }
+      await progress?.set('check', 0, undefined, true);
 
       if (draft) {
         if (videoId) {
@@ -1789,9 +1849,11 @@ export class JobRunner {
           .eq('id', videoId);
       }
 
+      await progress?.clear();
       return finalRenderPath;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      await progress?.clear();
       await this.updateStageStatus('assembly', 'failed', msg);
       if (videoId && draft) {
         // A failed preview never marks the video failed; the error is kept with the preview

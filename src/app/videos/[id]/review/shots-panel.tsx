@@ -30,6 +30,8 @@ const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; c
   scale: { label: 'Scale', icon: '🪐', bar: 'bg-purple-500/80', chip: 'text-purple-300 border-purple-500/30 bg-purple-500/10' },
   spec_card: { label: 'Specs', icon: '📋', bar: 'bg-slate-400/80', chip: 'text-slate-300 border-slate-500/30 bg-slate-500/10' },
   money: { label: 'Money', icon: '💵', bar: 'bg-emerald-600/80', chip: 'text-emerald-300 border-emerald-600/30 bg-emerald-600/10' },
+  drawing: { label: 'Drawing', icon: '✏️', bar: 'bg-stone-300/80', chip: 'text-stone-200 border-stone-400/40 bg-stone-400/10' },
+  verse: { label: 'Verse', icon: '📖', bar: 'bg-yellow-500/80', chip: 'text-yellow-200 border-yellow-500/30 bg-yellow-500/10' },
 };
 
 const shotSeconds = (shot: ShotPlan) => shot.word_count / SPEECH_WORDS_PER_SECOND;
@@ -39,6 +41,8 @@ function describeSpec(shot: ShotPlan): string {
     const points = shot.chart.labels.map((l, i) => `${l}: ${shot.chart!.values[i]}`).join(', ');
     return `${shot.chart.chart_type} chart "${shot.chart.title}"${shot.chart.unit ? ` (${shot.chart.unit})` : ''}: ${points}`;
   }
+  if (shot.drawing) return `${shot.drawing.framing} · ${shot.drawing.mood}: ${shot.drawing.scene}`;
+  if (shot.verse) return `${shot.verse.reference} (WEB)`;
   if (shot.stat) return `${shot.stat.prefix ?? ''}${shot.stat.value}${shot.stat.suffix ?? ''} ${shot.stat.label}`;
   if (shot.quote) return `"${shot.quote.text}" (${shot.quote.attribution})`;
   if (shot.map) return `${shot.map.mode}: ${shot.map.places.join(' → ')}`;

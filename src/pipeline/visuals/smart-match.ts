@@ -10,6 +10,9 @@ import type { LLMProvider, LlmImage } from '../providers/types';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import { probeMediaFile, sniffMediaType } from '../utils/media-upload';
 import { loadComposedBeat } from './shot-editor';
+import { stylePack } from '@/lib/styles/packs';
+import { drawingCode, parseDrawingCode } from '@/lib/stickman/drawing-codes';
+import type { ShotPlan } from '@/lib/script/generate-script';
 
 const execFileAsync = promisify(execFile);
 
@@ -103,19 +106,31 @@ async function grabFrame(file: string, atSec: number | null): Promise<LlmImage> 
   return { mimeType: 'image/jpeg', data: (stdout as Buffer).toString('base64') };
 }
 
-/** Footage shots and text-card stand-ins of composed beats, and single-visual beats. */
+/**
+ * Footage shots and text-card stand-ins of composed beats, and single-visual beats. In a stickman
+ * video: its drawing shots (waiting or drawn), described by their brief, composed or not yet.
+ */
 export async function matchTargets(supabase: SupabaseClient, videoId: string): Promise<MatchTarget[]> {
-  const { data: video } = await supabase.from('videos').select('script_json').eq('id', videoId).maybeSingle();
-  const beats: Array<{ index: number; text: string; visual_query?: string; duration_estimate_seconds?: number }> = video?.script_json?.beats ?? [];
+  const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
+  const drawn = Boolean(stylePack(video?.style)?.drawn);
+  const beats: Array<{ index: number; text: string; visual_query?: string; duration_estimate_seconds?: number; shots?: ShotPlan[] }> = video?.script_json?.beats ?? [];
   const targets: MatchTarget[] = [];
   for (const beat of beats) {
     const composed = await loadComposedBeat(supabase, videoId, beat.index).catch(() => null);
     if (composed) {
       composed.shots.forEach((s, i) => {
         // Graphics (charts, maps, titles) stay; footage and text-card stand-ins can take a clip
-        const footage = s.renderedType === 'stock' || s.renderedType === 'archive' || s.renderedType === 'color' || s.fallback;
+        const footage = drawn
+          ? s.plan.visual_type === 'drawing'
+          : s.renderedType === 'stock' || s.renderedType === 'archive' || s.renderedType === 'color' || s.fallback;
         if (!footage) return;
-        targets.push({ beat_index: beat.index, shot_index: i, query: s.plan.visual_query, covers: s.plan.covers ?? '', durationSec: s.durationSec });
+        targets.push({ beat_index: beat.index, shot_index: i, query: s.plan.drawing?.scene ?? s.plan.visual_query, covers: s.plan.covers ?? '', durationSec: s.durationSec });
+      });
+    } else if (drawn && beat.shots?.length) {
+      // Not rendered yet: drawings are filed for when the visuals stage runs
+      beat.shots.forEach((s, i) => {
+        if (s.visual_type !== 'drawing') return;
+        targets.push({ beat_index: beat.index, shot_index: i, query: s.drawing?.scene ?? s.visual_query, covers: s.covers, durationSec: s.word_count / 2.5 });
       });
     } else {
       targets.push({ beat_index: beat.index, shot_index: null, query: beat.visual_query ?? '', covers: beat.text, durationSec: beat.duration_estimate_seconds ?? 8 });
@@ -186,6 +201,34 @@ export function normalizeMatches(
 export async function matchStagedFiles(supabase: SupabaseClient, videoId: string, staged: StagedFile[]): Promise<MatchProposal[]> {
   const targets = await matchTargets(supabase, videoId);
   if (targets.length === 0 || staged.length === 0) return [];
+  // Files named with a drawing code ("B05_S2.png") go straight to that shot; the rest are matched by eye
+  const byCode = codedMatches(staged, targets);
+  const coded = new Set(byCode.map((p) => p.fileId));
+  staged = staged.filter((f) => !coded.has(f.id));
+  if (staged.length === 0) return byCode;
+  const claimed = new Set(byCode.map((p) => `${p.beat_index}:${p.shot_index}`));
+  return [...byCode, ...(await matchByEye(supabase, staged, targets.filter((t) => !claimed.has(`${t.beat_index}:${t.shot_index}`))))].sort(
+    (a, b) => a.beat_index - b.beat_index || (a.shot_index ?? 0) - (b.shot_index ?? 0),
+  );
+}
+
+/** Proposals for files whose name carries a drawing code that points at a target shot. */
+export function codedMatches(staged: StagedFile[], targets: MatchTarget[]): MatchProposal[] {
+  const out: MatchProposal[] = [];
+  for (const file of staged) {
+    const code = parseDrawingCode(file.name);
+    if (!code || !targets.some((t) => t.beat_index === code.beat_index && t.shot_index === code.shot_index)) continue;
+    // Two files with the same code: the later one wins
+    const existing = out.findIndex((p) => p.beat_index === code.beat_index && p.shot_index === code.shot_index);
+    const proposal: MatchProposal = { fileId: file.id, fileName: file.name, ...code, startSec: 0, score: 10, reason: `File name: ${drawingCode(code.beat_index, code.shot_index)}` };
+    if (existing >= 0) out[existing] = proposal;
+    else out.push(proposal);
+  }
+  return out;
+}
+
+async function matchByEye(supabase: SupabaseClient, staged: StagedFile[], targets: MatchTarget[]): Promise<MatchProposal[]> {
+  if (targets.length === 0) return [];
   const { provider, ctx } = await resolveForStage<LLMProvider>('script', supabase);
   if (!provider.supportsVision) throw new Error('Matching needs a script model that can see images (Gemini)');
 
