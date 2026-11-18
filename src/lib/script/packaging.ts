@@ -4,7 +4,8 @@ import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider } from '@/pipeline/providers/types';
 import { groundedTitles, TITLE_MAX_CHARS } from '@/pipeline/publish/metadata';
 import type { ResearchDossier } from '@/lib/research/types';
-import { STYLE_TEMPLATES, type VideoStyle } from './style-templates';
+import { styleTemplate, type VideoStyle } from './style-templates';
+import type { StylePack } from '@/lib/styles/packs';
 import { withWritingModel } from './generate-script';
 import type { PackageOption, Packaging } from './packaging-types';
 
@@ -30,11 +31,12 @@ const PackagingSchema = z.object({
 export function buildPackagingPrompt(input: {
   topic: string;
   style: VideoStyle;
+  pack?: StylePack;
   targetMinutes: number;
   research?: ResearchDossier | null;
   brief?: string | null;
 }): string {
-  const style = STYLE_TEMPLATES[input.style];
+  const style = styleTemplate(input.style, input.pack);
   const facts = input.research?.facts.length
     ? `\nVerified facts:\n${input.research.facts.slice(0, 30).map((f) => `- ${f.claim}`).join('\n')}`
     : '';
@@ -74,7 +76,7 @@ export function normalizePackaging(raw: z.infer<typeof PackagingSchema>['options
 
 export async function generatePackaging(
   supabase: SupabaseClient,
-  input: { topic: string; style: VideoStyle; targetMinutes: number; research?: ResearchDossier | null; brief?: string | null },
+  input: { topic: string; style: VideoStyle; pack?: StylePack; targetMinutes: number; research?: ResearchDossier | null; brief?: string | null },
 ): Promise<Packaging | null> {
   const resolved = await resolveForStage<LLMProvider>('script', supabase);
   const { data } = await resolved.provider.generateJson(

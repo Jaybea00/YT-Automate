@@ -1,20 +1,12 @@
 import { NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
-import { generateScript, GeneratedScript } from '@/lib/script/generate-script';
-import { VideoStyle } from '@/lib/script/style-templates';
-import { narrationPaceFactor, stylePack, withStyleDefaults } from '@/lib/styles/packs';
-import { estimateSpeechSeconds } from '@/lib/script/script-quality';
-import { researchTopic } from '@/lib/research/research';
+import type { GeneratedScript } from '@/lib/script/generate-script';
+import { stylePack } from '@/lib/styles/packs';
 import { planShots } from '@/lib/script/shot-planner';
-import { generateOutline, trimBrief } from '@/lib/script/outline';
-import { afterWriteChecks } from '@/lib/script/after-write';
-import { chosenPackage, generatePackagingOrNull } from '@/lib/script/packaging';
-import {
-  parseSrtToBeats,
-  parseRawTextToParagraphBeats,
-  parseRawTextWithAi,
-  planVisualsForUploadedBeats,
-} from '@/lib/script/parser';
+import { trimBrief } from '@/lib/script/outline';
+import { createQueuedVideo, resolveNewVideoStyle, styledScript, type ResolvedStyle } from '@/lib/script/new-video';
+import { parseSrtToBeats, parseRawTextToParagraphBeats, planVisualsForUploadedBeats } from '@/lib/script/parser';
 
 export async function GET() {
   try {
@@ -39,20 +31,9 @@ export async function GET() {
  * Pasted scripts and subtitles skip shot planning (they're meant to be instant), but a stickman
  * video needs its drawing brief before anything can be drawn, so those get one planned here.
  */
-async function withDrawingBrief(
-  supabase: ReturnType<typeof getSupabaseServerClient>,
-  script: GeneratedScript,
-  topic: string,
-  style: string,
-): Promise<GeneratedScript> {
-  return stylePack(style)?.drawn ? planShots(supabase, script, topic, { style }) : script;
-}
-
-/** A pasted script's spoken length in minutes, estimated as the review page's runtime meter does. */
-function scriptMinutes(beats: GeneratedScript['beats'], style: string): number {
-  const pace = narrationPaceFactor(style);
-  const seconds = beats.reduce((n, b) => n + estimateSpeechSeconds(b.text) / pace, 0) + beats.length * 0.5;
-  return Math.max(0.5, Math.round((seconds / 60) * 10) / 10);
+async function withDrawingBrief(supabase: SupabaseClient, script: GeneratedScript, topic: string, resolved: ResolvedStyle): Promise<GeneratedScript> {
+  const pack = resolved.composed?.pack ?? stylePack(resolved.style);
+  return pack?.drawn ? planShots(supabase, script, topic, { style: resolved.style, pack: resolved.composed?.pack }) : script;
 }
 
 export async function POST(req: Request) {
@@ -61,7 +42,6 @@ export async function POST(req: Request) {
     const {
       mode = 'ai',
       topic,
-      style = 'tech',
       targetMinutes,
       rawText,
       srtText,
@@ -70,7 +50,6 @@ export async function POST(req: Request) {
     } = body as {
       mode?: 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt';
       topic?: string;
-      style?: VideoStyle;
       targetMinutes?: number | string;
       rawText?: string;
       srtText?: string;
@@ -79,6 +58,8 @@ export async function POST(req: Request) {
     };
 
     const supabase = getSupabaseServerClient();
+    const resolved = await resolveNewVideoStyle(body);
+    const { style } = resolved;
 
     // -------------------------------------------------------------
     // MODE 1: SRT SUBTITLES
@@ -116,7 +97,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: withStyleDefaults(await withDrawingBrief(supabase, scriptJson, videoTopic, style), style),
+          script_json: styledScript(await withDrawingBrief(supabase, scriptJson, videoTopic, resolved), resolved),
           title: videoTopic,
         })
         .select()
@@ -165,7 +146,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: withStyleDefaults(await withDrawingBrief(supabase, scriptJson, videoTopic, style), style),
+          script_json: styledScript(await withDrawingBrief(supabase, scriptJson, videoTopic, resolved), resolved),
           title: videoTopic,
         })
         .select()
@@ -182,205 +163,45 @@ export async function POST(req: Request) {
     }
 
     // -------------------------------------------------------------
-    // MODE 3: RAW TEXT WITH AI SEGMENTATION
+    // MODE 3: RAW TEXT WITH AI SEGMENTATION (in the background)
     // -------------------------------------------------------------
     if (mode === 'raw_ai') {
       if (!rawText || !rawText.trim()) {
         return NextResponse.json({ error: 'Missing required field: rawText' }, { status: 400 });
       }
-
-      const videoTopic = topic?.trim() || 'My Video Script';
-
-      // 1. Create row with status scripting
-      const { data: newVideo, error: insertError } = await supabase
-        .from('videos')
-        .insert({
-          topic: videoTopic,
-          style,
-          target_minutes: targetMinutes ? parseFloat(String(targetMinutes)) : 3,
-          status: 'scripting',
-        })
-        .select()
-        .single();
-
-      if (insertError || !newVideo) {
-        return NextResponse.json(
-          { error: `Failed to create video record: ${insertError?.message}` },
-          { status: 500 },
-        );
-      }
-
-      try {
-        const segmented = await parseRawTextWithAi(supabase, rawText, {
-          topic: videoTopic,
-          style,
-        });
-        const generatedScript = await planShots(supabase, segmented, videoTopic, { style });
-
-        const { data: updatedVideo, error: updateError } = await supabase
-          .from('videos')
-          .update({
-            script_json: withStyleDefaults(generatedScript, style),
-            status: 'script_review',
-            title: generatedScript.title_options[0] || videoTopic,
-            // The creator's own words set the length, not the form's default: revisions and
-            // rewrites aim at this target, and must not squeeze the script toward it
-            target_minutes: scriptMinutes(generatedScript.beats, style),
-          })
-          .eq('id', newVideo.id)
-          .select()
-          .single();
-
-        if (updateError || !updatedVideo) {
-          throw new Error(`Failed to update video: ${updateError?.message}`);
-        }
-
-        return NextResponse.json(updatedVideo, { status: 201 });
-      } catch (genErr) {
-        await supabase
-          .from('videos')
-          .update({
-            status: 'failed',
-            error_message: genErr instanceof Error ? genErr.message : String(genErr),
-          })
-          .eq('id', newVideo.id);
-
-        return NextResponse.json(
-          { error: `AI text segmentation failed: ${genErr instanceof Error ? genErr.message : String(genErr)}` },
-          { status: 500 },
-        );
-      }
+      const video = await createQueuedVideo(
+        supabase,
+        // The length comes from the text itself once it's split, not from a form default
+        { mode: 'raw_ai', topic: topic?.trim() || 'My Video Script', targetMinutes: 3, rawText },
+        resolved,
+      );
+      return NextResponse.json(video, { status: 202 });
     }
 
     // -------------------------------------------------------------
-    // MODE 4: FULL AI PROMPT (Standard existing workflow)
+    // MODE 4: RESEARCH AND WRITE FROM A TOPIC (in the background)
     // -------------------------------------------------------------
-    if (!topic || !style || targetMinutes === undefined || targetMinutes === null) {
+    if (!topic?.trim() || targetMinutes === undefined || targetMinutes === null) {
       return NextResponse.json(
-        { error: 'Missing required fields for AI mode: topic, style, targetMinutes' },
+        { error: 'Missing required fields for AI mode: topic, targetMinutes' },
         { status: 400 },
       );
     }
 
     const parsedTargetMinutes = parseFloat(String(targetMinutes));
-    if (isNaN(parsedTargetMinutes) || parsedTargetMinutes <= 0) {
+    if (isNaN(parsedTargetMinutes) || parsedTargetMinutes <= 0 || parsedTargetMinutes > 60) {
       return NextResponse.json(
-        { error: 'targetMinutes must be a positive number' },
+        { error: 'targetMinutes must be between 0.5 and 60' },
         { status: 400 },
       );
     }
 
-    // 1. Insert row with status='scripting'
-    const { data: newVideo, error: insertError } = await supabase
-      .from('videos')
-      .insert({
-        topic: topic.trim(),
-        style,
-        target_minutes: parsedTargetMinutes,
-        status: 'scripting',
-      })
-      .select()
-      .single();
-
-    if (insertError || !newVideo) {
-      return NextResponse.json(
-        { error: `Failed to create video record: ${insertError?.message}` },
-        { status: 500 },
-      );
-    }
-
-    // 2. Research the topic, then write the script from the researched facts
-    try {
-      const brief = trimBrief(rawBrief);
-      const research = await researchTopic(supabase, topic.trim(), brief || null);
-      // Packaging first: the title and thumbnail promise the script will be written to deliver
-      const packagingPromise = generatePackagingOrNull(supabase, {
-        topic: topic.trim(),
-        style,
-        targetMinutes: parsedTargetMinutes,
-        research,
-        brief: brief || null,
-      });
-
-      // Brief mode: stop at an outline for the creator to approve; the script is written after
-      if (brief) {
-        try {
-          const [drafted, packaging] = await Promise.all([
-            generateOutline(supabase, { topic: topic.trim(), style, targetMinutes: parsedTargetMinutes, brief, research }),
-            packagingPromise,
-          ]);
-          const { data: outlined, error: outlineSaveError } = await supabase
-            .from('videos')
-            .update({
-              script_json: withStyleDefaults(
-                { title_options: [], beats: [], brief, outline: drafted.outline, brief_extras: drafted.extras, ...(drafted.research ? { research: drafted.research } : {}), ...(packaging ? { packaging } : {}) },
-                style,
-              ),
-              status: 'script_review',
-            })
-            .eq('id', newVideo.id)
-            .select()
-            .single();
-          if (outlineSaveError || !outlined) {
-            throw new Error(`Failed to save the outline: ${outlineSaveError?.message}`);
-          }
-          return NextResponse.json(outlined, { status: 201 });
-        } catch (outlineError) {
-          // The brief still guides the script; only the approval step is skipped
-          console.warn('[videos] Outline failed; writing the script straight from the brief:', outlineError);
-        }
-      }
-
-      const packaging = await packagingPromise;
-      const writtenScript = await generateScript(supabase, {
-        topic: topic.trim(),
-        style,
-        targetMinutes: parsedTargetMinutes,
-        research,
-        brief: brief || null,
-        packaging: chosenPackage(packaging),
-      });
-      const generatedScript = await planShots(supabase, writtenScript, topic.trim(), { style });
-      const checks = await afterWriteChecks(supabase, topic.trim(), generatedScript, style);
-
-      // 3. Update with script_json and status='script_review'
-      const { data: updatedVideo, error: updateError } = await supabase
-        .from('videos')
-        .update({
-          script_json: withStyleDefaults(
-            { ...generatedScript, ...(brief ? { brief } : {}), ...(packaging ? { packaging } : {}), ...checks },
-            style,
-          ),
-          status: 'script_review',
-        })
-        .eq('id', newVideo.id)
-        .select()
-        .single();
-
-      if (updateError || !updatedVideo) {
-        throw new Error(
-          `Failed to update video with generated script: ${updateError?.message}`,
-        );
-      }
-
-      return NextResponse.json(updatedVideo, { status: 201 });
-    } catch (genError) {
-      const errorMsg =
-        genError instanceof Error ? genError.message : String(genError);
-
-      await supabase
-        .from('videos')
-        .update({
-          status: 'failed',
-          error_message: errorMsg,
-        })
-        .eq('id', newVideo.id);
-
-      return NextResponse.json(
-        { error: `Script generation failed: ${errorMsg}` },
-        { status: 500 },
-      );
-    }
+    const video = await createQueuedVideo(
+      supabase,
+      { mode: 'ai', topic: topic.trim(), targetMinutes: parsedTargetMinutes, brief: trimBrief(rawBrief) || null },
+      resolved,
+    );
+    return NextResponse.json(video, { status: 202 });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'Internal Server Error';
     return NextResponse.json({ error: errorMsg }, { status: 500 });

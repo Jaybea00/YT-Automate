@@ -5,8 +5,8 @@ import { loadComposedBeat } from '@/pipeline/visuals/shot-editor';
 import { editShot } from '@/pipeline/visuals/shot-editor-actions';
 import { loadStaged } from '@/pipeline/visuals/smart-match';
 import { saveDrawing } from '@/pipeline/visuals/drawings-store';
-import { stylePack } from '@/lib/styles/packs';
 import { ALLOWED_LICENSE_TYPES, type AllowedLicenseType } from '@/pipeline/utils/media-upload';
+import { packForVideo } from '@/lib/styles/compose';
 import { handleVisualUpload } from '../../beats/[index]/visual/route';
 
 interface RouteContext {
@@ -37,8 +37,8 @@ export async function POST(req: Request, context: RouteContext) {
 
   const supabase = getSupabaseServerClient();
   const results: Array<{ beat_index: number; shot_index: number | null; ok: boolean; error?: string; filed?: boolean }> = [];
-  const { data: video } = await supabase.from('videos').select('style').eq('id', videoId).maybeSingle();
-  const drawn = Boolean(stylePack(video?.style)?.drawn);
+  const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
+  const drawn = Boolean(packForVideo(video)?.drawn);
   for (const m of body.matches) {
     const staged = await loadStaged(videoId, String(m.fileId));
     const startSec = typeof m.startSec === 'number' && m.startSec >= 0 ? m.startSec : undefined;

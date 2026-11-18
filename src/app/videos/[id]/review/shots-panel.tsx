@@ -4,7 +4,7 @@ import React from 'react';
 import type { ScriptBeat, ShotPlan, ShotType } from '@/lib/script/generate-script';
 import { SPEECH_WORDS_PER_SECOND } from '@/lib/script/script-quality';
 import { analyzeRhythm, planToRhythmShots } from '@/lib/script/visual-rhythm';
-import { stylePack } from '@/lib/styles/packs';
+import { stylePack, type StylePack } from '@/lib/styles/packs';
 
 const SHOT_STYLE: Record<ShotType, { label: string; icon: string; bar: string; chip: string }> = {
   stock: { label: 'Stock', icon: '🎬', bar: 'bg-zinc-600', chip: 'text-zinc-300 border-zinc-700 bg-zinc-800/60' },
@@ -111,10 +111,13 @@ export function ShotPlanSummary({
   onPlanMissing,
   onReplanAll,
   style,
+  pack,
 }: {
   beats: ScriptBeat[];
   /** The video's style, whose pack sets the graphics limit. */
   style?: string | null;
+  /** The video's composed style pack, when it has one (wins over `style`). */
+  pack?: StylePack;
   isPlanning: boolean;
   hasUnsavedEdits: boolean;
   onPlanMissing: () => void;
@@ -128,7 +131,7 @@ export function ShotPlanSummary({
     return acc;
   }, {});
   // Live, so it follows edits; the planner already repaired what it could
-  const rhythm = shots.length ? analyzeRhythm(planToRhythmShots(beats), 'plan', [], stylePack(style)?.maxGraphicsShare) : null;
+  const rhythm = shots.length ? analyzeRhythm(planToRhythmShots(beats), 'plan', [], (pack ?? stylePack(style))?.maxGraphicsShare) : null;
   const rhythmTone =
     rhythm?.risk === 'low' ? 'text-emerald-300' : rhythm?.risk === 'medium' ? 'text-amber-300' : 'text-red-300';
 

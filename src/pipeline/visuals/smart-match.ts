@@ -10,8 +10,8 @@ import type { LLMProvider, LlmImage } from '../providers/types';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import { probeMediaFile, sniffMediaType } from '../utils/media-upload';
 import { loadComposedBeat } from './shot-editor';
-import { stylePack } from '@/lib/styles/packs';
 import { drawingCode, parseDrawingCode } from '@/lib/stickman/drawing-codes';
+import { packForVideo } from '@/lib/styles/compose';
 import type { ShotPlan } from '@/lib/script/generate-script';
 
 const execFileAsync = promisify(execFile);
@@ -112,7 +112,7 @@ async function grabFrame(file: string, atSec: number | null): Promise<LlmImage> 
  */
 export async function matchTargets(supabase: SupabaseClient, videoId: string): Promise<MatchTarget[]> {
   const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
-  const drawn = Boolean(stylePack(video?.style)?.drawn);
+  const drawn = Boolean(packForVideo(video)?.drawn);
   const beats: Array<{ index: number; text: string; visual_query?: string; duration_estimate_seconds?: number; shots?: ShotPlan[] }> = video?.script_json?.beats ?? [];
   const targets: MatchTarget[] = [];
   for (const beat of beats) {

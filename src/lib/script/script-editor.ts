@@ -6,6 +6,7 @@ import type { LLMProvider, ProviderCallContext } from '@/pipeline/providers/type
 import type { ResearchDossier } from '@/lib/research/types';
 import { formatDossierForPrompt } from '@/lib/research/format';
 import { RETENTION_CRAFT, VISUAL_TYPE_RULES, styleVoice, type VideoStyle } from './style-templates';
+import type { StylePack } from '@/lib/styles/packs';
 import { withWritingModel, type ScriptBeat } from './generate-script';
 import {
   applyResearchToBeats,
@@ -19,6 +20,8 @@ export interface EditorContext {
   beats: ScriptBeat[];
   topic: string;
   style: VideoStyle;
+  /** The video's composed style pack, when it was made from a format and niche. */
+  pack?: StylePack;
   research?: ResearchDossier | null;
   targetMinutes?: number;
 }
@@ -62,7 +65,7 @@ async function resolveEditor(supabase: SupabaseClient): Promise<Editor> {
 
 function editorSystemPrompt(context: EditorContext): string {
   const research = context.research?.facts.length ? `\n\n${formatDossierForPrompt(context.research)}` : '';
-  return `${styleVoice(context.style)}
+  return `${styleVoice(context.style, context.pack)}
 
 ${RETENTION_CRAFT}
 

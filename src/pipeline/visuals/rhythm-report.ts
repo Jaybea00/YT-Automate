@@ -4,7 +4,7 @@ import { SPEECH_WORDS_PER_SECOND } from '@/lib/script/script-quality';
 import { analyzeRhythm, kindOf, type RhythmReport, type RhythmShot } from '@/lib/script/visual-rhythm';
 import { readSidecar } from './shot-editor';
 import { shotNeedsCheck } from './shot-composer';
-import { stylePack } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 
 /** A beat with one visual (no shot plan, or the user's upload) counts as one shot of this type. */
 function singleVisualType(assetType: string | null | undefined, beat: ScriptBeat): string {
@@ -57,7 +57,7 @@ export async function computeRenderedRhythm(supabase: SupabaseClient, videoId: s
       });
     }
   }
-  return shots.length ? analyzeRhythm(shots, 'render', [], stylePack(video?.style)?.maxGraphicsShare) : null;
+  return shots.length ? analyzeRhythm(shots, 'render', [], packForVideo(video)?.maxGraphicsShare) : null;
 }
 
 export interface NeedsCheckShot {

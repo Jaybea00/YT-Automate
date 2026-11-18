@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { BeatVariant, HookOption, ScriptReview } from '@/lib/script/script-editor';
 import { scriptTextSignature, estimateSpeechSeconds } from '@/lib/script/script-quality';
-import { narrationPaceFactor } from '@/lib/styles/packs';
+import { narrationPaceFactor, type StylePack } from '@/lib/styles/packs';
 
 const BEAT_PAUSE_SECONDS = 0.5;
 const button =
@@ -26,9 +26,9 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 // Runtime meter
 // --------------------------------------------------------------------------
 
-export function RuntimeMeter({ beats, targetMinutes, style }: { beats: ScriptBeat[]; targetMinutes?: number; style?: string | null }) {
+export function RuntimeMeter({ beats, targetMinutes, style, pack }: { beats: ScriptBeat[]; targetMinutes?: number; style?: string | null; pack?: StylePack }) {
   // Documentary-paced styles speak slower and breathe between sentences
-  const pace = narrationPaceFactor(style);
+  const pace = narrationPaceFactor(style, pack);
   const seconds = beats.reduce((s, b) => s + estimateSpeechSeconds(b.text) / pace, 0) + beats.length * BEAT_PAUSE_SECONDS;
   if (!targetMinutes) {
     return <span className="text-xs text-zinc-400">≈ {formatTime(seconds)} runtime</span>;

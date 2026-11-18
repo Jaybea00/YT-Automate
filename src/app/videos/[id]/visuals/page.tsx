@@ -11,7 +11,7 @@ import { NeedsCheckBar } from './needs-check-bar';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
 import { DrawingsPanel } from '../drawings-panel';
 import type { ScriptBeat as PlannedBeat } from '@/lib/script/generate-script';
-import { stylePack } from '@/lib/styles/packs';
+import { packForVideo } from '@/lib/styles/compose';
 
 interface VisualsPageProps {
   params: Promise<{ id: string }>;
@@ -540,7 +540,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
   }, [id]);
 
   const beats: ScriptBeat[] = data?.video?.script_json?.beats || [];
-  const drawn = Boolean(stylePack(data?.video?.style)?.drawn);
+  const drawn = Boolean(packForVideo(data?.video)?.drawn);
   const assets: VideoAsset[] = data?.assets || [];
   const ttsUnits = (data?.units || []).filter((u) => u.stage === 'tts');
 
@@ -793,7 +793,7 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           <DrawingsPanel
             videoId={id}
             beats={beats as unknown as PlannedBeat[]}
-            bibleTranslation={stylePack(data.video.style)?.signatureShots?.includes('verse') ? (data.video.script_json?.bible_translation ?? 'webbe') : undefined}
+            bibleTranslation={packForVideo(data.video)?.signatureShots?.includes('verse') ? (data.video.script_json?.bible_translation ?? 'webbe') : undefined}
             onDrawingsChanged={() => {
               setCacheBuster(Date.now());
               fetchVideoData();

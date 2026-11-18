@@ -1,4 +1,4 @@
-import { stylePack, type NarrationPacing } from '@/lib/styles/packs';
+import { stylePack, type NarrationPacing, type StylePack } from '@/lib/styles/packs';
 
 /**
  * A video's own voice pace (script_json.voice_pacing), chosen when voicing starts: how fast the
@@ -34,8 +34,8 @@ export function normalizeVoicePacing(value: unknown): VoicePacing | null {
  * The pace to voice a video at: its own when set (Normal with no breath means the voice as it is,
  * not the style's), else its style's. Undefined means no pacing at all.
  */
-export function videoPacing(saved: unknown, style: string | null | undefined): NarrationPacing | VoicePacing | undefined {
+export function videoPacing(saved: unknown, style: string | null | undefined, pack?: StylePack): NarrationPacing | VoicePacing | undefined {
   const own = normalizeVoicePacing(saved);
   if (own) return own.speed === 1 && own.sentencePauseSec === 0 ? undefined : own;
-  return stylePack(style)?.narration;
+  return (pack ?? stylePack(style))?.narration;
 }

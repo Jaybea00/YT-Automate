@@ -9,6 +9,7 @@ import {
   withWritingModel,
 } from './generate-script';
 import { VideoStyle, VISUAL_TYPE_RULES } from './style-templates';
+import type { StylePack } from '@/lib/styles/packs';
 import { estimateSpeechSeconds, normalizeBeats } from './script-quality';
 
 /**
@@ -327,14 +328,15 @@ export function parseRawTextToParagraphBeats(rawText: string): ScriptBeat[] {
 export async function parseRawTextWithAi(
   supabase: SupabaseClient,
   rawText: string,
-  options?: { topic?: string; style?: VideoStyle },
+  options?: { topic?: string; style?: VideoStyle; pack?: StylePack },
 ): Promise<GeneratedScript> {
   const resolved = await resolveForStage<LLMProvider>('script', supabase);
   const llm = resolved.provider;
   const ctx = withWritingModel(resolved.ctx, resolved.options);
 
   const topicContext = options?.topic ? `Topic: "${options.topic}"` : '';
-  const styleContext = options?.style ? `Style: "${options.style}"` : '';
+  const styleLabel = options?.pack?.label ?? options?.style;
+  const styleContext = styleLabel ? `Style: "${styleLabel}"` : '';
 
   const systemPrompt = `You are an expert video director and editor.
 Your task is to take the user-provided raw script text and segment it into natural narration beats (12-35 words each).

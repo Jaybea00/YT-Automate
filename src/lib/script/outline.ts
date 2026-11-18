@@ -3,7 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '@/pipeline/providers/registry';
 import type { LLMProvider } from '@/pipeline/providers/types';
 import type { ResearchDossier, ResearchFact } from '@/lib/research/types';
-import { STYLE_TEMPLATES, type VideoStyle } from './style-templates';
+import { styleTemplate, type VideoStyle } from './style-templates';
+import type { StylePack } from '@/lib/styles/packs';
 import { withWritingModel } from './generate-script';
 
 /**
@@ -105,11 +106,12 @@ export const chapterCount = (minutes: number) => Math.min(12, Math.max(3, Math.r
 export function buildOutlinePrompt(input: {
   topic: string;
   style: VideoStyle;
+  pack?: StylePack;
   targetMinutes: number;
   brief: string;
   research?: ResearchDossier | null;
 }): string {
-  const style = STYLE_TEMPLATES[input.style];
+  const style = styleTemplate(input.style, input.pack);
   const facts = input.research?.facts.length
     ? `\n\nRESEARCHED FACTS (cite by id):\n${input.research.facts.map((f) => `${f.id}: ${f.claim}`).join('\n')}`
     : '';
@@ -137,7 +139,7 @@ Never invent specifics: points may only state numbers, dates, quotes or headline
 /** Drafts the outline for a brief. Throws when the model fails; the caller decides what to do. */
 export async function generateOutline(
   supabase: SupabaseClient,
-  input: { topic: string; style: VideoStyle; targetMinutes: number; brief: string; research?: ResearchDossier | null },
+  input: { topic: string; style: VideoStyle; pack?: StylePack; targetMinutes: number; brief: string; research?: ResearchDossier | null },
 ): Promise<{ outline: ScriptOutline; extras: BriefExtras; research: ResearchDossier | null }> {
   const resolved = await resolveForStage<LLMProvider>('script', supabase);
   const ctx = withWritingModel(resolved.ctx, resolved.options);

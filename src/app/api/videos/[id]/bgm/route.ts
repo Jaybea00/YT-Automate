@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { stylePack } from '@/lib/styles/packs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { PRESET_TRACKS, ensureDefaultBgmPresets } from '@/pipeline/assembly/bgm';
 import { PRESET_SFX, ensureDefaultSfxPresets } from '@/pipeline/assembly/sfx';
+import { packForVideo } from '@/lib/styles/compose';
 import { isCaptionPreset, type CaptionPreset } from '@/pipeline/assembly/captions';
 
 export async function handleGetBgm(
@@ -78,7 +78,7 @@ export async function handleGetBgm(
     youtubeCc: Boolean(process.env.YOUTUBE_API_KEY) && video.script_json?.youtube_cc !== false,
     youtubeKey: Boolean(process.env.YOUTUBE_API_KEY),
     // AI illustrations in the shot plan: the video's choice, else the style's
-    illustrations: typeof video.script_json?.illustrations === 'boolean' ? video.script_json.illustrations : Boolean(stylePack(video.style)?.illustrations),
+    illustrations: typeof video.script_json?.illustrations === 'boolean' ? video.script_json.illustrations : Boolean(packForVideo(video)?.illustrations),
     transitionIntensity: ['subtle', 'balanced', 'bold'].includes(video.script_json?.transition_intensity) ? video.script_json.transition_intensity : 'balanced',
     transitionRendered: video.script_json?.transition_rendered !== false,
     // Shakes, freeze-frames, chapter zooms; letterbox follows the style unless set

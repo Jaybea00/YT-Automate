@@ -4,8 +4,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '@/pipeline/providers/registry';
 import { getRetryDecision } from '@/pipeline/providers/errors';
 import type { LLMProvider, ProviderCallContext } from '@/pipeline/providers/types';
-import { STYLE_TEMPLATES, VideoStyle } from './style-templates';
-import { narrationPaceFactor } from '@/lib/styles/packs';
+import { STYLE_TEMPLATES, styleTemplate, VideoStyle } from './style-templates';
+import { narrationPaceFactor, type StylePack } from '@/lib/styles/packs';
 import {
   TARGET_WORDS_PER_BEAT,
   applyResearchToBeats,
@@ -242,6 +242,8 @@ export const GeneratedScriptSchema = z.object({
 export interface GenerateScriptInput {
   topic: string;
   style: VideoStyle;
+  /** The video's composed style (a format plus a niche), when it has one; else `style`'s pack is used. */
+  pack?: StylePack;
   targetMinutes: number;
   /** Set when revising — the prior script plus the user's requested changes. */
   revisionOf?: { previousScript: GeneratedScript; feedback: string };
@@ -339,7 +341,7 @@ ${formatOutlineForPrompt(input.outline)}`);
 }
 
 export function buildUserPrompt(input: GenerateScriptInput): string {
-  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style));
+  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style, input.pack));
   return input.revisionOf
     ? `Revise this existing script for the topic "${input.topic}" (target ~${input.targetMinutes} minutes).
 Requested changes: ${input.revisionOf.feedback}
@@ -430,7 +432,7 @@ export async function generateScript(
   const resolved = await resolveForStage<LLMProvider>('script', supabase);
   const { provider, maxRetries = 2 } = resolved;
   const ctx = withWritingModel(resolved.ctx, resolved.options);
-  const template = STYLE_TEMPLATES[input.style];
+  const template = styleTemplate(input.style, input.pack);
   if (!template) {
     throw new Error(`Unknown video style: "${input.style}". Valid styles: ${Object.keys(STYLE_TEMPLATES).join(', ')}`);
   }
@@ -449,7 +451,7 @@ export async function generateScript(
     return withResearch(best);
   }
 
-  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style));
+  const budget = wordBudgetForMinutes(input.targetMinutes, narrationPaceFactor(input.style, input.pack));
   const distance = (s: GeneratedScript) => Math.abs(countScriptWords(s.beats) - budget.target);
   const inBudget = (s: GeneratedScript) => {
     const words = countScriptWords(s.beats);

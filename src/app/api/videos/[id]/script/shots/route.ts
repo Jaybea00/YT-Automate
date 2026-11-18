@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { planShots } from '@/lib/script/shot-planner';
+import { packForVideo } from '@/lib/styles/compose';
 import type { GeneratedScript } from '@/lib/script/generate-script';
 
 /**
@@ -41,6 +42,7 @@ export async function handlePlanShots(req: Request, id: string, supabaseClient?:
   const planned = await planShots(supabase, script, video.topic || video.title || 'Video', {
     onlyBeats: beatIndexes,
     style: video.style,
+    pack: packForVideo(video),
     illustrations: video.script_json?.illustrations,
     drawingBudget,
   });

@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { EditorContext } from './script-editor';
 import type { GeneratedScript, ScriptBeat } from './generate-script';
 import type { VideoStyle } from './style-templates';
+import { packForVideo } from '@/lib/styles/compose';
 
 export interface LoadedEditorContext {
   context: EditorContext;
@@ -44,6 +45,7 @@ export async function loadEditorContext(
       beats,
       topic: video.topic || video.title || 'Video',
       style: (video.style as VideoStyle) || 'story_driven',
+      pack: packForVideo(video),
       research: script.research ?? null,
       targetMinutes: Number(video.target_minutes) || undefined,
     },

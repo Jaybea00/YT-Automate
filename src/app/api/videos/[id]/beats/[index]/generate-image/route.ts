@@ -4,7 +4,7 @@ import { getSafeUploadPath, deleteExistingBeatUploads, invalidateBeatAssemblyCac
 import { upsertVideoAssetProvenance } from '@/pipeline/visuals/provenance';
 import { generateAiVisualCandidate, downloadAndSaveAiImage } from '@/pipeline/visuals/ai-image-step';
 import { tagImageAsIllustration } from '@/pipeline/visuals/illustration';
-import { themeForStyle } from '@/pipeline/visuals/motion/theme';
+import { themeForVideo } from '@/pipeline/visuals/motion/theme';
 
 interface RouteContext {
   params: Promise<{ id: string; index: string }>;
@@ -56,7 +56,7 @@ export async function POST(req: Request, context: RouteContext) {
 
     await downloadAndSaveAiImage(candidate, filePath);
     // Labelled on the picture itself, so it always reads as an illustration, not a photograph
-    await tagImageAsIllustration(filePath, themeForStyle(video?.style)).catch((err) => console.warn('[GenerateAI] Could not add the Illustration tag:', err));
+    await tagImageAsIllustration(filePath, themeForVideo(video)).catch((err) => console.warn('[GenerateAI] Could not add the Illustration tag:', err));
 
     // 4. Update video_assets and candidate store
     const { data: existingAsset } = await supabase

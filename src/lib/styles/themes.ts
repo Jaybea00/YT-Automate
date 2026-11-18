@@ -354,4 +354,96 @@ export const SCROLL: MotionTheme = {
   grade: 'eq=contrast=1.02',
 };
 
-export const ALL_THEMES: MotionTheme[] = [DOCUMENTARY, VOX, TECH, BUSINESS, WARM, NOIR, AUTOMOTIVE, STADIUM, MONEY, COSMOS, REVIEW, HISTORY, MYSTERY, DOODLE, SCROLL];
+/** Geography and geopolitics: ocean navy and atlas parchment, cartographer's red. */
+export const ATLAS: MotionTheme = {
+  name: 'atlas',
+  background: '#0b1622',
+  backgroundOverlay: 'radial-gradient(ellipse at 40% 30%, rgba(120,180,220,0.10) 0%, rgba(0,0,0,0.55) 100%)',
+  surface: '#132232',
+  text: '#f1ece0',
+  muted: '#93a3b4',
+  accent: '#e05a47',
+  accentText: '#f07462',
+  accent2: '#d9c38c',
+  series: ['#e05a47', '#d9c38c', '#5fb0d9', '#8cc084'],
+  headingFont: 'Constantia, Georgia, "Times New Roman", serif',
+  bodyFont: SANS,
+  numberFont: CONDENSED,
+  radius: 4,
+  map: { water: '#0b1622', land: '#2b3a2f', border: '#4d5f52', highlight: '#e05a47' },
+  // Clear, a touch cool, like a printed atlas
+  grade: "eq=contrast=1.05:saturation=0.96,lutyuv=u='val+2':v='val-1'",
+};
+
+/** Disasters and what went wrong: charcoal with hazard amber and alarm red, report-style type. */
+export const HAZARD: MotionTheme = {
+  name: 'hazard',
+  background: '#0d0d0c',
+  backgroundOverlay: 'radial-gradient(ellipse at 50% 30%, rgba(255,170,40,0.08) 0%, rgba(0,0,0,0.65) 100%)',
+  surface: '#191916',
+  text: '#efede6',
+  muted: '#9a978c',
+  accent: '#ffb020',
+  accentText: '#ffb020',
+  accent2: '#e5484d',
+  series: ['#ffb020', '#e5484d', '#8fa3b8', '#efede6'],
+  headingFont: CONDENSED,
+  bodyFont: SANS,
+  numberFont: CONDENSED,
+  radius: 2,
+  map: { water: '#0d0d0c', land: '#22221e', border: '#3a3a33', highlight: '#ffb020' },
+  // Desaturated and hard, like an investigation report
+  grade: "eq=contrast=1.08:saturation=0.82:gamma=0.97",
+};
+
+/** Engineering and how things work: blueprint blue with white linework and a signal orange. */
+export const BLUEPRINT: MotionTheme = {
+  name: 'blueprint',
+  background: '#0b2a4a',
+  backgroundOverlay:
+    'linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px) 0 0/48px 48px, ' +
+    'linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0/48px 48px, ' +
+    'radial-gradient(ellipse at center, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.45) 100%)',
+  surface: '#103459',
+  text: '#f2f7fc',
+  muted: '#9db7d1',
+  accent: '#ff8a2a',
+  accentText: '#ffa257',
+  accent2: '#bfe3ff',
+  series: ['#ff8a2a', '#bfe3ff', '#7ee0a8', '#ffd166'],
+  headingFont: CONDENSED,
+  bodyFont: SANS,
+  numberFont: CONDENSED,
+  radius: 4,
+  map: { water: '#0b2a4a', land: '#164270', border: '#3d6b99', highlight: '#ff8a2a' },
+  // Neutral, crisp
+  grade: 'eq=contrast=1.04:saturation=1.0',
+};
+
+/** Psychology and self-improvement: soft dusk plum with a calm coral and sage. */
+export const MIND: MotionTheme = {
+  name: 'mind',
+  background: '#17121c',
+  backgroundOverlay: 'radial-gradient(ellipse at 50% 35%, rgba(255,160,140,0.09) 0%, rgba(0,0,0,0.5) 100%)',
+  surface: '#221a29',
+  text: '#f6eff4',
+  muted: '#a597ad',
+  accent: '#ff8f7a',
+  accentText: '#ff9d8a',
+  accent2: '#9cc5a1',
+  series: ['#ff8f7a', '#9cc5a1', '#a99bff', '#ffd6a5'],
+  headingFont: SANS,
+  bodyFont: SANS,
+  numberFont: CONDENSED,
+  radius: 18,
+  map: { water: '#17121c', land: '#2c2234', border: '#45384f', highlight: '#ff8f7a' },
+  // Soft and warm
+  grade: "eq=contrast=1.02:saturation=0.95:gamma=1.01,lutyuv=u='val-1':v='val+2'",
+};
+
+export const ALL_THEMES: MotionTheme[] = [DOCUMENTARY, VOX, TECH, BUSINESS, WARM, NOIR, AUTOMOTIVE, STADIUM, MONEY, COSMOS, REVIEW, HISTORY, MYSTERY, DOODLE, SCROLL, ATLAS, HAZARD, BLUEPRINT, MIND];
+
+/** A theme by name (themes are stored by name in saved style setups); unknown names get the documentary look. */
+export function themeByName(name: string | null | undefined): MotionTheme {
+  return ALL_THEMES.find((t) => t.name === name) ?? DOCUMENTARY;
+}
