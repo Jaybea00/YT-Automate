@@ -88,6 +88,15 @@ interface ProgressResponse {
   units: UnitData[];
   assets?: VideoAssetData[];
   error?: string;
+  /** A running assembly's percentage, step and time left. */
+  assemblyProgress?: { percent: number; label: string; detail?: string; etaSec?: number; updatedAt: string; stale?: boolean } | null;
+}
+
+/** "1 h 12 min", "38 min", "under a minute". */
+function formatEta(sec: number): string {
+  if (sec < 60) return 'under a minute';
+  const minutes = Math.round(sec / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
 }
 
 export default function PipelineProgressPage() {
@@ -478,6 +487,32 @@ export default function PipelineProgressPage() {
               )}
             </div>
           </div>
+
+          {/* Assembly progress: percentage, step and time left (written by the worker as it renders) */}
+          {data?.assemblyProgress && job?.status === 'running' && (
+            <div className="mt-6 p-4 rounded-xl bg-zinc-950/80 border border-indigo-800/60 space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+                <span className="font-semibold text-indigo-200">
+                  Assembling · {data.assemblyProgress.percent.toFixed(0)}%
+                </span>
+                <span className="text-zinc-400 text-xs">
+                  {data.assemblyProgress.label}
+                  {data.assemblyProgress.detail ? ` · ${data.assemblyProgress.detail}` : ''}
+                  {data.assemblyProgress.etaSec !== undefined
+                    ? ` · about ${formatEta(data.assemblyProgress.etaSec)} left`
+                    : ' · working out the time left…'}
+                </span>
+              </div>
+              <div className="h-2.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                <div className="h-full bg-indigo-500 transition-all duration-700" style={{ width: `${Math.min(100, data.assemblyProgress.percent)}%` }} />
+              </div>
+              {data.assemblyProgress.stale && (
+                <p className="text-xs text-amber-300">
+                  No update for over 10 minutes: check the worker is still running (its console shows each step).
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Error Banner */}
           {(video?.error_message || job?.error || error) && (

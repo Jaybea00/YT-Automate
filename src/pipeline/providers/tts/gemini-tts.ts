@@ -61,6 +61,33 @@ export function pcmToWav(pcm: Uint8Array, sampleRate = SAMPLE_RATE): Uint8Array 
 }
 
 /**
+ * The speech samples in Gemini's audio. Older responses were bare PCM; newer ones are a whole WAV
+ * file followed by a C2PA signature chunk (Google's AI-content credentials). Wrapping that whole
+ * file as PCM played its header as a click and the ~6 KB signature as a loud hiss after every beat.
+ */
+export function speechSamples(bytes: Uint8Array, fallbackRate = SAMPLE_RATE): { pcm: Uint8Array; sampleRate: number } {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (buf.length < 12 || buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WAVE') {
+    return { pcm: bytes, sampleRate: fallbackRate };
+  }
+  let sampleRate = fallbackRate;
+  for (let at = 12; at + 8 <= buf.length; ) {
+    const id = buf.toString('latin1', at, at + 4);
+    const size = buf.readUInt32LE(at + 4);
+    const body = at + 8;
+    if (id === 'fmt ' && size >= 8) sampleRate = buf.readUInt32LE(body + 4) || fallbackRate;
+    if (id === 'data') {
+      // A streamed WAV may declare 0 or 0xFFFFFFFF; the samples then run to the next chunk we can't see
+      const end = size > 0 && size !== 0xffffffff ? Math.min(body + size, buf.length) : buf.length;
+      const even = end - ((end - body) % 2);
+      return { pcm: new Uint8Array(buf.subarray(body, even)), sampleRate };
+    }
+    at = body + size + (size % 2);
+  }
+  return { pcm: new Uint8Array(0), sampleRate };
+}
+
+/**
  * Plain narration with no instruction reads at ~2.0-2.2 words/sec, matching the pace scripts are
  * planned around. Measured on gemini-3.8-flash-tts: any instruction slows it down, even "brisk"
  * (1.65 w/s) or an explicit "160 words per minute" (1.36 w/s); a style direction plus pace note
@@ -154,8 +181,13 @@ export class GeminiTtsProvider implements TTSProvider {
         throw new ProviderError('Gemini TTS returned no audio', { code: 'invalid_response' });
       }
 
-      const rate = Number(audio.mimeType?.match(/rate=(\d+)/)?.[1]) || SAMPLE_RATE;
-      const pcm = new Uint8Array(Buffer.from(audio.data, 'base64'));
+      const { pcm, sampleRate: rate } = speechSamples(
+        new Uint8Array(Buffer.from(audio.data, 'base64')),
+        Number(audio.mimeType?.match(/rate=(\d+)/)?.[1]) || SAMPLE_RATE,
+      );
+      if (pcm.byteLength === 0) {
+        throw new ProviderError('Gemini TTS returned no audio samples', { code: 'invalid_response' });
+      }
       return {
         bytes: pcmToWav(pcm, rate),
         mimeType: 'audio/wav',

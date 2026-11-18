@@ -5,6 +5,8 @@ import type { LLMProvider, ProviderCallContext } from '@/pipeline/providers/type
 import type { ResearchFact } from '@/lib/research/types';
 import {
   DIAGRAM_LIMITS,
+  DRAWING_FRAMINGS,
+  DRAWING_MOODS,
   SHOT_TYPES,
   SIGNATURE_SHOT_TYPES,
   withWritingModel,
@@ -31,6 +33,8 @@ import {
 } from './visual-rhythm';
 import { stylePack } from '@/lib/styles/packs';
 import { indicatorMenu, normalizeDataSpec } from '@/lib/data/indicators';
+import { MAX_CARD_VERSES, formatVerseRef, parseVerseRef } from '@/lib/stickman/bible';
+import { planDrawingNotes } from '@/lib/stickman/drawing-notes';
 
 const {
   minSteps: MIN_DIAGRAM_STEPS,
@@ -80,6 +84,7 @@ const SIGNATURE_RULES: Record<SignatureShotType, string> = {
   spec_card: `- "spec_card": a spec sheet for one car or product. spec = {title, subject, rows: [{label, value}]}. title is its name, subject a short kicker such as the maker and year; 3-6 rows like {label: "0-60 mph", value: "2.1 s"}. Every figure stated in the narration or research.`,
   money: `- "money": money you can see. money = {kind: "growth"|"shrink", from, to, currency, label}. growth: notes piling up as a sum compounds (from the starting amount to the end amount); shrink: one note shrinking to what it's worth after inflation. currency is the symbol, e.g. "$"; label says what it shows, e.g. "$1,000 at 10% for 36 years". from and to must be stated in the narration or research.`,
   shot_map: `- "shot_map": a team's shots in a match as dots on the attacking half (the Tifo Football look), each sized by its chance quality, goals lit. shot_map = {title, team, shots, goals, xg, on_target, key_shots: [{label, x, y, outcome, xg}]}. shots, goals, xg and on_target are totals that must be stated in the narration or research (xg and on_target may be null). key_shots are at most 5 shots the narration describes, labelled with the player's surname and minute ("Balotelli 20'"): x runs 50-100 from the halfway line to the goal, y 0-100 across the pitch (50 is central); outcome "goal"|"saved"|"missed"|"blocked". Other shots are drawn in typical positions and marked as illustrative. For a match whose story is about chances: dominance, wastefulness, a smash-and-grab.`,
+  verse: `- "verse": a Bible verse card. verse = {reference}, e.g. {reference: "Exodus 14:21"} or {reference: "John 3:16-17"}: book, chapter and verse(s), at most ${MAX_CARD_VERSES} verses. The words on the card are fetched from the World English Bible by that reference, so give only the reference. For the moment the narration quotes a verse or points to the passage the story comes from; never invent a reference.`,
   scale: `- "scale": things shown side by side at true relative size, the camera pulling back as each bigger one arrives. scale = {title, items: [{label, size, unit}]}. 2-5 items in the same unit (e.g. diameters in km); every size stated in the narration or research.`,
 };
 
@@ -123,11 +128,76 @@ export function capIllustrations(beats: ScriptBeat[]): ScriptBeat[] {
 const MAX_CALLOUT_WORDS = 6;
 const SECONDS_PER_TIMELINE_EVENT = 1.6;
 
-export function shotCountForBeat(text: string): number {
+/** How often the picture changes. Drawn (stickman) styles cut every few seconds, on short phrases. */
+export interface ShotPacing {
+  secondsPerShot: number;
+  maxShots: number;
+  minWords: number;
+}
+const DEFAULT_PACING: ShotPacing = { secondsPerShot: SECONDS_PER_SHOT, maxShots: MAX_SHOTS_PER_BEAT, minWords: MIN_WORDS_PER_SHOT };
+const DRAWN_MAX_SHOTS_PER_BEAT = 8;
+const DRAWN_MIN_WORDS_PER_SHOT = 3;
+/** A drawing budget never plans drawings faster or slower than this. */
+const DRAWN_SECONDS_RANGE = [2, 8] as const;
+
+export function shotCountForBeat(text: string, pacing: ShotPacing = DEFAULT_PACING): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
-  const bySeconds = Math.round(estimateSpeechSeconds(text) / SECONDS_PER_SHOT);
-  const byWords = Math.floor(words / MIN_WORDS_PER_SHOT);
-  return Math.max(1, Math.min(MAX_SHOTS_PER_BEAT, bySeconds, byWords));
+  const bySeconds = Math.round(estimateSpeechSeconds(text) / pacing.secondsPerShot);
+  const byWords = Math.floor(words / pacing.minWords);
+  return Math.max(1, Math.min(pacing.maxShots, bySeconds, byWords));
+}
+
+/**
+ * Pacing for a drawn style: its own seconds per drawing, or, when the creator set a drawing budget
+ * for the video, whatever spreads that many drawings over the narration.
+ */
+export function drawnPacing(beats: ScriptBeat[], secondsPerShot: number, drawingBudget?: number | null): ShotPacing {
+  let seconds = secondsPerShot;
+  if (drawingBudget && drawingBudget > 0) {
+    const total = beats.reduce((n, b) => n + estimateSpeechSeconds(b.text), 0);
+    // Aim a little over: graphics take some shots, and fitDrawingBudget merges the surplus away
+    seconds = Math.min(DRAWN_SECONDS_RANGE[1], Math.max(DRAWN_SECONDS_RANGE[0], total / (drawingBudget * BUDGET_OVERSHOOT)));
+  }
+  return { secondsPerShot: seconds, maxShots: DRAWN_MAX_SHOTS_PER_BEAT, minWords: DRAWN_MIN_WORDS_PER_SHOT };
+}
+
+/** Plans this much over a drawing budget, so merging can land on it exactly. */
+const BUDGET_OVERSHOOT = 1.15;
+
+/**
+ * Brings a drawn plan down to exactly `budget` drawings (the creator has that many) by merging
+ * neighbouring drawings within a beat, shortest pair first; the merged shot keeps the brief of the
+ * longer one and plays under both parts' words. Never below one drawing per beat that has one, so
+ * a budget smaller than that leaves the plan at its minimum. A plan already under budget is kept.
+ */
+export function fitDrawingBudget(beats: ScriptBeat[], budget: number): ScriptBeat[] {
+  const out = beats.map((b) => ({ ...b, shots: b.shots ? [...b.shots] : b.shots }));
+  let count = out.reduce((n, b) => n + (b.shots ?? []).filter((s) => s.visual_type === 'drawing').length, 0);
+  while (count > budget) {
+    let best: { beat: number; at: number; words: number } | null = null;
+    out.forEach((b, bi) => {
+      (b.shots ?? []).forEach((s, i) => {
+        const next = b.shots![i + 1];
+        if (s.visual_type !== 'drawing' || next?.visual_type !== 'drawing') return;
+        const words = s.word_count + next.word_count;
+        if (!best || words < best.words) best = { beat: bi, at: i, words };
+      });
+    });
+    if (!best) break;
+    const { beat, at } = best as { beat: number; at: number };
+    const shots = out[beat].shots!;
+    const [a, b] = [shots[at], shots[at + 1]];
+    const keep = b.word_count > a.word_count ? b : a;
+    shots.splice(at, 2, {
+      ...keep,
+      covers: `${a.covers} ${b.covers}`.trim(),
+      word_start: a.word_start,
+      word_count: a.word_count + b.word_count,
+      ...(a.fact_ids || b.fact_ids ? { fact_ids: [...new Set([...(a.fact_ids ?? []), ...(b.fact_ids ?? [])])] } : {}),
+    });
+    count--;
+  }
+  return out;
 }
 
 // --------------------------------------------------------------------------
@@ -169,6 +239,37 @@ RHYTHM AND VARIETY
 - Never more than 2 graphics of the same type in a row, across beat boundaries too.
 - Never repeat a search phrase; neighbouring footage shots should show different things.`;
 
+/** Graphics a drawn (stickman) video may use, worded exactly as for every other style. */
+const DRAWN_GRAPHIC_RULES = DIRECTOR_SYSTEM.split(/\r?\n/)
+  .filter((line) => /^- "(chart|stat|quote|geo_map|timeline|comparison|title|kinetic_text|diagram)"/.test(line))
+  .join('\n');
+const DATA_INTEGRITY_RULES = DIRECTOR_SYSTEM.slice(DIRECTOR_SYSTEM.indexOf('DATA INTEGRITY'), DIRECTOR_SYSTEM.indexOf('RHYTHM AND VARIETY')).trim();
+
+/**
+ * The director for stickman styles: the creator draws every picture, so instead of footage
+ * searches each shot is a brief of what to draw; a few doodle-style graphics break it up.
+ */
+const DRAWN_DIRECTOR_SYSTEM = `You are the visual director of a stickman YouTube channel. The creator draws every picture by hand (simple stick figures on a plain background), and you write the brief of what to draw. For each narration beat you plan the shots the viewer sees.
+
+SHOTS
+- Each beat states how many shots it needs. Split its narration into exactly that many consecutive parts at natural phrase boundaries. "covers" is the exact words of that part, in order; together the parts cover the whole beat.
+- Cut on meaning: a new drawing when the action, the place or the speaker changes.
+
+SHOT TYPES (fill the matching spec object; leave the others out)
+- "drawing": the creator's drawing. Most shots are drawings. drawing = {scene, framing, mood, characters}; visual_query is a 3-6 word summary of the scene.
+  scene: what to draw, in one sentence of 8-25 words: who is in it, doing what, where, and one or two props that tell the story, e.g. "You, a young Roman soldier, carry a heavy pack up a muddy hill in the rain". Simple enough for stick figures. No writing inside the drawing except a short sign or label the story needs.
+  framing: "wide" (a place, a crowd, a journey), "medium" (one or two characters acting), "close" (a face, a hand, one object).
+  mood: "neutral"|"happy"|"funny"|"sad"|"scared"|"angry"|"surprised"|"tense"|"calm": what the drawing should feel like (it also sets how the drawing moves on screen).
+  characters: the recurring characters in it, named the SAME way every time across the whole video ("You", "Moses", "Pharaoh", "the centurion"); empty for scenes without characters.
+${DRAWN_GRAPHIC_RULES}
+
+${DATA_INTEGRITY_RULES}
+
+RHYTHM AND VARIETY
+- Drawings carry the video; graphics are seasoning. Never two graphics in a row.
+- Vary framing: never three drawings with the same framing in a row; after a wide drawing that sets the scene, move in to medium and close ones.
+- Never repeat a scene; neighbouring drawings show different moments.`;
+
 const nullableObject = <T extends z.ZodRawShape>(shape: T) => z.object(shape).nullable().optional();
 
 const DirectorShotSchema = z.object({
@@ -195,6 +296,13 @@ const DirectorShotSchema = z.object({
       .optional(),
   }),
   illustration: nullableObject({ prompt: z.string() }),
+  drawing: nullableObject({
+    scene: z.string(),
+    framing: z.enum(DRAWING_FRAMINGS),
+    mood: z.enum(DRAWING_MOODS),
+    characters: z.array(z.string()).nullable().optional(),
+  }),
+  verse: nullableObject({ reference: z.string() }),
   shot_map: nullableObject({
     title: z.string(),
     team: z.string(),
@@ -298,6 +406,7 @@ function buildBatchPrompt(
   previousShotTypes: ShotType[],
   styleNotes?: string,
   signature: SignatureOptions = {},
+  pacing: ShotPacing = DEFAULT_PACING,
 ): string {
   const factSection = facts.length
     ? `RESEARCH FACTS:\n${facts.map((f) => `${f.id}: ${f.claim}`).join('\n')}\n\n`
@@ -308,7 +417,7 @@ function buildBatchPrompt(
   const beatLines = beats
     .map(
       (b) =>
-        `Beat ${b.index} (needs ${shotCountForBeat(b.text)} shot${shotCountForBeat(b.text) === 1 ? '' : 's'}; writer suggested ${b.visual_type}: "${b.visual_query}"${b.fact_ids?.length ? `; facts ${b.fact_ids.join(', ')}` : ''}):\n${b.text}`,
+        `Beat ${b.index} (needs ${shotCountForBeat(b.text, pacing)} shot${shotCountForBeat(b.text, pacing) === 1 ? '' : 's'}; writer suggested ${b.visual_type}: "${b.visual_query}"${b.fact_ids?.length ? `; facts ${b.fact_ids.join(', ')}` : ''}):\n${b.text}`,
     )
     .join('\n\n');
 
@@ -428,11 +537,13 @@ const isStated = (value: number, pool: number[]) =>
 /**
  * Assigns each shot a contiguous word range of the beat. Uses the director's "covers" text
  * to find where each shot starts; if that can't be matched in order, splits the beat evenly
- * at the nearest punctuation instead. Shots shorter than MIN_WORDS_PER_SHOT are merged away.
+ * at the nearest punctuation instead. Shots shorter than minWords (MIN_WORDS_PER_SHOT; drawn styles
+ * allow shorter) are merged away.
  */
 export function alignShotsToNarration<T extends { covers: string }>(
   beatText: string,
   shots: T[],
+  minWords: number = MIN_WORDS_PER_SHOT,
 ): Array<T & { word_start: number; word_count: number }> {
   const words = beatText.trim().split(/\s+/).filter(Boolean);
   const norm = words.map(normalizeWord);
@@ -489,13 +600,13 @@ export function alignShotsToNarration<T extends { covers: string }>(
   // Merge too-short shots into the previous one (or the next, for the first)
   const merged: Array<T & { word_start: number; word_count: number }> = [];
   for (const shot of ranged) {
-    if (shot.word_count >= MIN_WORDS_PER_SHOT || merged.length === 0) {
+    if (shot.word_count >= minWords || merged.length === 0) {
       merged.push(shot);
     } else {
       merged[merged.length - 1].word_count += shot.word_count;
     }
   }
-  if (merged.length > 1 && merged[0].word_count < MIN_WORDS_PER_SHOT) {
+  if (merged.length > 1 && merged[0].word_count < minWords) {
     merged[1] = { ...merged[1], word_start: 0, word_count: merged[1].word_count + merged[0].word_count };
     merged.shift();
   }
@@ -520,7 +631,7 @@ function footageFallback(beat: ScriptBeat, shot: DirectorShot): DirectorShot {
  * narration or cited facts, quotes must appear verbatim, headlines must be quoted in the
  * research, and map places must be named at city scale or larger. Anything else becomes footage.
  */
-export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: ResearchFact[]): DirectorShot {
+export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: ResearchFact[], scriptText = ''): DirectorShot {
   const factIds = new Set([...(beat.fact_ids ?? []), ...(shot.fact_ids ?? [])]);
   const citedFacts = facts.filter((f) => factIds.has(f.id));
   const groundText = [beat.text, ...citedFacts.map((f) => f.claim)].join(' ');
@@ -740,6 +851,30 @@ export function verifyShot(shot: DirectorShot, beat: ScriptBeat, facts: Research
       const keyGoals = keys.filter((k) => k.outcome === 'goal').length;
       const key_shots = keyGoals > spec.goals ? keys.filter((k) => k.outcome !== 'goal') : keys;
       return { ...withFacts(extra), shot_map: { ...spec, title: spec.title?.trim() || spec.team.trim(), team: spec.team.trim(), key_shots } };
+    }
+    case 'drawing': {
+      // A brief is always kept (drawn styles have nothing else to show); a thin one falls back to
+      // the narration it plays under
+      const scene = shot.drawing?.scene.trim().replace(/\s+/g, ' ') ?? '';
+      const words = wordsIn(scene);
+      return {
+        ...shot,
+        drawing: {
+          scene: words >= 4 && words <= 45 ? scene : `Show: ${shot.covers.trim()}`,
+          framing: shot.drawing?.framing ?? 'medium',
+          mood: shot.drawing?.mood ?? 'neutral',
+          characters: (shot.drawing?.characters ?? []).slice(0, 6),
+        },
+      };
+    }
+    case 'verse': {
+      // A real reference to a book the story names (the words themselves are fetched later)
+      const ref = shot.verse ? parseVerseRef(shot.verse.reference) : null;
+      // The book may have been named a beat or two earlier ("In Exodus chapter fourteen...")
+      const book = ref?.book.replace(/^\d\s/, '') ?? '';
+      const named = isNamed(book) || ` ${normalizeText(scriptText)} `.includes(` ${normalizeText(book)} `);
+      if (!ref || ref.to - ref.from >= MAX_CARD_VERSES || !named) return footageFallback(beat, shot);
+      return { ...shot, verse: { reference: formatVerseRef(ref) } };
     }
     case 'illustration': {
       const prompt = shot.illustration?.prompt.trim().replace(/\s+/g, ' ') ?? '';
@@ -1022,6 +1157,15 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
   if (shot.visual_type === 'newspaper' && shot.newspaper) plan.newspaper = shot.newspaper;
   if (shot.visual_type === 'timeline' && shot.timeline) plan.timeline = shot.timeline;
   if (shot.visual_type === 'illustration' && shot.illustration) plan.illustration = { prompt: shot.illustration.prompt };
+  if (shot.visual_type === 'drawing' && shot.drawing) {
+    plan.drawing = {
+      scene: shot.drawing.scene.trim(),
+      framing: shot.drawing.framing,
+      mood: shot.drawing.mood,
+      characters: (shot.drawing.characters ?? []).map((c) => c.trim()).filter(Boolean),
+    };
+  }
+  if (shot.visual_type === 'verse' && shot.verse) plan.verse = { reference: shot.verse.reference };
   if (shot.visual_type === 'shot_map' && shot.shot_map) plan.shot_map = { ...shot.shot_map, key_shots: shot.shot_map.key_shots ?? [] };
   if (shot.visual_type === 'split' && shot.split) {
     plan.split = {
@@ -1051,6 +1195,41 @@ function toShotPlan(shot: DirectorShot & { word_start: number; word_count: numbe
     plan.annotation = { target: shot.annotation.target, label: shot.annotation.label, detail: shot.annotation.detail ?? undefined };
   }
   return plan;
+}
+
+/** Shot types that would search for pictures; a drawn video draws them instead. */
+const SEARCHED_TYPES = new Set<ShotType>(['stock', 'archive', 'split', 'illustration', 'newspaper', 'screen_recording']);
+
+/** A drawing brief for narration that has none (a graphic that fell back, a beat the director missed). */
+function drawingFor(covers: string, wordStart: number, wordCount: number, factIds?: string[]): ShotPlan {
+  return {
+    visual_type: 'drawing',
+    visual_query: covers.split(/\s+/).slice(0, 6).join(' '),
+    covers,
+    word_start: wordStart,
+    word_count: wordCount,
+    ...(factIds?.length ? { fact_ids: factIds } : {}),
+    drawing: { scene: `Show what the narration says: "${covers.trim()}"`, framing: 'medium', mood: 'neutral', characters: [] },
+  };
+}
+
+/**
+ * A drawn (stickman) beat: every shot that would search for footage becomes a drawing, a globe
+ * flyover becomes a plain map, and a beat without a plan gets one drawing for all its words.
+ * Nothing in a drawn video ever searches stock or archives.
+ */
+export function asDrawnBeat(beat: ScriptBeat): ScriptBeat {
+  if (!beat.shots?.length) {
+    return { ...beat, shots: [drawingFor(beat.text, 0, beat.text.trim().split(/\s+/).filter(Boolean).length, beat.fact_ids)] };
+  }
+  return {
+    ...beat,
+    shots: beat.shots.map((shot) => {
+      if (SEARCHED_TYPES.has(shot.visual_type)) return drawingFor(shot.covers, shot.word_start, shot.word_count, shot.fact_ids);
+      if (shot.map?.mode === 'fly') return { ...shot, map: { ...shot.map, mode: 'locate' } };
+      return shot;
+    }),
+  };
 }
 
 function planAsFootage(beat: ScriptBeat, shot: ShotPlan): ShotPlan {
@@ -1090,7 +1269,15 @@ export function fitGraphicsToTime(beat: ScriptBeat, shots: ShotPlan[]): ShotPlan
 }
 
 /** Validates, aligns, and converts the director's shots for one beat. */
-export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts: ResearchFact[], signature: SignatureOptions = {}): ShotPlan[] {
+export function finalizeBeatShots(
+  beat: ScriptBeat,
+  shots: DirectorShot[],
+  facts: ResearchFact[],
+  signature: SignatureOptions = {},
+  pacing: ShotPacing = DEFAULT_PACING,
+  /** The whole script's narration (a verse card's book may be named in an earlier beat). */
+  scriptText = '',
+): ShotPlan[] {
   const allowed = new Set<string>(signature.signature ?? []);
   const verified = shots
     // A signature shot outside its style becomes footage; callouts only where the style has them
@@ -1098,8 +1285,8 @@ export function finalizeBeatShots(beat: ScriptBeat, shots: DirectorShot[], facts
     // Illustrations only where the video allows them
     .map((s) => (s.visual_type === 'illustration' && !signature.illustrations ? footageFallback(beat, s) : s))
     .map((s) => (s.chart?.annotations && !signature.chartCallouts ? { ...s, chart: { ...s.chart, annotations: null } } : s))
-    .map((s) => verifyShot(s, beat, facts));
-  return fitGraphicsToTime(beat, alignShotsToNarration(beat.text, verified).map(toShotPlan));
+    .map((s) => verifyShot(s, beat, facts, scriptText));
+  return fitGraphicsToTime(beat, alignShotsToNarration(beat.text, verified, pacing.minWords).map(toShotPlan));
 }
 
 // --------------------------------------------------------------------------
@@ -1117,6 +1304,8 @@ export interface PlanShotsOptions {
   style?: string | null;
   /** Labelled AI illustrations allowed (default: the style's choice; the video's setting overrides). */
   illustrations?: boolean | null;
+  /** Drawn styles: about how many drawings the creator wants to make for the whole video. */
+  drawingBudget?: number | null;
 }
 
 export async function planShots(
@@ -1145,11 +1334,15 @@ export async function planShotsWith(
   const facts = script.research?.facts ?? [];
   const pack = stylePack(options.style);
   const maxGraphicsShare = pack?.maxGraphicsShare ?? MAX_GRAPHICS_SHARE;
+  const drawn = pack?.drawn;
+  const pacing = drawn ? drawnPacing(script.beats, drawn.secondsPerShot, options.drawingBudget) : DEFAULT_PACING;
   const signature: SignatureOptions = {
     signature: pack?.signatureShots,
     chartCallouts: pack?.chartCallouts,
-    illustrations: options.illustrations ?? pack?.illustrations ?? false,
+    // Drawn videos show only the creator's pictures
+    illustrations: drawn ? false : (options.illustrations ?? pack?.illustrations ?? false),
   };
+  const scriptText = script.beats.map((b) => b.text).join(' ');
   const planned = new Map<number, ShotPlan[]>();
   let previousTypes: ShotType[] = [];
   const toPlan = options.onlyBeats
@@ -1161,8 +1354,8 @@ export async function planShotsWith(
     try {
       const { data } = await llm.generateJson(
         {
-          system: DIRECTOR_SYSTEM,
-          prompt: buildBatchPrompt(topic, batch, facts, previousTypes, pack?.directorNotes, signature),
+          system: drawn ? DRAWN_DIRECTOR_SYSTEM : DIRECTOR_SYSTEM,
+          prompt: buildBatchPrompt(topic, batch, facts, previousTypes, pack?.directorNotes, signature, pacing),
           schema: DirectorResponseSchema,
         },
         ctx,
@@ -1170,7 +1363,7 @@ export async function planShotsWith(
       const byIndex = new Map(data.beats.map((b) => [b.index, b.shots]));
       for (const beat of batch) {
         const shots = byIndex.get(beat.index);
-        if (shots?.length) planned.set(beat.index, finalizeBeatShots(beat, shots, facts, signature));
+        if (shots?.length) planned.set(beat.index, finalizeBeatShots(beat, shots, facts, signature, pacing, scriptText));
       }
     } catch (err) {
       console.warn(`[planShots] Batch starting at beat ${i} failed; those beats keep beat-level visuals:`, err);
@@ -1178,10 +1371,16 @@ export async function planShotsWith(
     previousTypes = batch.flatMap((b) => planned.get(b.index) ?? []).map((s) => s.visual_type).slice(-3);
   }
 
-  const { beats, fixes } = repairRhythm(
+  const repaired = repairRhythm(
     capIllustrations(script.beats.map((beat) => (planned.has(beat.index) ? { ...beat, shots: planned.get(beat.index) } : beat))),
     maxGraphicsShare,
   );
+  const { fixes } = repaired;
+  const drawnBeats = drawn ? repaired.beats.map(asDrawnBeat) : repaired.beats;
+  // A whole-video plan with a drawing budget lands on exactly that many drawings
+  const budgeted = drawn && options.drawingBudget && options.drawingBudget > 0 && !options.onlyBeats ? fitDrawingBudget(drawnBeats, options.drawingBudget) : drawnBeats;
+  // Drawn videos: a few name labels and speech bubbles on the drawings (never changes the codes)
+  const beats = drawn ? await planDrawingNotes(llm, ctx, budgeted, facts) : budgeted;
   const rhythm = analyzeRhythm(planToRhythmShots(beats), 'plan', fixes, maxGraphicsShare);
   const shotCount = [...planned.values()].reduce((n, shots) => n + shots.length, 0);
   console.log(

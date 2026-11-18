@@ -123,6 +123,19 @@ export function shotCues(
     case 'newspaper':
       cues.push({ at: 0, sound: 'paper', gain: 0.7 });
       break;
+    case 'verse':
+      // The card turns up like a page; its words follow
+      cues.push({ at: 0, sound: 'paper', gain: 0.6 });
+      break;
+    case 'drawing':
+      // drawing-shot.ts notes the move: a pop snaps in, a shake jolts; calm drawings stay quiet
+      if (shot.note?.includes('(pop)')) cues.push({ at: 0, sound: 'ping', gain: 0.5 });
+      else if (shot.note?.includes('(shake)')) cues.push({ at: 0, sound: 'impact', gain: 0.55 });
+      // A label or speech bubble pops in as its layer fades up (after the reveal, if drawn on)
+      if (shot.note?.includes('+ label') || shot.note?.includes('+ bubble')) {
+        cues.push({ at: shot.note.includes('drawn on') ? 0.95 : 0.35, sound: 'tick', gain: 0.45 });
+      }
+      break;
     case 'pitch': {
       // The ball sets off at 0.9 s and arrives at max(1.7 s, 80%); a goal lands with an impact
       const end = Math.max(1.7, d * 0.8);

@@ -411,6 +411,8 @@ export interface PickFootageOptions extends GatherOptions {
   llmCtx?: ProviderCallContext;
   /** Overrides VISION_RETRY_DELAYS_MS (tests). */
   retryDelaysMs?: number[];
+  /** Overrides the Creative Commons YouTube search (tests). */
+  searchYoutube?: (query: string) => Promise<MediaCandidate[]>;
 }
 
 /**
@@ -425,19 +427,33 @@ export async function pickFootage(options: PickFootageOptions): Promise<FootageP
     // No vision model configured at all: title matching is the only ranking there is
     return { ranked: heuristicRank(options.shot, candidates), checked: false };
   }
-  if (candidates.length === 0) return { ranked: [], checked: true };
-
   const retry = <T>(fn: () => Promise<T>) => withVisionRetries(fn, options.retryDelaysMs);
+  // Last chance before the shot becomes a text card: one Creative Commons YouTube search, unless
+  // YouTube's clips were already judged for this shot
+  const lastChance = async (asked: MediaCandidate[], suggestions: string[] = []): Promise<FootagePick> => {
+    if (!options.youtubeCc || asked.some((c) => c.provider === 'youtube_cc')) return { ranked: [], checked: true };
+    const query = suggestions.map((q) => q.trim()).find((q) => q.length >= 3) ?? stockQueryFor(options.shot.visual_query);
+    console.log(`[FootagePicker] Nothing else shows "${options.shot.visual_query.slice(0, 80)}": trying Creative Commons YouTube ("${query}")`);
+    const search = options.searchYoutube ?? (async (q: string) => (await import('./youtube-cc')).searchYoutubeCc(q, { limit: 4 }));
+    const seen = new Set([...(options.exclude ?? []), ...asked.map(candidateKey)]);
+    const found = (await search(query).catch(() => [] as MediaCandidate[])).filter((c) => !seen.has(candidateKey(c)));
+    if (found.length === 0) return { ranked: [], checked: true };
+    const rated = await retry(() => visionRank(options.shot, found, llm, ctx));
+    return { ranked: rated.filter((r) => r.score >= MIN_RELEVANCE), checked: true };
+  };
   try {
+    if (candidates.length === 0) return await lastChance([]);
     const first = await retry(() => visionRate(options.shot, candidates, llm, ctx));
     const ranked = first.ranked.filter((r) => r.score >= MIN_RELEVANCE);
     if (ranked.length > 0) return { ranked, checked: true };
     // Nothing showed the shot: one more try, searching for its main subject
     const seen = new Set([...(options.exclude ?? []), ...candidates.map(candidateKey)]);
     const broad = await gatherCandidates({ ...options, exclude: seen, broad: true, queries: first.suggestions });
-    if (broad.length === 0) return { ranked: [], checked: true };
+    if (broad.length === 0) return await lastChance(candidates, first.suggestions);
     const second = await retry(() => visionRank(options.shot, broad, llm, ctx));
-    return { ranked: second.filter((r) => r.score >= MIN_RELEVANCE), checked: true };
+    const relevant = second.filter((r) => r.score >= MIN_RELEVANCE);
+    if (relevant.length > 0) return { ranked: relevant, checked: true };
+    return await lastChance([...candidates, ...broad], first.suggestions);
   } catch (err) {
     // Never fall back to title matching here: it put a bus on screen for "Golden Boy award" and a
     // car for "Inter Milan". The shot is left for a later check instead.

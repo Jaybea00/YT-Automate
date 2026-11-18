@@ -21,6 +21,7 @@ import type { RenderedShot, ShotAlternative, ShotRenderer, ShotSlot } from './sh
 import type { MediaCandidate } from './types';
 import { collagePhotoTemplate } from './motion/signature-templates-2';
 import { depthMap, parallaxClip, suitsParallax } from './parallax';
+import type { BibleTranslation } from '@/lib/stickman/bible';
 
 export interface ShotRenderContext {
   beatIndex: number;
@@ -52,6 +53,17 @@ export interface ShotRenderContext {
   upscale?: boolean;
   /** Creative Commons YouTube footage may fill in where other sources are thin (youtube-cc.ts). */
   youtubeCc?: boolean;
+  /**
+   * A drawn (stickman) video: nothing is ever searched; a shot that can't render shows its
+   * narration as type instead of footage.
+   */
+  drawn?: boolean;
+  /** Bible verse cards: which World English Bible edition (bible.ts). */
+  bibleTranslation?: BibleTranslation;
+  /** Drawn videos: the creator's drawing filed for a shot, if any (drawings-store.ts). */
+  drawingFile?: (beatIndex: number, shotIndex: number) => Promise<string | null>;
+  /** Drawn videos: the drawings that are drawn on, as "beat:shot" keys (drawing-shot.ts revealShots). */
+  reveal?: Set<string>;
 }
 
 /** Archives whose footage is genuinely old; NASA's library is mostly modern. */
@@ -322,6 +334,8 @@ export function createShotRenderer(
 ): ShotRenderer {
   /** Footage, or, when nothing relevant exists, the narration's words as a type card. */
   const footageOrText = async (shot: ShotPlan, slot: ShotSlot, clipPath: string, options: Parameters<typeof renderFootageShot>[4] = {}) => {
+    // A drawn video never shows found footage: its narration as type until the creator's drawing
+    if (ctx.drawn) return renderTextCard(shot, slot, clipPath, ctx, options.note);
     try {
       return await renderFootageShot(shot, slot, clipPath, ctx, options);
     } catch (err) {

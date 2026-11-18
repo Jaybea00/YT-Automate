@@ -40,6 +40,8 @@ export const SHOT_TYPES = [
   'diagram',
   'split',
   'illustration',
+  // The creator's own drawing (stickman styles): a brief of what to draw, filled by their upload
+  'drawing',
   // Signature shots: offered only to the styles that list them (StylePack.signatureShots)
   'pitch',
   'evidence_board',
@@ -49,12 +51,19 @@ export const SHOT_TYPES = [
   'spec_card',
   'money',
   'shot_map',
+  'verse',
 ] as const;
 export type ShotType = (typeof SHOT_TYPES)[number];
 
 /** Shot types only some styles get. */
-export const SIGNATURE_SHOT_TYPES = ['pitch', 'evidence_board', 'letter', 'race_bars', 'scale', 'spec_card', 'money', 'shot_map'] as const satisfies readonly ShotType[];
+export const SIGNATURE_SHOT_TYPES = ['pitch', 'evidence_board', 'letter', 'race_bars', 'scale', 'spec_card', 'money', 'shot_map', 'verse'] as const satisfies readonly ShotType[];
 export type SignatureShotType = (typeof SIGNATURE_SHOT_TYPES)[number];
+
+export const DRAWING_FRAMINGS = ['wide', 'medium', 'close'] as const;
+export type DrawingFraming = (typeof DRAWING_FRAMINGS)[number];
+/** A drawing's mood sets how it moves on screen (a shake when scared, a bounce when happy). */
+export const DRAWING_MOODS = ['neutral', 'happy', 'funny', 'sad', 'scared', 'angry', 'surprised', 'tense', 'calm'] as const;
+export type DrawingMood = (typeof DRAWING_MOODS)[number];
 
 /** Diagram limits, shared by the shot planner and the renderer. */
 export const DIAGRAM_LIMITS = {
@@ -101,6 +110,22 @@ export interface ShotPlan {
     on_target?: number | null;
     key_shots?: Array<{ label: string; x: number; y: number; outcome: 'goal' | 'saved' | 'missed' | 'blocked'; xg?: number | null }>;
   };
+  /**
+   * Stickman styles: what the creator should draw for this shot (their upload fills it).
+   * characters keep the same names across the video (You, Moses) so drawings stay consistent.
+   */
+  drawing?: {
+    scene: string;
+    framing: DrawingFraming;
+    mood: DrawingMood;
+    characters: string[];
+    /** A name label with an arrow, pointing at `target` (described as it looks in the drawing). */
+    label?: { text: string; target: string };
+    /** A speech bubble by the speaker's head: words the narration quotes, exactly. */
+    bubble?: { text: string; speaker: string };
+  };
+  /** Bible stories: a verse card; the words are the World English Bible's, fetched by reference. */
+  verse?: { reference: string };
   /** A labelled AI illustration (free) of something no camera could capture. */
   illustration?: { prompt: string };
   /** Two to four pictures side by side (then vs now, rivals, several people), each found like footage. */
@@ -178,6 +203,10 @@ export interface GeneratedScript {
   review?: ScriptReview;
   /** Visual rhythm (slideshow risk) of the shot plan, and of the rendered visuals once made. */
   rhythm?: { plan?: RhythmReport; render?: RhythmReport };
+  /** Stickman styles: about how many drawings the creator wants to make (sets the brief's pace). */
+  drawing_budget?: number | null;
+  /** Bible verse cards: "webbe" (the default, says "the LORD") or "web" (says "Yahweh"). */
+  bible_translation?: 'webbe' | 'web';
   /** Brief mode: the creator's notes, the approved outline, and the brief's notes for publishing. */
   brief?: string;
   outline?: ScriptOutline;

@@ -9,6 +9,8 @@ export interface ShotSlot {
   shot: ShotPlan;
   startSec: number;
   frames: number;
+  /** The shot's place in its beat (stickman drawings are filed by beat and shot). */
+  index?: number;
 }
 
 /**
@@ -37,7 +39,7 @@ export function computeShotTimeline(
   for (let i = 1; i < boundaries.length; i++) {
     boundaries[i] = Math.max(boundaries[i], boundaries[i - 1] + 1);
   }
-  return shots.map((shot, i) => ({ shot, startSec: boundaries[i] / FPS, frames: boundaries[i + 1] - boundaries[i] }));
+  return shots.map((shot, i) => ({ shot, startSec: boundaries[i] / FPS, frames: boundaries[i + 1] - boundaries[i], index: i }));
 }
 
 /** What a rendered shot actually shows and where it came from (for credits and review). */
@@ -60,6 +62,8 @@ export interface RenderedShot {
   fallback?: boolean;
   /** Footage couldn't be checked for relevance (e.g. the vision model's quota ran out): pick again later. */
   needsCheck?: boolean;
+  /** A stickman shot still waiting for the creator's drawing (its narration shows as type meanwhile). */
+  drawingNeeded?: boolean;
 }
 
 /** A footage candidate kept for swapping, with its relevance score when one was checked. */

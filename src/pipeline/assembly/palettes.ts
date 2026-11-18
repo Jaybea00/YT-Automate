@@ -30,6 +30,28 @@ const PALETTES: Record<string, Palette> = {
   listicle: { whoosh: 'whoosh_soft', tick: 'ui_click', chime: 'bell_ding' },
   comparison: { whoosh: 'whoosh_soft', tick: 'ui_click' },
   eli5: { whoosh: 'whoosh_soft', chime: 'bell_ding', ping: 'ui_ping' },
+  stickman_pov: {
+    whoosh: 'cartoon_whoosh',
+    swoosh: 'cartoon_whoosh',
+    tick: 'pop_bubble',
+    ping: 'pop_bubble',
+    impact: 'cartoon_boing',
+    paper: 'marker_scribble',
+    key: 'pencil_tick',
+    chime: 'bell_ding',
+    riser: 'tension_riser',
+  },
+  stickman_bible: {
+    whoosh: 'whoosh_soft',
+    swoosh: 'whoosh_soft',
+    tick: 'pencil_tick',
+    ping: 'bell_ding',
+    paper: 'page_turn',
+    key: 'pencil_tick',
+    chime: 'harp_gliss',
+    impact: 'cinematic_boom',
+    riser: 'tension_riser',
+  },
 };
 
 export function paletteFor(style: string | null | undefined): Palette {

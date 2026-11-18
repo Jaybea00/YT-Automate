@@ -1,5 +1,17 @@
 import { NextResponse } from 'next/server';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
+import type { AssemblyProgress } from '@/pipeline/runner/assembly-progress';
+
+/** The progress file a running assembly keeps in its job folder, if any. */
+async function readAssemblyProgress(jobId: string): Promise<(AssemblyProgress & { stale: boolean }) | null> {
+  if (!/^[0-9a-f-]{36}$/.test(jobId)) return null;
+  const file = path.join(/* turbopackIgnore: true */ process.cwd(), 'storage', 'jobs', jobId, 'progress.json');
+  const progress = await fs.readFile(file, 'utf-8').then((s) => JSON.parse(s) as AssemblyProgress).catch(() => null);
+  // No update for 10 minutes: the worker may have stopped
+  return progress ? { ...progress, stale: Date.now() - new Date(progress.updatedAt).getTime() > 10 * 60_000 } : null;
+}
 
 export async function GET(
   _req: Request,
@@ -13,7 +25,7 @@ export async function GET(
     // 1. Fetch video
     const { data: video, error: videoError } = await supabase
       .from('videos')
-      .select('id, title, topic, status, render_url, error_message, script_json')
+      .select('id, title, topic, style, status, render_url, error_message, script_json')
       .eq('id', id)
       .single();
 
@@ -69,6 +81,9 @@ export async function GET(
       .eq('job_id', job.id)
       .order('unit_index', { ascending: true });
 
+    // A running assembly writes how far it has got (percentage, step, time left)
+    const assemblyProgress = job.status === 'running' ? await readAssemblyProgress(job.id) : null;
+
     return NextResponse.json({
       video,
       job,
@@ -76,6 +91,7 @@ export async function GET(
       stages: stages || [],
       units: units || [],
       assets: assets || [],
+      assemblyProgress,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Internal Server Error';

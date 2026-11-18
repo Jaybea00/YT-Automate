@@ -4,6 +4,8 @@ import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { loadComposedBeat } from '@/pipeline/visuals/shot-editor';
 import { editShot } from '@/pipeline/visuals/shot-editor-actions';
 import { loadStaged } from '@/pipeline/visuals/smart-match';
+import { saveDrawing } from '@/pipeline/visuals/drawings-store';
+import { stylePack } from '@/lib/styles/packs';
 import { ALLOWED_LICENSE_TYPES, type AllowedLicenseType } from '@/pipeline/utils/media-upload';
 import { handleVisualUpload } from '../../beats/[index]/visual/route';
 
@@ -34,7 +36,9 @@ export async function POST(req: Request, context: RouteContext) {
   if (!Array.isArray(body.matches) || body.matches.length === 0) return NextResponse.json({ error: 'No matches to apply' }, { status: 400 });
 
   const supabase = getSupabaseServerClient();
-  const results: Array<{ beat_index: number; shot_index: number | null; ok: boolean; error?: string }> = [];
+  const results: Array<{ beat_index: number; shot_index: number | null; ok: boolean; error?: string; filed?: boolean }> = [];
+  const { data: video } = await supabase.from('videos').select('style').eq('id', videoId).maybeSingle();
+  const drawn = Boolean(stylePack(video?.style)?.drawn);
   for (const m of body.matches) {
     const staged = await loadStaged(videoId, String(m.fileId));
     const startSec = typeof m.startSec === 'number' && m.startSec >= 0 ? m.startSec : undefined;
@@ -42,6 +46,12 @@ export async function POST(req: Request, context: RouteContext) {
       if (!staged) throw new Error('File not found; drop it again');
       if (m.shot_index !== null && m.shot_index !== undefined) {
         const beat = await loadComposedBeat(supabase, videoId, m.beat_index);
+        if (!beat && drawn && !staged.isVideo) {
+          // A stickman beat not rendered yet: the drawing is filed and used when the visuals stage runs
+          await saveDrawing(videoId, m.beat_index, m.shot_index, staged.path);
+          results.push({ beat_index: m.beat_index, shot_index: m.shot_index, ok: true, filed: true });
+          continue;
+        }
         if (!beat?.shots[m.shot_index]) throw new Error('That shot no longer exists');
         await editShot({
           supabase,

@@ -7,6 +7,7 @@ import {
   buildGeminiTtsPrompt,
   classifyGeminiQuotaError,
   pcmToWav,
+  speechSamples,
 } from '../../src/pipeline/providers/tts/gemini-tts.ts';
 import { getRetryDecision } from '../../src/pipeline/providers/errors.ts';
 
@@ -137,6 +138,32 @@ describe('Gemini TTS', () => {
 
     await new GeminiTtsProvider().synthesize({ text: 'Hi.', voiceId: 'alloy', format: 'mp3' }, { apiKey: 'k' });
     assert.equal(sent.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Charon', 'unknown voices fall back to Charon');
+  });
+
+  it('keeps only the speech when Gemini sends a whole WAV file with a signature chunk after it', async () => {
+    const speech = Buffer.alloc(24000 * 2); // one second of silence
+    const signature = Buffer.concat([Buffer.from('c2pa'), Buffer.alloc(4), Buffer.from('urn:c2pa:jumb Google C2PA Media Services'.repeat(150))]);
+    signature.writeUInt32LE(signature.length - 8, 4);
+    const geminiWav = Buffer.from(pcmToWav(new Uint8Array(speech)));
+    geminiWav.writeUInt32LE(geminiWav.readUInt32LE(4) + signature.length, 4);
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: Buffer.concat([geminiWav, signature]).toString('base64') } }] } }] }),
+        { status: 200 },
+      )) as typeof fetch;
+
+    const result = await new GeminiTtsProvider().synthesize({ text: 'Hello.', voiceId: 'Kore', format: 'mp3' }, { apiKey: 'k' });
+    const wav = Buffer.from(result.bytes);
+    assert.equal(result.durationMs, 1000, 'the signature is not counted as sound');
+    assert.equal(wav.byteLength, 44 + speech.length, 'one header, then only the speech');
+    assert.equal(wav.indexOf('RIFF', 4), -1, 'no second header inside the audio');
+    assert.equal(wav.indexOf('c2pa'), -1, 'no signature bytes played as hiss');
+  });
+
+  it('still reads bare PCM, as older responses sent', () => {
+    const pcm = new Uint8Array(480);
+    assert.equal(speechSamples(pcm).pcm, pcm);
+    assert.equal(speechSamples(pcm).sampleRate, 24000);
   });
 });
 

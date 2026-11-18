@@ -15,6 +15,9 @@ import { AdCheckPanel, BeatAdIssues } from './ad-check-panel';
 import { PackagingSummary } from './packaging-card';
 import type { AdCheckReport } from '@/lib/script/ad-check-issues';
 import { BeatShots, ShotPlanSummary } from './shots-panel';
+import { DrawingsPanel } from '../drawings-panel';
+import { stylePack } from '@/lib/styles/packs';
+import { SENTENCE_BREATH_SEC, VOICE_SPEED_OPTIONS, videoPacing } from '@/lib/script/voice-pacing';
 import { BeatRewritePanel, HookLab, RuntimeMeter, ScriptDoctor } from './editor-panels';
 
 interface ReviewPageProps {
@@ -58,6 +61,8 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   }>>([]);
   const [styleDefaults, setStyleDefaults] = useState<Record<string, string>>({});
   const [selectedNarratorId, setSelectedNarratorId] = useState<string>('');
+  const [voiceSpeed, setVoiceSpeed] = useState<number>(1);
+  const [breathSec, setBreathSec] = useState<number>(0);
   const [isTriggeringVoice, setIsTriggeringVoice] = useState(false);
   const [voiceTriggerError, setVoiceTriggerError] = useState<string | null>(null);
 
@@ -89,6 +94,10 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       }
       const data: VideoRecord = await res.json();
       setVideo(data);
+      // The voice pace starts at the video's own (or its style's)
+      const pace = videoPacing((data.script_json as { voice_pacing?: unknown } | null)?.voice_pacing, data.style);
+      setVoiceSpeed(pace?.speed ?? 1);
+      setBreathSec(pace?.sentencePauseSec ?? 0);
 
       if (data.title) {
         setSelectedTitle(data.title);
@@ -159,6 +168,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
       if (selectedNarratorId) {
         payload.narratorId = selectedNarratorId;
       }
+      payload.voicePacing = { speed: voiceSpeed, sentencePauseSec: breathSec };
 
       const res = await fetch(`/api/videos/${id}/voice`, {
         method: 'POST',
@@ -696,8 +706,8 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           </div>
         )}
 
-        {/* Case 2: Status = 'failed' */}
-        {video.status === 'failed' && (
+        {/* Case 2: Status = 'failed' before a script exists (a failure after approval keeps the voicing panel below) */}
+        {video.status === 'failed' && !video.script_json?.beats?.length && (
           <div className="bg-red-950/30 border border-red-800 rounded-2xl p-8 space-y-4 shadow-xl">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center font-bold">
@@ -721,8 +731,8 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           </div>
         )}
 
-        {/* Case 3: Status = 'voicing' or later (Approved) */}
-        {video.status !== 'scripting' && video.status !== 'failed' && video.status !== 'script_review' && (
+        {/* Case 3: Status = 'voicing' or later (Approved), or a later stage failed: pick a narrator and voice again */}
+        {video.status !== 'scripting' && video.status !== 'script_review' && (video.status !== 'failed' || Boolean(video.script_json?.beats?.length)) && (
           <div className="bg-emerald-950/30 border border-emerald-800 rounded-2xl p-8 space-y-6 shadow-xl">
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xl shrink-0">
@@ -739,6 +749,12 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                   <p className="text-xs text-zinc-400">
                     Approved at: {new Date(video.script_approved_at).toLocaleString()}
                   </p>
+                )}
+                {video.status === 'failed' && (
+                  <div className="mt-3 p-3 rounded-xl bg-red-950/40 border border-red-800 text-xs text-red-200">
+                    The last stage failed{video.error_message ? `: ${video.error_message}` : '.'} Your script is safe: pick a narrator below
+                    (a Kokoro voice is free and unlimited) and start voicing again.
+                  </div>
                 )}
                 {/* Narrator Voice Picker Card */}
                 <div className="mt-6 p-6 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-4">
@@ -831,6 +847,36 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                         );
                       })()}
                     </div>
+                  </div>
+
+                  {/* Voice pace for this video */}
+                  <div className="space-y-2 pt-1">
+                    <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Voice speed</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {[
+                        ...VOICE_SPEED_OPTIONS,
+                        ...(VOICE_SPEED_OPTIONS.some((o) => o.speed === voiceSpeed) ? [] : [{ speed: voiceSpeed, label: 'Style pace', desc: `${Math.round(voiceSpeed * 100)}% of normal` }]),
+                      ].map((o) => (
+                        <button
+                          key={o.speed}
+                          type="button"
+                          onClick={() => setVoiceSpeed(o.speed)}
+                          className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                            voiceSpeed === o.speed ? 'bg-indigo-950/40 border-indigo-500/80 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                          }`}
+                        >
+                          <span className="block text-xs font-medium">{o.label}</span>
+                          <span className="block text-[10px] text-zinc-400 mt-0.5">{o.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input type="checkbox" checked={breathSec > 0} onChange={(e) => setBreathSec(e.target.checked ? SENTENCE_BREATH_SEC : 0)} className="accent-indigo-500" />
+                      A short breath after each sentence
+                    </label>
+                    <p className="text-[11px] text-zinc-500">
+                      Speed works with Kokoro and ElevenLabs voices; the breath needs Kokoro. Gemini voices keep their own pace. A new speed re-voices every beat.
+                    </p>
                   </div>
 
                   <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-zinc-900">
@@ -1053,6 +1099,16 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                 <div className="p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-200 text-xs">
                   {shotPlanError}
                 </div>
+              )}
+              {stylePack(video.style)?.drawn && (
+                <DrawingsPanel
+                  videoId={id}
+                  beats={editableBeats}
+                  showBudget
+                  savedBudget={video.script_json.drawing_budget ?? null}
+                  onBeats={() => fetchVideo(true)}
+                  bibleTranslation={stylePack(video.style)?.signatureShots?.includes('verse') ? (video.script_json.bible_translation ?? 'webbe') : undefined}
+                />
               )}
 
               <HookLab videoId={id} beats={editableBeats} onApply={(hook) => applyBeatReplacement(0, hook)} />

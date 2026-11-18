@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { beatsToScenes } from '@/pipeline/utils/mapper';
-import { stylePack, dramaticPauseSec } from '@/lib/styles/packs';
+import { dramaticPauseSec } from '@/lib/styles/packs';
 import type { ScriptBeat } from '@/lib/script/generate-script';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { checkAssemblyGate } from '@/pipeline/assembly/gate';
+import { normalizeVoicePacing, videoPacing } from '@/lib/script/voice-pacing';
 
 const ALLOWED_STAGES = [
   'research',
@@ -28,6 +29,8 @@ export async function handleVoiceRequest(
       ttsProviderConfigId?: string;
       ttsProvider?: 'elevenlabs' | 'kokoro' | string;
       narratorId?: string;
+      /** The video's voice pace (saved on it); see voice-pacing.ts. */
+      voicePacing?: unknown;
     } = {};
     try {
       body = await req.json();
@@ -209,6 +212,15 @@ export async function handleVoiceRequest(
       return NextResponse.json({ error: 'Video not found.' }, { status: 404 });
     }
 
+    // The video's voice pace: one sent with this request is saved on the video; otherwise the
+    // saved one; otherwise the style's (documentary styles are slower)
+    if (body.voicePacing !== undefined) {
+      const chosen = normalizeVoicePacing(body.voicePacing);
+      video.script_json = { ...(video.script_json ?? {}), voice_pacing: chosen };
+      await supabase.from('videos').update({ script_json: video.script_json }).eq('id', id);
+    }
+    const pacing = videoPacing(video.script_json?.voice_pacing, video.style);
+
     // 4. Validate script and beats
     // Accepts videos with status 'voicing', 'script_review', 'failed', or 'rendered' as long as approved beats exist
     const beats: ScriptBeat[] = video.script_json?.beats ?? [];
@@ -258,6 +270,8 @@ export async function handleVoiceRequest(
         ...(targetNarratorId !== undefined
           ? { narrator_id: targetNarratorId }
           : {}),
+        // The pace chosen now (part of every beat's checkpoint, so a new pace re-voices)
+        narration_pacing: pacing ?? null,
       };
 
       const { error: requeueError } = await supabase
@@ -325,7 +339,9 @@ export async function handleVoiceRequest(
         (targetNarratorId === undefined || targetNarratorId === previous.narrator_id) &&
         (targetVoiceId === undefined || targetVoiceId === previous.voice_id) &&
         (targetTtsProviderConfigId === undefined || targetTtsProviderConfigId === previous.tts_provider_config_id);
-      if (missing.length > 0 && latestJob.script_fingerprint === currentFingerprint && sameVoice) {
+      // A new pace needs new voicing, so never reuse a job voiced at another pace
+      const samePace = JSON.stringify(previous.narration_pacing ?? null) === JSON.stringify(pacing ?? null);
+      if (missing.length > 0 && latestJob.script_fingerprint === currentFingerprint && sameVoice && samePace) {
         const { error: extendError } = await supabase
           .from('yt_jobs')
           .update({
@@ -363,8 +379,7 @@ export async function handleVoiceRequest(
       visual_style: video.style,
       scenes,
     };
-    // Documentary pacing is fixed on the job, so the video keeps one pace even if the style changes
-    const pacing = stylePack(video.style)?.narration;
+    // The pace is fixed on the job, so the video keeps one pace even if the style changes
     if (pacing) scriptData.narration_pacing = pacing;
     // Pacing marks ("…") get a real pause; fixed on the job like the pacing
     scriptData.dramatic_pause_sec = dramaticPauseSec(video.style);

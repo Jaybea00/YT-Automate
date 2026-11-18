@@ -132,7 +132,10 @@ export async function researchTopic(
 
     if (resolved.providerId === 'gemini' && ctx.apiKey) {
       try {
-        const grounded = await researchWithGoogleSearch(ctx.apiKey, ctx.model || 'gemini-3.5-flash-lite', topic, focus);
+        // The writing model searches; the light helper model answers from memory, leaving no
+        // sources to cite (so every grounded dossier fell back to Wikipedia)
+        const writingModel = typeof resolved.options?.writingModel === 'string' ? resolved.options.writingModel.trim() : '';
+        const grounded = await researchWithGoogleSearch(ctx.apiKey, writingModel || ctx.model || 'gemini-3.5-flash-lite', topic, focus);
         if (grounded.facts.length >= MIN_FACTS) {
           return { topic, provider: 'google_search', createdAt, ...grounded };
         }

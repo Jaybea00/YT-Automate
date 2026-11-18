@@ -57,6 +57,27 @@ describe('Research: Google Search grounding parser', () => {
     ]);
     assert.equal(result.sources.length, 2, 'duplicate URLs collapse into one source');
   });
+
+  it('matches segments that keep the "F1:" label and drop the full stop (Gemini 3.8 Flash)', () => {
+    const text = 'F1: Archduke Franz Ferdinand was the heir presumptive to the Austro-Hungarian throne.\nF2: **The assassination took place in Sarajevo on June 28, 1914.**';
+    const result = parseGroundedFacts(text, {
+      groundingChunks: [{ web: { uri: 'https://www.britannica.com/x', title: 'britannica.com' } }],
+      groundingSupports: [
+        { segment: { text: 'F1: Archduke Franz Ferdinand was the heir presumptive to the Austro-Hungarian throne' }, groundingChunkIndices: [0] },
+        { segment: { text: 'F2: The assassination took place in Sarajevo on June 28, 1914' }, groundingChunkIndices: [0] },
+      ],
+    });
+    assert.equal(result.facts.length, 2);
+    assert.deepEqual(result.facts.map((f) => f.sourceIds), [['S1'], ['S1']]);
+  });
+
+  it('ignores tiny segments that would match unrelated facts', () => {
+    const result = parseGroundedFacts('F1: The war began in 1914 after the assassination.', {
+      groundingChunks: [{ web: { uri: 'https://a.example', title: 'a' } }],
+      groundingSupports: [{ segment: { text: '1914' }, groundingChunkIndices: [0] }],
+    });
+    assert.equal(result.facts.length, 0);
+  });
 });
 
 describe('Research: Wikipedia fact extraction', () => {

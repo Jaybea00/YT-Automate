@@ -30,6 +30,7 @@ import { shotMapTemplate } from './motion/shot-map-template';
 import { withSourceTag } from './source-tags';
 import { renderSplitShot } from './split-shot';
 import { renderIllustration } from './illustration';
+import { renderDrawing, renderVerse } from './drawing-shot';
 import { renderGlobeFlyover, SATELLITE_CREDIT } from './maps/globe-flyover';
 import { barRaceTemplate } from './motion/data-templates';
 import { chartFromObservations, fetchObservations, raceFromObservations } from './real-data';
@@ -225,6 +226,9 @@ export const MOTION_RENDERERS: Partial<Record<ShotType, TypedShotRenderer>> = {
   // Looked up when called: split-shot imports the footage renderer, which imports this module
   split: (shot, slot, clipPath, ctx) => renderSplitShot(shot, slot, clipPath, ctx),
   illustration: (shot, slot, clipPath, ctx) => renderIllustration(shot, slot, clipPath, ctx),
+  // Stickman styles (drawing-shot imports this module's text card, so these are looked up when called)
+  drawing: (shot, slot, clipPath, ctx) => renderDrawing(shot, slot, clipPath, ctx),
+  verse: (shot, slot, clipPath, ctx) => renderVerse(shot, slot, clipPath, ctx),
 };
 
 /** Longer narration doesn't fit a type card legibly. */
