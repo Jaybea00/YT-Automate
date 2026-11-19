@@ -155,8 +155,11 @@ export async function runVoiceCheck(
   }
   const expectedText = (await loadWordTimings(audioPath))?.spokenText ?? narration;
   const checked = await withRetries(() => checkVoiceAudio(audioPath, expectedText, ctx));
-  const transcript = checked.transcript;
-  const issues = dropSpuriousAdditions(checked.issues, expectedText);
+  return saveVoiceCheck(audioPath, checked.transcript, dropSpuriousAdditions(checked.issues, expectedText));
+}
+
+/** Saves a check result next to the audio it was made on (e.g. a take checked before it was chosen). */
+export async function saveVoiceCheck(audioPath: string, transcript: string, issues: VoiceIssue[]): Promise<VoiceCheckResult> {
   const result: VoiceCheckResult = {
     version: 1,
     checkedAt: new Date().toISOString(),

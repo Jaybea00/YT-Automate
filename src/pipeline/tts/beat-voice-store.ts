@@ -17,7 +17,14 @@ export async function saveBeatVoice(
   supabase: SupabaseClient,
   videoId: string,
   beatIndex: number,
-  patch: { speed?: number | null; narratorId?: string | null; recorded?: BeatVoice['recorded'] | null },
+  patch: {
+    speed?: number | null;
+    narratorId?: string | null;
+    recorded?: BeatVoice['recorded'] | null;
+    mood?: BeatVoice['mood'] | null;
+    take?: BeatVoice['take'] | null;
+    parts?: BeatVoice['parts'] | null;
+  },
 ): Promise<BeatVoice | null> {
   const { data: video } = await supabase.from('videos').select('script_json').eq('id', videoId).maybeSingle();
   if (!video) throw new Error('Video not found');

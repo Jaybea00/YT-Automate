@@ -1,11 +1,20 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { DELIVERY_MOODS, MOOD_INFO, type DeliveryMood } from '@/lib/script/delivery-moods';
+
+interface BeatPart {
+  text: string;
+  narratorId: string;
+  speaker?: string;
+}
 
 interface BeatVoice {
   speed?: number;
   narratorId?: string;
   recorded?: { path: string; durationMs: number };
+  mood?: DeliveryMood;
+  parts?: BeatPart[];
 }
 
 interface Narrator {
@@ -21,6 +30,8 @@ interface Narrator {
 export function BeatVoiceControls({ videoId, beatIndex, initial, onSaved }: { videoId: string; beatIndex: number; initial: BeatVoice | null; onSaved: () => void }) {
   const [speed, setSpeed] = useState(initial?.speed ?? 1);
   const [narratorId, setNarratorId] = useState(initial?.narratorId ?? '');
+  const [mood, setMood] = useState<DeliveryMood>(initial?.mood ?? 'neutral');
+  const [parts, setParts] = useState<BeatPart[]>(initial?.parts ?? []);
   const [narrators, setNarrators] = useState<Narrator[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -45,7 +56,11 @@ export function BeatVoiceControls({ videoId, beatIndex, initial, onSaved }: { vi
     if (take) URL.revokeObjectURL(take.url);
   }, [take]);
 
-  const dirty = speed !== (initial?.speed ?? 1) || narratorId !== (initial?.narratorId ?? '');
+  const dirty =
+    speed !== (initial?.speed ?? 1) ||
+    narratorId !== (initial?.narratorId ?? '') ||
+    mood !== (initial?.mood ?? 'neutral') ||
+    JSON.stringify(parts) !== JSON.stringify(initial?.parts ?? []);
 
   async function send(init: RequestInit, url: string, doing: string) {
     setBusy(doing);
@@ -129,9 +144,51 @@ export function BeatVoiceControls({ videoId, beatIndex, initial, onSaved }: { vi
               ))}
             </select>
           </label>
+          <label className="block space-y-1 text-zinc-300">
+            <span>
+              Delivery: <span className="text-zinc-500">{MOOD_INFO[mood].use}</span>
+            </span>
+            <select value={mood} onChange={(e) => setMood(e.target.value as DeliveryMood)} className="block w-full max-w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1">
+              {DELIVERY_MOODS.map((m) => (
+                <option key={m} value={m}>
+                  {MOOD_INFO[m].emoji} {MOOD_INFO[m].label}
+                </option>
+              ))}
+            </select>
+            {speed !== 1 && mood !== 'neutral' && <span className="text-[11px] text-zinc-500">The pace you set wins over the mood&apos;s pace.</span>}
+          </label>
+          {parts.length > 0 && (
+            <div className="space-y-1.5 text-zinc-300">
+              <span>Character voices in this line:</span>
+              {parts.map((p, k) => (
+                <div key={k} className="p-2 rounded-lg bg-zinc-950 border border-zinc-800 space-y-1">
+                  <p className="text-zinc-400">
+                    <span className="text-violet-300 font-medium">{p.speaker ?? 'Character'}</span>: “{p.text}”
+                  </p>
+                  <div className="flex gap-2">
+                    <select
+                      value={p.narratorId}
+                      onChange={(e) => setParts(parts.map((x, j) => (j === k ? { ...x, narratorId: e.target.value } : x)))}
+                      className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded px-2 py-1"
+                    >
+                      {narrators.map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {n.name}
+                          {n.yt_provider_configs?.label ? ` (${n.yt_provider_configs.label})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" onClick={() => setParts(parts.filter((_, j) => j !== k))} className="text-zinc-400 hover:text-red-300" title="Use the narrator for this quote">
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <button
             type="button"
-            onClick={() => saveSettings({ speed, narratorId: narratorId || null })}
+            onClick={() => saveSettings({ speed, narratorId: narratorId || null, mood, parts: parts.length ? parts : null })}
             disabled={!dirty || Boolean(busy)}
             className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-medium"
           >

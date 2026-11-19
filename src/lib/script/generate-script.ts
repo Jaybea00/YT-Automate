@@ -21,6 +21,7 @@ import type { FactCheckReport } from './fact-check-issues';
 import type { PronunciationHints } from './pronunciation-hints-types';
 import type { AdCheckReport } from './ad-check-issues';
 import type { RetentionReport } from './retention-types';
+import type { SavedVoicePlan } from './voice-plan';
 import { leadWithPackageTitle, type PackageOption, type Packaging } from './packaging-types';
 import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
@@ -220,6 +221,8 @@ export interface GeneratedScript {
   ad_check?: AdCheckReport;
   /** Whether viewers would keep watching: interest per beat, open questions, the promise, and fixes. */
   retention?: RetentionReport;
+  /** Moods and character voices prepared after writing, applied when the script is approved. */
+  voice_plan?: SavedVoicePlan;
   /** Title and thumbnail options decided before the script; the script delivers the chosen one. */
   packaging?: Packaging;
   /** 'short' for a native YouTube Short (a linked mini video); absent for normal videos. */

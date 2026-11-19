@@ -1,9 +1,14 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { directionWithMood, isDeliveryMood, moodSpeed, type DeliveryMood } from '@/lib/script/delivery-moods';
 import { resolveForStage, type ResolvedStageProvider } from '../providers/registry';
-import type { TTSProvider } from '../providers/types';
+import type { TTSProvider, TtsResult } from '../providers/types';
 import { runJobUnit, type UnitRunResult } from '../runner/unit-runner';
-import { detectSilences, getAudioDurationMs } from '../utils/ffmpeg';
+import { detectSilences, getAudioDurationMs, getFfmpegPath } from '../utils/ffmpeg';
 import { deliveryForStyle } from './delivery';
 import { loadPronunciations } from './pronunciations';
 import { toSpeakableText, type Pronunciation } from './speakable';
@@ -15,6 +20,8 @@ import {
   saveWordTimings,
   type WordTiming,
 } from './word-timings';
+
+const execFileAsync = promisify(execFile);
 
 /** Everything needed to voice beats for one job: provider, voice, delivery and pronunciations. */
 export interface TtsSetup {
@@ -97,16 +104,49 @@ export function ttsUnitInput(setup: TtsSetup, narration: string): { spokenText: 
 }
 
 /**
- * One beat's own voice settings from Vibedit (script_json.beat_voice, by beat index):
+ * A chosen take: the best of several voicings of this beat (see retake.ts), kept while the
+ * spoken text and the voice are the same as when it was made.
+ */
+export interface BeatTake {
+  path: string;
+  durationMs: number;
+  /** What the voice was given; a changed beat or pronunciation no longer matches. */
+  spokenText: string;
+  /** The voice, delivery and pace it was made with (voiceKeyOf). */
+  voiceKey: string;
+  words?: WordTiming[];
+}
+
+/** A quote inside the beat voiced by another narrator (a character), by its exact words. */
+export interface BeatPart {
+  text: string;
+  narratorId: string;
+  speaker?: string;
+}
+
+/**
+ * One beat's own voice settings (script_json.beat_voice, by beat index):
  *  - speed: a multiple of the job's pace (0.75 slower ... 1.25 faster)
  *  - narratorId: another narrator for this line (a quote, a different speaker)
  *  - recorded: the creator's own recording, used instead of a synthesized voice
+ *  - mood: how the line is delivered (tense, quiet, reveal...)
+ *  - take: the best of several voicings, chosen by the listen-back check
+ *  - parts: quotes inside the beat voiced by characters' narrators
  */
 export interface BeatVoice {
   speed?: number;
   narratorId?: string;
   recorded?: { path: string; durationMs: number };
+  mood?: DeliveryMood;
+  take?: BeatTake;
+  parts?: BeatPart[];
 }
+
+const validWords = (raw: unknown): WordTiming[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const words = raw.filter((w): w is WordTiming => typeof w?.word === 'string' && Number.isFinite(w?.start) && Number.isFinite(w?.end));
+  return words.length ? words : undefined;
+};
 
 /** A submitted setting kept sane; null when it changes nothing. */
 export function normalizeBeatVoice(raw: unknown): BeatVoice | null {
@@ -119,6 +159,19 @@ export function normalizeBeatVoice(raw: unknown): BeatVoice | null {
   if (typeof r.narratorId === 'string' && /^[\w-]{1,80}$/.test(r.narratorId)) out.narratorId = r.narratorId;
   const rec = r.recorded as { path?: unknown; durationMs?: unknown } | undefined;
   if (rec && typeof rec.path === 'string' && Number(rec.durationMs) > 0) out.recorded = { path: rec.path, durationMs: Math.round(Number(rec.durationMs)) };
+  if (isDeliveryMood(r.mood) && r.mood !== 'neutral') out.mood = r.mood;
+  const take = r.take as Partial<BeatTake> | undefined;
+  if (take && typeof take.path === 'string' && Number(take.durationMs) > 0 && typeof take.spokenText === 'string' && typeof take.voiceKey === 'string') {
+    const words = validWords(take.words);
+    out.take = { path: take.path, durationMs: Math.round(Number(take.durationMs)), spokenText: take.spokenText, voiceKey: take.voiceKey, ...(words ? { words } : {}) };
+  }
+  if (Array.isArray(r.parts)) {
+    const parts = (r.parts as Array<Partial<BeatPart>>)
+      .filter((p) => typeof p?.text === 'string' && p.text.trim() && p.text.length <= 600 && typeof p.narratorId === 'string' && /^[\w-]{1,80}$/.test(p.narratorId))
+      .slice(0, 6)
+      .map((p) => ({ text: p.text!.trim(), narratorId: p.narratorId!, ...(typeof p.speaker === 'string' && p.speaker.trim() ? { speaker: p.speaker.trim().slice(0, 60) } : {}) }));
+    if (parts.length) out.parts = parts;
+  }
   return Object.keys(out).length ? out : null;
 }
 
@@ -133,20 +186,133 @@ export function readBeatVoices(raw: unknown): Record<number, BeatVoice> {
   return out;
 }
 
-/** The setup for one beat: its own pace, and its own narrator when it has one. */
+/** The setup with another narrator's voice (a character, a second speaker). */
+export async function withNarrator(supabase: SupabaseClient, setup: TtsSetup, narratorId: string): Promise<TtsSetup> {
+  const { data: narrator } = await supabase.from('narrators').select('provider_config_id, voice_id').eq('id', narratorId).maybeSingle();
+  if (!narrator) throw new Error('That narrator no longer exists');
+  const resolved = await resolveForStage<TTSProvider>('tts', supabase, narrator.provider_config_id ?? undefined, narrator.voice_id ?? undefined);
+  return { ...setup, resolved, voiceId: (resolved.options.voiceId as string) || (resolved.options.voice as string) || narrator.voice_id || setup.voiceId };
+}
+
+/** The setup at a pace multiple of the job's own. */
+export function withSpeed(setup: TtsSetup, base: TtsSetup, multiple: number): TtsSetup {
+  if (Math.abs(multiple - 1) < 0.001) return setup;
+  return { ...setup, pacing: { speed: Math.round((base.pacing?.speed ?? 1) * multiple * 100) / 100, sentencePauseSec: base.pacing?.sentencePauseSec ?? 0 } };
+}
+
+/**
+ * The setup for one beat: its own narrator, its pace (a set speed wins over the mood's), and its
+ * mood as direction for voices that take direction.
+ */
 export async function setupForBeat(supabase: SupabaseClient, base: TtsSetup, voice: BeatVoice | undefined): Promise<TtsSetup> {
-  if (!voice || (!voice.speed && !voice.narratorId)) return base;
+  if (!voice || (!voice.speed && !voice.narratorId && !voice.mood)) return base;
   let setup = base;
-  if (voice.narratorId) {
-    const { data: narrator } = await supabase.from('narrators').select('provider_config_id, voice_id').eq('id', voice.narratorId).maybeSingle();
-    if (!narrator) throw new Error('That narrator no longer exists');
-    const resolved = await resolveForStage<TTSProvider>('tts', supabase, narrator.provider_config_id ?? undefined, narrator.voice_id ?? undefined);
-    setup = { ...setup, resolved, voiceId: (resolved.options.voiceId as string) || (resolved.options.voice as string) || narrator.voice_id || setup.voiceId };
-  }
-  if (voice.speed) {
-    setup = { ...setup, pacing: { speed: Math.round((base.pacing?.speed ?? 1) * voice.speed * 100) / 100, sentencePauseSec: base.pacing?.sentencePauseSec ?? 0 } };
-  }
+  if (voice.narratorId) setup = await withNarrator(supabase, setup, voice.narratorId);
+  setup = withSpeed(setup, base, voice.speed ?? moodSpeed(voice.mood));
+  if (voice.mood && setup.resolved.provider.supportsDirection) setup = { ...setup, direction: directionWithMood(setup.direction, voice.mood) };
   return setup;
+}
+
+/** What a voicing depends on besides the text: provider, voice, delivery and pace. */
+export function voiceKeyOf(setup: TtsSetup): string {
+  return JSON.stringify([
+    setup.resolved.providerId,
+    setup.resolved.configId,
+    setup.voiceId,
+    setup.resolved.provider.supportsDirection ? (setup.direction ?? '') : '',
+    setup.pacing?.speed ?? 1,
+    setup.pacing?.sentencePauseSec ?? 0,
+    setup.dramaticPauseSec ?? 0,
+  ]);
+}
+
+/**
+ * Voices spoken text with a setup: the voice itself, then a breath after each sentence and a
+ * longer pause at each pacing mark (placed from the voice's own word timings).
+ */
+export async function synthesizeSpoken(setup: TtsSetup, spokenText: string, unitIndex = 0): Promise<TtsResult> {
+  const { provider, ctx } = setup.resolved;
+  const synthesized = await provider.synthesize(
+    { text: spokenText, voiceId: setup.voiceId, format: 'mp3', direction: setup.direction, speed: setup.pacing?.speed },
+    ctx,
+  );
+  const sentencePauseSec = setup.pacing?.sentencePauseSec ?? 0;
+  const dramaticPauseSec = PACING_MARK.test(spokenText) ? (setup.dramaticPauseSec ?? 0) : 0;
+  if ((!sentencePauseSec && !dramaticPauseSec) || synthesized.mimeType?.includes('wav')) return synthesized;
+  try {
+    const paused = await addPacingPauses({ bytes: synthesized.bytes, narration: spokenText, providerWords: synthesized.words, sentencePauseSec, dramaticPauseSec });
+    return { ...synthesized, bytes: paused.bytes, words: paused.providerWords };
+  } catch (err) {
+    console.warn(`[voiceBeat] Beat ${unitIndex}: sentence pauses skipped (${err instanceof Error ? err.message.slice(0, 160) : err})`);
+    return synthesized;
+  }
+}
+
+// --------------------------------------------------------------------------
+// Characters: quotes inside a beat voiced by other narrators
+// --------------------------------------------------------------------------
+
+export interface NarrationSegment {
+  text: string;
+  /** The character's narrator for a quote; absent for the beat's own narrator. */
+  part?: BeatPart;
+}
+
+/**
+ * The beat's narration split around its character quotes, in order. A quote not found word for
+ * word in the narration (the beat was edited) is skipped, so it's voiced by the narrator.
+ */
+export function splitNarration(narration: string, parts: BeatPart[] | undefined): NarrationSegment[] {
+  if (!parts?.length) return [{ text: narration }];
+  const segments: NarrationSegment[] = [];
+  let cursor = 0;
+  const found = parts
+    .map((part) => ({ part, at: narration.indexOf(part.text) }))
+    .filter((p) => p.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  for (const { part, at } of found) {
+    if (at < cursor) continue; // overlaps the previous quote
+    const before = narration.slice(cursor, at).trim();
+    if (before) segments.push({ text: before });
+    segments.push({ text: part.text, part });
+    cursor = at + part.text.length;
+  }
+  const rest = narration.slice(cursor).trim();
+  if (rest) segments.push({ text: rest });
+  return segments.length ? segments : [{ text: narration }];
+}
+
+/** Gap between a narrator's line and a character's quote. */
+const PART_GAP_SEC = 0.18;
+
+/** Joins voiced segments with a short gap, shifting each segment's word timings to match. */
+export async function joinSegments(pieces: Array<{ bytes: Uint8Array; words?: WordTiming[] }>): Promise<{ bytes: Uint8Array; words?: WordTiming[] }> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'parts-'));
+  try {
+    const files: string[] = [];
+    const durations: number[] = [];
+    for (const [i, p] of pieces.entries()) {
+      const f = path.join(dir, `p${i}.mp3`);
+      await writeFile(f, p.bytes);
+      files.push(f);
+      durations.push((await getAudioDurationMs(f)) / 1000);
+    }
+    const inputs = files.flatMap((f) => ['-i', f]);
+    const chain = files.map((_, i) => `[${i}:a]aresample=48000,aformat=channel_layouts=mono${i < files.length - 1 ? `,apad=pad_dur=${PART_GAP_SEC}` : ''}[s${i}]`).join(';');
+    const out = path.join(dir, 'joined.mp3');
+    await execFileAsync(getFfmpegPath(), ['-y', '-v', 'error', ...inputs, '-filter_complex', `${chain};${files.map((_, i) => `[s${i}]`).join('')}concat=n=${files.length}:v=0:a=1[a]`, '-map', '[a]', '-c:a', 'libmp3lame', '-b:a', '160k', out]);
+    let offset = 0;
+    const words: WordTiming[] = [];
+    let allTimed = true;
+    pieces.forEach((p, i) => {
+      if (!p.words?.length) allTimed = false;
+      else words.push(...p.words.map((w) => ({ ...w, start: w.start + offset, end: w.end + offset })));
+      offset += durations[i] + (i < pieces.length - 1 ? PART_GAP_SEC : 0);
+    });
+    return { bytes: new Uint8Array(await readFile(out)), words: allTimed ? words : undefined };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 export interface VoiceBeatOptions {
@@ -166,11 +332,21 @@ export async function voiceBeat(options: VoiceBeatOptions): Promise<UnitRunResul
   const { supabase, jobId, unitIndex, narration, outputDir, signal, beatVoice } = options;
   const recorded = beatVoice?.recorded;
   const setup = recorded ? options.setup : await setupForBeat(supabase, options.setup, beatVoice);
-  const { provider, ctx, maxRetries, configId, providerId, model, options: providerOptions } = setup.resolved;
+  const { ctx, maxRetries, configId, providerId, model, options: providerOptions } = setup.resolved;
+  const segments = recorded ? [{ text: narration }] : splitNarration(narration, beatVoice?.parts);
+  const hasParts = segments.some((s) => s.part);
   const voiced = ttsUnitInput(setup, narration);
-  const spokenText = voiced.spokenText;
-  // A recording is its own checkpoint: voicing runs keep it until it's replaced or removed
-  const input = recorded ? { recorded: recorded.path, durationMs: recorded.durationMs } : voiced.input;
+  const spokenText = hasParts ? segments.map((s) => toSpeakableText(s.text, setup.pronunciations)).join(' ') : voiced.spokenText;
+  // A chosen take stands in for a fresh voicing while it's still the same words and voice
+  const take = !recorded && !hasParts && beatVoice?.take && beatVoice.take.spokenText === spokenText && beatVoice.take.voiceKey === voiceKeyOf(setup) ? beatVoice.take : undefined;
+  // A recording (or chosen take) is its own checkpoint: voicing runs keep it until it's replaced
+  const input = recorded
+    ? { recorded: recorded.path, durationMs: recorded.durationMs }
+    : take
+      ? { take: take.path, durationMs: take.durationMs }
+      : hasParts
+        ? { ...voiced.input, text: spokenText, parts: segments.filter((s) => s.part).map((s) => ({ text: s.text, narratorId: s.part!.narratorId })) }
+        : voiced.input;
 
   let providerWords: WordTiming[] | undefined;
   const result = await runJobUnit({
@@ -191,29 +367,26 @@ export async function voiceBeat(options: VoiceBeatOptions): Promise<UnitRunResul
       if (recorded) {
         return { bytes: new Uint8Array(await readFile(recorded.path)), mimeType: 'audio/mpeg', durationMs: recorded.durationMs, usage: {} };
       }
-      const synthesized = await provider.synthesize(
-        { text: spokenText, voiceId: setup.voiceId, format: 'mp3', direction: setup.direction, speed: setup.pacing?.speed },
-        ctx,
-      );
-      providerWords = synthesized.words;
-      const sentencePauseSec = setup.pacing?.sentencePauseSec ?? 0;
-      const dramaticPauseSec = PACING_MARK.test(spokenText) ? (setup.dramaticPauseSec ?? 0) : 0;
-      if ((!sentencePauseSec && !dramaticPauseSec) || synthesized.mimeType?.includes('wav')) return synthesized;
-      // A breath after each sentence and a longer pause at each pacing mark, placed from the voice's own word timings
-      try {
-        const paused = await addPacingPauses({
-          bytes: synthesized.bytes,
-          narration: spokenText,
-          providerWords: synthesized.words,
-          sentencePauseSec,
-          dramaticPauseSec,
-        });
-        providerWords = paused.providerWords;
-        return { ...synthesized, bytes: paused.bytes, words: paused.providerWords };
-      } catch (err) {
-        console.warn(`[voiceBeat] Beat ${unitIndex}: sentence pauses skipped (${err instanceof Error ? err.message.slice(0, 160) : err})`);
-        return synthesized;
+      if (take) {
+        providerWords = take.words;
+        return { bytes: new Uint8Array(await readFile(take.path)), mimeType: take.path.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg', durationMs: take.durationMs, usage: {}, words: take.words };
       }
+      if (hasParts) {
+        // The narrator's lines in this beat's voice, each quote in its character's voice
+        const pieces: Array<{ bytes: Uint8Array; words?: WordTiming[] }> = [];
+        for (const seg of segments) {
+          const segSetup = seg.part ? await withNarrator(supabase, setup, seg.part.narratorId) : setup;
+          const result = await synthesizeSpoken(segSetup, toSpeakableText(seg.text, setup.pronunciations), unitIndex);
+          if (result.mimeType?.includes('wav')) throw new Error('Character voices need voices that return MP3');
+          pieces.push({ bytes: result.bytes, words: result.words });
+        }
+        const joined = await joinSegments(pieces);
+        providerWords = joined.words;
+        return { bytes: joined.bytes, mimeType: 'audio/mpeg', usage: { characters: spokenText.length }, words: joined.words };
+      }
+      const synthesized = await synthesizeSpoken(setup, spokenText, unitIndex);
+      providerWords = synthesized.words;
+      return synthesized;
     },
   });
 

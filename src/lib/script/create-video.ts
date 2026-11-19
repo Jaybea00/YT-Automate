@@ -157,7 +157,7 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
     await step('shots');
     const planned = await planShots(supabase, written, topic, { style, pack: composed });
     await step('checks');
-    const checks = await afterWriteChecks(supabase, topic, planned, style, composed);
+    const checks = await afterWriteChecks(supabase, topic, planned, style, composed, videoId);
     await save({
       script_json: finished({ ...planned, ...(brief ? { brief } : {}), ...(packaging ? { packaging } : {}), ...checks }),
       status: 'script_review',
