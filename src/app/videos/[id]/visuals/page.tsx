@@ -7,6 +7,7 @@ import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
 import { VoicePlanPanel } from './voice-plan-panel';
 import { RenderSettingsCard } from './render-settings-card';
+import { AssemblyExtrasCard } from './assembly-extras-card';
 import { BeatCard } from './beat-card';
 import { RhythmPanel } from './rhythm-panel';
 import { NeedsCheckBar } from './needs-check-bar';
@@ -811,6 +812,8 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
           togglePreviewSfx={togglePreviewSfx}
           togglePreviewTrack={togglePreviewTrack}
         />
+
+        <AssemblyExtrasCard videoId={id} />
 
         <VoicePlanPanel
           videoId={id}

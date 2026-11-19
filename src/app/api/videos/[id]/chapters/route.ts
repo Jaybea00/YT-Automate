@@ -8,7 +8,7 @@ import {
   type ScriptBeatLike,
   type UnitTimingLike,
 } from '@/pipeline/utils/chapters';
-import { DEFAULT_BEAT_PAUSE_SEC, planPacing } from '@/pipeline/assembly/pacing';
+import { videoPacing } from '@/pipeline/assembly/pacing';
 import type { SavedSections } from '@/pipeline/assembly/sections';
 import { buildDescriptionCredits } from '@/pipeline/utils/credits';
 
@@ -17,7 +17,7 @@ import { buildDescriptionCredits } from '@/pipeline/utils/credits';
  * beats included (the same pacing assembly uses).
  */
 function chaptersFor(
-  scriptJson: { sections?: SavedSections; beat_pause_seconds?: number } | null | undefined,
+  scriptJson: { sections?: SavedSections; beat_pause_seconds?: number; pacing_from_retention?: boolean; retention?: unknown } | null | undefined,
   beats: ScriptBeatLike[],
   units: UnitTimingLike[],
   customTitles: Record<number, string>,
@@ -25,7 +25,7 @@ function chaptersFor(
 ) {
   const sections = scriptJson?.sections?.sections;
   const pacing = sections?.length
-    ? planPacing(beats.map((b) => ({ index: b.index, text: b.text ?? '' })), sections, Number(scriptJson?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC))
+    ? videoPacing(beats.map((b) => ({ index: b.index, text: b.text ?? '' })), sections, scriptJson)
     : null;
   const gapMs = pacing
     ? Object.fromEntries([...pacing].map(([i, p]) => [i, Math.round((p.leadInSec + p.tailSec) * 1000)]))

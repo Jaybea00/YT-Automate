@@ -26,6 +26,10 @@ export interface QualityReport {
   /** No check failed (warnings allowed). */
   passed: boolean;
   checks: QualityCheck[];
+  /** Where the faults are, for the automatic fixes (final-fix.ts). */
+  found?: { black: Interval[]; silence: Interval[]; videoSec: number; audioSec: number };
+  /** What the automatic fixes changed before this check ran. */
+  fixed?: Array<{ id: string; detail: string }>;
 }
 
 export interface Interval {
@@ -138,5 +142,10 @@ export async function runFinalQualityCheck(
   add('silence', 'No dead air', silence.length === 0 ? 'pass' : silence.some((s) => s.end - s.start > SILENCE_FAIL_SEC) ? 'fail' : 'warn',
     silence.length ? `silent at ${list(silence)}` : 'no long silences');
 
-  return { checkedAt: new Date().toISOString(), passed: !checks.some((c) => c.status === 'fail'), checks };
+  return {
+    checkedAt: new Date().toISOString(),
+    passed: !checks.some((c) => c.status === 'fail'),
+    checks,
+    found: { black, silence, videoSec: vDur, audioSec: aDur },
+  };
 }

@@ -77,3 +77,71 @@ export function planPacing(
   });
   return plan;
 }
+
+/** What the retention check (stage 2) saw in a beat, as pacing needs it. */
+export interface BeatInterest {
+  beat_index: number;
+  /** 1 (skippable) to 5 (can't look away). */
+  interest: number;
+  pattern_break?: boolean;
+}
+
+/** How much shorter the pause after a dull beat gets, and how much longer after a gripping one. */
+const DULL_TAIL = 0.5;
+const GRIPPING_TAIL = 1.25;
+const MAX_EXTRA_SEC = 0.3;
+
+/**
+ * Pauses tightened from the retention check: after a beat viewers would skip (interest 1-2, or a
+ * "dead beat" the check flagged) the next line comes sooner; after a gripping one (interest 5 or
+ * a turn in the story) it gets a little more room to land. Section changes keep their gaps and
+ * dips, and lead-ins are untouched (the picture still arrives before the voice).
+ */
+export function tightenFromRetention(
+  plan: Map<number, BeatPacing>,
+  retention: { marks?: BeatInterest[]; issues?: Array<{ beat_index: number; kind: string; dismissed?: boolean }> } | null | undefined,
+): { plan: Map<number, BeatPacing>; tightened: number[]; loosened: number[] } {
+  const tightened: number[] = [];
+  const loosened: number[] = [];
+  if (!retention?.marks?.length) return { plan, tightened, loosened };
+  const dead = new Set((retention.issues ?? []).filter((i) => i.kind === 'dead_beat' && !i.dismissed).map((i) => i.beat_index));
+  const marks = new Map(retention.marks.map((m) => [m.beat_index, m]));
+  const out = new Map<number, BeatPacing>();
+  const last = Math.max(...plan.keys());
+  for (const [index, p] of plan) {
+    const m = marks.get(index);
+    // Section changes and the ending keep their timing
+    if (!m || p.dipOut || index === last || p.tailSec <= 0) {
+      out.set(index, p);
+      continue;
+    }
+    if (dead.has(index) || m.interest <= 2) {
+      out.set(index, { ...p, tailSec: round(Math.max(0.08, p.tailSec * DULL_TAIL)) });
+      tightened.push(index);
+    } else if (m.interest >= 5 || m.pattern_break) {
+      out.set(index, { ...p, tailSec: round(Math.min(p.tailSec + MAX_EXTRA_SEC, p.tailSec * GRIPPING_TAIL)) });
+      loosened.push(index);
+    } else {
+      out.set(index, p);
+    }
+  }
+  return { plan: out, tightened, loosened };
+}
+
+/**
+ * The video's pacing: the script's rhythm, scaled by its pause setting, then tightened from the
+ * retention check unless that's turned off (script_json.pacing_from_retention === false). Visuals
+ * and assembly both plan with this, so composed tracks and the final cut agree.
+ */
+export function videoPacing(
+  beats: Array<{ index: number; text: string }>,
+  sections: Section[],
+  scriptJson: { beat_pause_seconds?: unknown; pacing_from_retention?: unknown; retention?: unknown } | null | undefined,
+): Map<number, BeatPacing> {
+  const base = planPacing(beats, sections, Number(scriptJson?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC));
+  if (scriptJson?.pacing_from_retention === false) return base;
+  const retention = scriptJson?.retention as (Parameters<typeof tightenFromRetention>[1] & { beatsChecked?: number }) | undefined;
+  // A check made before beats were added or removed no longer lines up with them
+  if (!retention || retention.beatsChecked !== beats.length) return base;
+  return tightenFromRetention(base, retention).plan;
+}

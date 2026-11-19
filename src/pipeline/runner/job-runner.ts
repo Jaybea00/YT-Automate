@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveForStage } from '../providers/registry';
@@ -20,7 +21,7 @@ import {
 import { isCaptionPreset, writeAssCaptionsFile } from '../assembly/captions';
 import { applyCaptionEdits } from '../assembly/caption-edits';
 import { masterFinalVideo, TARGET_LUFS } from '../assembly/master';
-import { DEFAULT_BEAT_PAUSE_SEC, planPacing, type BeatPacing } from '../assembly/pacing';
+import { DEFAULT_BEAT_PAUSE_SEC, videoPacing, type BeatPacing } from '../assembly/pacing';
 import { beatMusicExpression, readBeatSounds, withPauses, withoutMutedSfx } from '../assembly/beat-sound';
 import { overlayWindows, readOverlays, renderOverlayPngs } from '../assembly/overlays';
 import { sourceTagFor } from '../visuals/source-tags';
@@ -38,6 +39,10 @@ import { bestMusicOffset, cutsOnBeat, detectBeatGrid, MIN_CONFIDENCE, programCut
 import { accentExpression, accentTimes, ensureMusicMoments, stingPath } from '../assembly/music-accents';
 import { lookFilter } from '../assembly/look';
 import { runFinalQualityCheck, type QualityReport } from '../assembly/final-check';
+import { applyFixes, describeFixes, hasFixes, planFixes } from '../assembly/final-fix';
+import { endScreenMusicLift, endScreenSettings, renderEndScreen } from '../assembly/end-screen';
+import { encodeTally, hardwareEncoderWorks } from '../utils/video-encoder';
+import { buildRenderReport, type RenderReport } from './render-report';
 import { generateMetadata, type VideoMetadata } from '../publish/metadata';
 import { generateThumbnails, rendersDir } from '../publish/publish-assets';
 import type { Thumbnail } from '../publish/thumbnails';
@@ -386,10 +391,10 @@ export class JobRunner {
       // Pacing is built into composed tracks (no frozen frames), so it's planned before composing
       const pacing = job.video_id && plannedBeats.length
         ? withPauses(
-            planPacing(
+            videoPacing(
               plannedBeats.map((b, i) => ({ index: i, text: b.text })),
               await ensureSections({ supabase: this.supabase, videoId: job.video_id, scriptJson: videoRow!.script_json, topic: videoRow?.topic, llm }),
-              Number(videoRow?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+              videoRow?.script_json,
             ),
             readBeatSounds(videoRow?.script_json?.beat_sound),
           )
@@ -799,6 +804,8 @@ export class JobRunner {
     await this.updateStageStatus('assembly', 'running');
     // A percentage, the step and the time left for the progress page (final renders only)
     const progress = draft ? null : new AssemblyProgressTracker(progressFilePath(this.baseOutputDir));
+    // Encodes before this render, so the report counts only its own
+    const encodesBefore = { ...encodeTally() };
     await progress?.set('scenes', 0, undefined, true);
     try {
       // 1. If videoId is present, enforce assembly gate: every beat must have an asset
@@ -917,10 +924,10 @@ export class JobRunner {
       // Per-beat sound controls from Vibedit: music level, muted effects, dramatic pauses
       const beatSounds = readBeatSounds(videoRecord?.script_json?.beat_sound);
       const pacingPlan = withPauses(
-        planPacing(
+        videoPacing(
           scriptBeats.map((b, i) => ({ index: beatIndexAt(i), text: String(b.text ?? b.narration ?? '') })),
           sections,
-          Number(videoRecord?.script_json?.beat_pause_seconds ?? DEFAULT_BEAT_PAUSE_SEC),
+          videoRecord?.script_json,
         ),
         beatSounds,
       );
@@ -1320,7 +1327,32 @@ export class JobRunner {
       // The joined video is kept until the render finishes, under a fingerprint of its scenes and
       // transitions: a run stopped later (a shutdown during mastering) reuses it instead of
       // joining every scene again
-      const joinKey = await joinFingerprint(sceneClipPaths, { transition: draft ? 'cut' : transition, joins, draft });
+      // The end screen joins like one more scene after the last (full renders only), so the music
+      // carries on under it; kept between runs while its source and settings are unchanged
+      const endScreen = endScreenSettings(videoRecord?.script_json?.end_screen);
+      let endScreenPath: string | null = null;
+      if (!draft && !previewBeats && usingVideoBeats && endScreen.enabled && sceneClipPaths.length) {
+        try {
+          const lastScene = sceneClipPaths[sceneClipPaths.length - 1];
+          const theme = themeForVideo(videoRecord);
+          const st = await fs.stat(lastScene);
+          const key = crypto
+            .createHash('sha256')
+            .update(JSON.stringify({ endScreen, lastScene, size: st.size, mtime: Math.round(st.mtimeMs), font: theme.headingFont, accent: theme.accent }))
+            .digest('hex')
+            .slice(0, 12);
+          const file = path.join(tempDir, `end_screen_${key}.mp4`);
+          endScreenPath = (await fs.stat(file).then(() => true).catch(() => false))
+            ? file
+            : await renderEndScreen({ lastScenePath: lastScene, outputPath: file, settings: endScreen, theme });
+          console.log(`[Assembly] End screen: ${endScreen.seconds}s${endScreen.text ? ` ("${endScreen.text}")` : ''}`);
+        } catch (endErr) {
+          console.warn('[Assembly] End screen skipped:', endErr instanceof Error ? endErr.message.slice(0, 200) : endErr);
+        }
+      }
+      const joinClipPaths = endScreenPath ? [...sceneClipPaths, endScreenPath] : sceneClipPaths;
+      const joinsWithEnd = joins && endScreenPath ? [...joins, { type: 'fade', sec: 0.6 }] : joins;
+      const joinKey = await joinFingerprint(joinClipPaths, { transition: draft ? 'cut' : transition, joins: joinsWithEnd, draft });
       const joinCheckpoint = path.join(tempDir, draft ? 'program_joined_preview.mp4' : 'program_joined.mp4');
       const reused = await readJoinCheckpoint(joinCheckpoint, joinKey);
       let joined: Awaited<ReturnType<typeof joinSceneClips>>;
@@ -1331,9 +1363,9 @@ export class JobRunner {
         console.log('[Assembly] Reusing the joined scenes from an earlier run (same scenes and transitions)');
       } else {
         await progress?.set('join', 0, undefined, true);
-        joined = await joinSceneClips(sceneClipPaths, programPath, tempDir, {
+        joined = await joinSceneClips(joinClipPaths, programPath, tempDir, {
           transition: draft ? 'cut' : transition,
-          joins,
+          joins: joinsWithEnd,
           onProgress: (done, total) => void progress?.set('join', done / total, `step ${done} of ${total}`),
         });
         await writeJoinCheckpoint(programPath, joinCheckpoint, joinKey, joined).catch((err) =>
@@ -1354,9 +1386,14 @@ export class JobRunner {
       // Timed from how the beats were actually joined: a crossfade that fell back to cuts must
       // not leave the captions running ahead by half a second per beat.
       const clipDurationsSec = await Promise.all(sceneClipPaths.map((p) => probeClipDurationSec(p)));
+      // The end screen's join is the last overlap; it starts where the last beat's scene ends, less that overlap
+      const beatOverlapsSec = endScreenPath ? joined.overlapsSec.slice(0, -1) : joined.overlapsSec;
+      const endScreenOverlapSec = endScreenPath ? (joined.overlapsSec[joined.overlapsSec.length - 1] ?? joined.overlapSec ?? 0) : 0;
+      /** How much the end screen adds to the video's length. */
+      const endScreenMs = endScreenPath ? Math.max(0, Math.round((endScreen.seconds - endScreenOverlapSec) * 1000)) : 0;
       const beatStartMs = (
-        joined.overlapsSec.length === clipDurationsSec.length - 1
-          ? startsFromOverlaps(clipDurationsSec, joined.overlapsSec)
+        beatOverlapsSec.length === clipDurationsSec.length - 1
+          ? startsFromOverlaps(clipDurationsSec, beatOverlapsSec)
           : computeSceneStartOffsetsSec(clipDurationsSec, joined.overlapSec > 0 ? (transition === 'style' ? 'cut' : transition) : 'cut')
       ).map((s) => Math.round(s * 1000));
 
@@ -1432,9 +1469,9 @@ export class JobRunner {
           ));
         if (bgmTrack === 'story' && videoId && usingVideoBeats && sections.length > 0) {
           try {
-            const totalMs = beatStartMs.length
+            const totalMs = (beatStartMs.length
               ? beatStartMs[beatStartMs.length - 1] + Math.round(clipDurationsSec[clipDurationsSec.length - 1] * 1000)
-              : 0;
+              : 0) + endScreenMs;
             const startOf = (beat: number) => beatStartMs[sceneBeatIndexes.indexOf(beat)] ?? 0;
             const moods = await ensureMusicPlan({
               supabase: this.supabase,
@@ -1539,6 +1576,11 @@ export class JobRunner {
             })),
           );
           if (beatMusic) accentExpr = accentExpr && accentExpr !== '1' ? `${accentExpr}*${beatMusic}` : beatMusic;
+          // The music rises a little under the end screen, where no one is speaking
+          if (endScreenMs > 0) {
+            const lift = endScreenMusicLift((beatStartMs[beatStartMs.length - 1] + Math.round(clipDurationsSec[clipDurationsSec.length - 1] * 1000)) / 1000);
+            accentExpr = accentExpr && accentExpr !== '1' ? `${accentExpr}*${lift}` : lift;
+          }
           const withMusicPath = path.join(tempDir, `program_music_${Date.now()}.mp4`);
           workingFiles.push(withMusicPath);
           await applyBackgroundMusic({
@@ -1729,10 +1771,10 @@ export class JobRunner {
       // 6d. Final quality check: black frames, frozen picture, dead air, loudness, format, sync
       let qualityReport: QualityReport | null = null;
       try {
-        const editLengthMs = beatStartMs.length
+        const editLengthMs = (beatStartMs.length
           ? beatStartMs[beatStartMs.length - 1] + Math.round(clipDurationsSec[clipDurationsSec.length - 1] * 1000)
-          : 0;
-        qualityReport = await runFinalQualityCheck(finalRenderPath, {
+          : 0) + endScreenMs;
+        const checkOptions = {
           // Section changes are where the intended dips to black are
           sectionChangesSec: sections
             .slice(1)
@@ -1740,7 +1782,24 @@ export class JobRunner {
             .filter((ms): ms is number => typeof ms === 'number')
             .map((ms) => ms / 1000),
           expectedDurationSec: editLengthMs ? editLengthMs / 1000 : undefined,
-        });
+        };
+        qualityReport = await runFinalQualityCheck(finalRenderPath, checkOptions);
+        // Fix what can be fixed without changing the video's length, then check again
+        const fixes = planFixes(qualityReport);
+        if (hasFixes(fixes)) {
+          const fixedPath = finalRenderPath.replace(/\.mp4$/, '.fixed.mp4');
+          try {
+            await progress?.set('check', 0.5, 'Fixing what the check found');
+            await applyFixes(finalRenderPath, fixes, qualityReport, fixedPath);
+            const fixed = describeFixes(fixes, qualityReport);
+            await fs.rename(fixedPath, finalRenderPath);
+            qualityReport = { ...(await runFinalQualityCheck(finalRenderPath, checkOptions)), fixed };
+            console.log(`[Assembly] Fixed after the check: ${fixed.map((f) => f.detail).join(' ')}`);
+          } catch (fixErr) {
+            await fs.rm(fixedPath, { force: true }).catch(() => {});
+            console.warn('[Assembly] Automatic fixes failed; keeping the video as rendered:', fixErr instanceof Error ? fixErr.message.slice(0, 300) : fixErr);
+          }
+        }
         const issues = qualityReport.checks.filter((c) => c.status !== 'pass');
         console.log(
           `[Assembly] Quality check ${qualityReport.passed ? 'passed' : 'FAILED'}` +
@@ -1787,9 +1846,10 @@ export class JobRunner {
         const videoTimeline: VideoTimeline = {
           version: 1,
           renderedAt: new Date().toISOString(),
-          totalMs: beatStartMs.length
+          totalMs: (beatStartMs.length
             ? beatStartMs[beatStartMs.length - 1] + Math.round(clipDurationsSec[clipDurationsSec.length - 1] * 1000)
-            : 0,
+            : 0) + endScreenMs,
+          endScreenMs,
           beats: sceneBeatIndexes.map((b, pos) => ({
             index: b,
             sceneStartMs: beatStartMs[pos],
@@ -1827,6 +1887,22 @@ export class JobRunner {
           }
         }
 
+        let renderReport: RenderReport | null = null;
+        if (progress) {
+          const now = encodeTally();
+          renderReport = buildRenderReport({
+            phases: progress.timings(),
+            totalBeats: sceneBeatIndexes.length,
+            rebuiltBeats,
+            joinReused: Boolean(reused),
+            encodes: { hardware: now.hardware - encodesBefore.hardware, software: now.software - encodesBefore.software, fellBack: now.fellBack - encodesBefore.fellBack },
+            endScreenSec: endScreenMs / 1000,
+            fixed: qualityReport?.fixed?.length ?? 0,
+            hardwareAvailable: await hardwareEncoderWorks(),
+          });
+          console.log(`[Assembly] Render report: ${renderReport.notes.join(' ')}`);
+        }
+
         if (scriptBeats && scriptBeats.length > 0) {
           try {
             const chapterResult = generateYouTubeChapters({
@@ -1850,6 +1926,7 @@ export class JobRunner {
               music_credits: musicCreditLines,
               timeline: videoTimeline,
               quality_report: qualityReport,
+              render_report: renderReport,
               publish: { ...(videoRecord?.script_json?.publish ?? {}), metadata: publishMetadata, thumbnails: publishThumbnails },
             };
           } catch (chapErr) {

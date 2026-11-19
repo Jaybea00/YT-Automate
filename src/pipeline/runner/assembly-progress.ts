@@ -32,6 +32,24 @@ export interface AssemblyProgress {
   updatedAt: string;
 }
 
+export interface PhaseTiming {
+  phase: AssemblyPhase;
+  label: string;
+  sec: number;
+}
+
+/**
+ * Each step's time: from when it began to when the next began (the last to `now`). Time before
+ * the first step (loading, planning) counts toward the first.
+ */
+export function phaseTimings(startedAt: number, starts: Array<{ phase: AssemblyPhase; at: number }>, now: number): PhaseTiming[] {
+  return starts.map((s, i) => ({
+    phase: s.phase,
+    label: PHASES.find((p) => p.id === s.phase)?.label ?? s.phase,
+    sec: Math.max(0, Math.round(((starts[i + 1]?.at ?? now) - (i === 0 ? startedAt : s.at)) / 100) / 10),
+  }));
+}
+
 export const progressFilePath = (jobDir: string) => path.join(jobDir, 'progress.json');
 
 /** The overall fraction (0-1) at `fraction` of the way through `phase`. */
@@ -57,12 +75,15 @@ export class AssemblyProgressTracker {
   private startFraction: number | null = null;
   private lastWrite = 0;
   private current: { phase: AssemblyPhase; fraction: number; detail?: string } = { phase: 'scenes', fraction: 0 };
+  /** When each step began, in the order they ran (for the render report). */
+  private readonly phaseStarts: Array<{ phase: AssemblyPhase; at: number }> = [];
 
   constructor(private readonly file: string) {}
 
   /** Moves to `fraction` (0-1) of `phase`; written at most every couple of seconds unless `force`. */
   async set(phase: AssemblyPhase, fraction: number, detail?: string, force = false): Promise<void> {
     this.current = { phase, fraction, detail };
+    if (!this.phaseStarts.some((p) => p.phase === phase)) this.phaseStarts.push({ phase, at: Date.now() });
     const done = overallFraction(phase, fraction);
     // The first report fixes where this run began (a resumed run starts past its reused scenes)
     if (this.startFraction === null && (phase !== 'scenes' || fraction > 0)) this.startFraction = done;
@@ -87,6 +108,11 @@ export class AssemblyProgressTracker {
   /** Re-writes the current position (keeps "updated" fresh during a long single step). */
   async touch(): Promise<void> {
     await this.set(this.current.phase, this.current.fraction, this.current.detail, true);
+  }
+
+  /** How long each step took so far, in the order they ran. */
+  timings(now = Date.now()): PhaseTiming[] {
+    return phaseTimings(this.started, this.phaseStarts, now);
   }
 
   async clear(): Promise<void> {

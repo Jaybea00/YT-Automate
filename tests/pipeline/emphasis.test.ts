@@ -8,6 +8,8 @@ import * as path from 'node:path';
 import {
   buildEmphasisPrompt,
   emphasisGraph,
+  emphasisInputs,
+  EMPHASIS_SOURCE,
   freezeWindows,
   letterboxFilter,
   LETTERBOX_PX,
@@ -81,12 +83,22 @@ describe('Emphasis effects', () => {
 
   it('builds one overlay per effect, and nothing when there are none', () => {
     assert.equal(emphasisGraph({ shakes: [], zooms: [], freezes: [] }, 1), '[vin]null[vfx]');
-    const g = emphasisGraph({ shakes: [{ atSec: 4 }], zooms: [{ atSec: 8 }], freezes: [{ atSec: 12, durSec: 2, titlePng: 'x.png' }] }, 1);
-    assert.match(g, /^\[vin\]split=4\[m0\]\[w0\]\[w1\]\[w2\]/);
+    const w = { shakes: [{ atSec: 4 }], zooms: [{ atSec: 8 }], freezes: [{ atSec: 12, durSec: 2, titlePng: 'x.png' }] };
+    const g = emphasisGraph(w, 1);
+    // Each effect reads its own stretch: splitting the main picture held every frame before a late effect in memory
+    assert.doesNotMatch(g, /split/);
+    assert.deepEqual(emphasisInputs(w), [
+      '-ss', '4.000', '-t', '0.700', '-i', EMPHASIS_SOURCE,
+      '-ss', '8.000', '-t', '0.800', '-i', EMPHASIS_SOURCE,
+      '-ss', '12.000', '-t', '0.500', '-i', EMPHASIS_SOURCE,
+      '-loop', '1', '-framerate', '30', '-t', '2.200', '-i', 'x.png',
+    ]);
+    assert.match(g, /^\[1:v\]scale=out_range=tv,trim=duration=0\.500/);
+    assert.match(g, /\[vin\]\[o0\]overlay=eof_action=pass:enable='between\(t,4\.000,4\.500\)'\[m1\]/);
     assert.match(g, /crop=w=iw-28:h=ih-28/);
     assert.match(g, /zoompan=z=/);
     assert.match(g, /loop=loop=59:size=1/);
-    assert.match(g, /\[f2\]\[1:v\]overlay=shortest=1/);
+    assert.match(g, /\[3:v\]scale=out_range=tv,trim=end_frame=1.*\[f2\];\[f2\]\[4:v\]overlay=shortest=1/);
     assert.match(g, /\[m2\]\[o2\]overlay=eof_action=pass:enable='between\(t,12\.000,14\.000\)'\[vfx\]$/);
     assert.equal(letterboxFilter(0), null);
     assert.match(letterboxFilter(LETTERBOX_PX)!, /drawbox=x=0:y=ih-60:w=iw:h=60/);
@@ -156,7 +168,7 @@ describe('Emphasis effects', () => {
       await masterFinalVideo({
         inputPath: program,
         outputPath: out,
-        emphasis: { graph: emphasisGraph(windows, 1), inputs: ['-loop', '1', '-i', title], letterbox: letterboxFilter(LETTERBOX_PX) },
+        emphasis: { graph: emphasisGraph(windows, 1), inputs: emphasisInputs(windows), letterbox: letterboxFilter(LETTERBOX_PX) },
       });
       const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', out]);
       assert.ok(Math.abs(Number(stdout.trim()) - 8) < 0.2, `length kept, got ${stdout.trim()}`);
