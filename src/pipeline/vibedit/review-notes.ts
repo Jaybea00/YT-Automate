@@ -13,6 +13,11 @@ export interface ReviewNote {
   text: string;
   createdAt: string;
   resolved: boolean;
+  /** Left by the AI watch-through (watch-through.ts) rather than the creator. */
+  source?: 'ai';
+  /** For AI notes: what kind of problem, and how much it matters. */
+  kind?: string;
+  severity?: 'high' | 'medium' | 'low';
 }
 
 async function load(supabase: SupabaseClient, videoId: string) {
@@ -66,4 +71,30 @@ export async function updateReviewNote(supabase: SupabaseClient, videoId: string
 export async function deleteReviewNote(supabase: SupabaseClient, videoId: string, id: string): Promise<ReviewNote[]> {
   const { sj, notes } = await load(supabase, videoId);
   return save(supabase, videoId, sj, notes.filter((n) => n.id !== id));
+}
+
+/**
+ * Puts a new AI watch-through's notes in place of the last one's open notes. The creator's own
+ * notes, and AI notes already ticked off, stay.
+ */
+export async function replaceAiNotes(
+  supabase: SupabaseClient,
+  videoId: string,
+  fresh: Array<Pick<ReviewNote, 'atSec' | 'beat' | 'text' | 'kind' | 'severity'>>,
+): Promise<ReviewNote[]> {
+  const { sj, notes } = await load(supabase, videoId);
+  const kept = notes.filter((n) => n.source !== 'ai' || n.resolved);
+  const now = new Date().toISOString();
+  const added: ReviewNote[] = fresh.map((n, i) => ({
+    id: `ai${Date.now()}${i}${Math.random().toString(36).slice(2, 5)}`,
+    atSec: Math.round(n.atSec * 10) / 10,
+    beat: n.beat,
+    text: n.text.slice(0, 500),
+    createdAt: now,
+    resolved: false,
+    source: 'ai',
+    ...(n.kind ? { kind: n.kind } : {}),
+    ...(n.severity ? { severity: n.severity } : {}),
+  }));
+  return save(supabase, videoId, sj, [...kept, ...added].slice(0, 300));
 }

@@ -184,13 +184,26 @@ export class GeminiLlmProvider implements LLMProvider {
   }
 
   async generateJson<T>(
-    req: { system?: string; prompt: string; schema: ZodType<T>; maxTokens?: number; images?: LlmImage[] },
+    req: {
+      system?: string;
+      prompt: string;
+      schema: ZodType<T>;
+      maxTokens?: number;
+      images?: LlmImage[];
+      /** Files already uploaded to Gemini's file store (a video to watch), sent before the prompt. */
+      files?: Array<{ mimeType: string; uri: string }>;
+    },
     ctx: ProviderCallContext,
   ): Promise<{ data: T; usage: Usage }> {
     // Images follow the prompt as inline parts, in the order the prompt numbers them
-    const content = req.images?.length
-      ? [{ text: req.prompt }, ...req.images.map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } }))]
-      : req.prompt;
+    const content =
+      req.images?.length || req.files?.length
+        ? [
+            ...(req.files ?? []).map((f) => ({ fileData: { mimeType: f.mimeType, fileUri: f.uri } })),
+            { text: req.prompt },
+            ...(req.images ?? []).map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
+          ]
+        : req.prompt;
     const primaryModel = ctx.model || 'gemini-3.5-flash-lite';
     const modelsToTry = modelFallbackOrder(primaryModel);
 
