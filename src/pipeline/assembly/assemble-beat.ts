@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg';
+import { withEncoder } from '../utils/video-encoder';
 import { xfadeTransitionOption } from './custom-transitions';
 
 const execFileAsync = promisify(execFile);
@@ -494,21 +495,23 @@ async function xfadeClips(clipPaths: string[], durations: number[], transSec: nu
     prevA = outA;
     offset += durations[i] - transSec;
   }
-  await execFileAsync(
-    getFfmpegPath(),
-    [
-      '-y',
-      ...joinInputArgs(clipPaths),
-      '-filter_complex',
-      [...vFilters, ...aFilters].join(';'),
-      '-map', '[vout]',
-      '-map', '[aout]',
-      ...SCENE_VIDEO_ENCODE,
-      '-r', '30',
-      ...SCENE_AUDIO_ENCODE,
-      outputPath,
-    ],
-    { maxBuffer: 16 * 1024 * 1024 },
+  await withEncoder('join', (videoArgs) =>
+    execFileAsync(
+      getFfmpegPath(),
+      [
+        '-y',
+        ...joinInputArgs(clipPaths),
+        '-filter_complex',
+        [...vFilters, ...aFilters].join(';'),
+        '-map', '[vout]',
+        '-map', '[aout]',
+        ...videoArgs,
+        '-r', '30',
+        ...SCENE_AUDIO_ENCODE,
+        outputPath,
+      ],
+      { maxBuffer: 16 * 1024 * 1024 },
+    ),
   );
 }
 
@@ -591,10 +594,12 @@ async function joinMixedClips(clipPaths: string[], durations: number[], joins: A
   const scriptPath = `${outputPath}.join-graph.txt`;
   await fs.writeFile(scriptPath, filters.join(';\n'), 'utf-8');
   try {
-    await execFileAsync(
-      getFfmpegPath(),
-      ['-y', ...joinInputArgs(clipPaths), '-/filter_complex', scriptPath, '-map', '[vout]', '-map', '[aout]', ...SCENE_VIDEO_ENCODE, '-r', '30', ...SCENE_AUDIO_ENCODE, outputPath],
-      { maxBuffer: 16 * 1024 * 1024 },
+    await withEncoder('join', (videoArgs) =>
+      execFileAsync(
+        getFfmpegPath(),
+        ['-y', ...joinInputArgs(clipPaths), '-/filter_complex', scriptPath, '-map', '[vout]', '-map', '[aout]', ...videoArgs, '-r', '30', ...SCENE_AUDIO_ENCODE, outputPath],
+        { maxBuffer: 16 * 1024 * 1024 },
+      ),
     );
   } finally {
     await fs.unlink(scriptPath).catch(() => {});

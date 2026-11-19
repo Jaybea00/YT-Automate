@@ -4,6 +4,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg';
 import { overlayInputs, overlaysGraph } from './overlays';
+import { EMPHASIS_SOURCE } from './emphasis';
+import { encodeArgs, withEncoder } from '../utils/video-encoder';
 
 const execFileAsync = promisify(execFile);
 
@@ -20,7 +22,7 @@ const TARGET_LRA = 11;
 const END_FADE_SEC = 0.8;
 
 /** Delivery picture: high quality for YouTube's re-encode, at a speed this machine can manage. */
-export const MASTER_VIDEO_ENCODE = ['-c:v', 'libx264', '-preset', 'faster', '-crf', '18', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-movflags', '+faststart'];
+export const MASTER_VIDEO_ENCODE = encodeArgs('master', 'software');
 const MASTER_AUDIO_ENCODE = ['-c:a', 'aac', '-b:a', '256k', '-ar', '48000', '-ac', '2'];
 
 export interface LoudnessMeasurement {
@@ -101,7 +103,7 @@ export interface MasterOptions {
  */
 export async function masterFinalVideo(options: MasterOptions): Promise<{ outputPath: string; measured: LoudnessMeasurement }> {
   const { inputPath, outputPath, assPath, lookFilter, emphasis, draft, overlays } = options;
-  const videoEncode = draft ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-color_range', 'tv', '-movflags', '+faststart'] : MASTER_VIDEO_ENCODE;
+  const VIDEO_ENCODE = '@video-encode';
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const measured = await measureLoudness(inputPath);
   const total = await durationSec(inputPath);
@@ -129,24 +131,29 @@ export async function masterFinalVideo(options: MasterOptions): Promise<{ output
       `[vov]${[...effects, 'format=yuv420p'].join(',')}[vout]`,
     ].join(';');
     args.push(
-      ...(hasEmphasis ? emphasis!.inputs : []),
+      // Each effect reads its own stretch of this same video
+      ...(hasEmphasis ? emphasis!.inputs.map((x) => (x === EMPHASIS_SOURCE ? path.resolve(inputPath) : x)) : []),
       ...(hasOverlays ? overlayInputs(overlays!.windows, overlays!.pngs) : []),
       '-filter_complex',
       graph,
       '-map', '[vout]', '-map', '0:a:0',
-      ...videoEncode,
+      VIDEO_ENCODE,
     );
   } else if (effects.length || needsRange) {
-    args.push('-vf', ['scale=out_range=tv', ...effects, 'format=yuv420p'].join(','), ...videoEncode);
+    args.push('-vf', ['scale=out_range=tv', ...effects, 'format=yuv420p'].join(','), VIDEO_ENCODE);
   } else {
     args.push('-c:v', 'copy', '-movflags', '+faststart');
   }
   if (options.progressFile) args.push('-progress', path.resolve(options.progressFile), '-nostats');
   args.push('-af', af, ...MASTER_AUDIO_ENCODE, path.resolve(outputPath));
 
-  await execFileAsync(getFfmpegPath(), args, {
-    cwd: assPath ? path.dirname(path.resolve(assPath)) : undefined,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const exec = (videoArgs: string[]) =>
+    execFileAsync(getFfmpegPath(), args.flatMap((a) => (a === VIDEO_ENCODE ? videoArgs : [a])), {
+      cwd: assPath ? path.dirname(path.resolve(assPath)) : undefined,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  // The picture is only encoded when something is drawn on it; otherwise it is copied
+  if (args.includes(VIDEO_ENCODE)) await withEncoder(draft ? 'draft' : 'master', exec);
+  else await exec([]);
   return { outputPath, measured };
 }

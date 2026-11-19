@@ -150,22 +150,49 @@ export function freezeWindows(
 
 const n3 = (x: number) => x.toFixed(3);
 
-/**
- * The emphasis part of the mastering graph: reads [vin], writes [vfx]. Each effect is a short
- * stretch cut from the picture, changed, and laid back over the same moment, so only those
- * seconds are touched. Freeze titles are extra inputs starting at `firstInput`.
- */
-export function emphasisGraph(w: Omit<EmphasisWindows, 'letterboxPx'>, firstInput: number, size = { w: FRAME_WIDTH, h: FRAME_HEIGHT }, fps = FPS): string {
-  const windows = [
+/** Stands for the video being mastered in emphasis inputs; masterFinalVideo puts in its path. */
+export const EMPHASIS_SOURCE = '@program';
+
+type EmphasisWindow = { kind: 'shake' | 'zoom' | 'freeze'; at: number; dur: number; titlePng?: string };
+
+function windowsOf(w: Omit<EmphasisWindows, 'letterboxPx'>): EmphasisWindow[] {
+  return [
     ...w.shakes.map((s) => ({ kind: 'shake' as const, at: s.atSec, dur: SHAKE_SEC })),
     ...w.zooms.map((z) => ({ kind: 'zoom' as const, at: z.atSec, dur: ZOOM_SEC })),
-    ...w.freezes.map((f, i) => ({ kind: 'freeze' as const, at: f.atSec, dur: f.durSec, png: firstInput + i })),
+    ...w.freezes.map((f) => ({ kind: 'freeze' as const, at: f.atSec, dur: f.durSec, titlePng: f.titlePng })),
   ].filter((x) => x.at >= 0 && x.dur > 0);
+}
+
+/**
+ * The extra ffmpeg inputs the emphasis graph reads, in its order: for each effect, just its own
+ * seconds of the video (EMPHASIS_SOURCE, seeked), and for a freeze its title, held for the freeze.
+ *
+ * Each effect reads its stretch as a separate input rather than splitting the main picture:
+ * a split branch for an effect late in the video made ffmpeg hold every frame before it in memory
+ * (10 GB for a 10-minute video, which failed the master).
+ */
+export function emphasisInputs(w: Omit<EmphasisWindows, 'letterboxPx'>): string[] {
+  return windowsOf(w).flatMap((x) => [
+    '-ss', n3(x.at), '-t', n3(x.kind === 'freeze' ? 0.5 : x.dur + 0.2), '-i', EMPHASIS_SOURCE,
+    ...(x.kind === 'freeze' ? ['-loop', '1', '-framerate', String(FPS), '-t', n3(x.dur + 0.2), '-i', x.titlePng!] : []),
+  ]);
+}
+
+/**
+ * The emphasis part of the mastering graph: reads [vin], writes [vfx]. Each effect is its own
+ * stretch of the picture (see emphasisInputs, from `firstInput`), changed, and laid back over the
+ * same moment, so only those seconds are touched.
+ */
+export function emphasisGraph(w: Omit<EmphasisWindows, 'letterboxPx'>, firstInput: number, size = { w: FRAME_WIDTH, h: FRAME_HEIGHT }, fps = FPS): string {
+  const windows = windowsOf(w);
   if (windows.length === 0) return '[vin]null[vfx]';
 
-  const parts = [`[vin]split=${windows.length + 1}[m0]${windows.map((_, i) => `[w${i}]`).join('')}`];
+  const parts: string[] = [];
+  let input = firstInput;
   windows.forEach((x, i) => {
-    const cut = `[w${i}]trim=start=${n3(x.at)}:end=${n3(x.at + x.dur)},setpts=PTS-STARTPTS`;
+    const clip = input++;
+    // The stretch starts at 0 (seeked input); same colour range as the main picture
+    const cut = `[${clip}:v]scale=out_range=tv,trim=duration=${n3(x.dur)},setpts=PTS-STARTPTS`;
     const back = `setpts=PTS+${n3(x.at)}/TB`;
     if (x.kind === 'shake') {
       // A jolt that settles: the picture shifts inside a slightly tighter crop, decaying fast
@@ -182,15 +209,17 @@ export function emphasisGraph(w: Omit<EmphasisWindows, 'letterboxPx'>, firstInpu
     } else {
       // One frame held, slightly desaturated, flashing in from white, with the title over it
       const frames = Math.max(1, Math.round(x.dur * fps));
+      const png = input++;
       parts.push(
-        `[w${i}]trim=start=${n3(x.at)}:end=${n3(x.at + 1 / fps)},setpts=PTS-STARTPTS,loop=loop=${frames - 1}:size=1:start=0,setpts=N/${fps}/TB,eq=saturation=0.7,fade=t=in:st=0:d=0.25:color=white[f${i}]`,
-        `[f${i}][${x.png}:v]overlay=shortest=1,${back}[o${i}]`,
+        `[${clip}:v]scale=out_range=tv,trim=end_frame=1,setpts=PTS-STARTPTS,loop=loop=${frames - 1}:size=1:start=0,setpts=N/${fps}/TB,eq=saturation=0.7,fade=t=in:st=0:d=0.25:color=white[f${i}]`,
+        `[f${i}][${png}:v]overlay=shortest=1,${back}[o${i}]`,
       );
     }
   });
   windows.forEach((x, i) => {
+    const from = i === 0 ? '[vin]' : `[m${i}]`;
     const out = i === windows.length - 1 ? '[vfx]' : `[m${i + 1}]`;
-    parts.push(`[m${i}][o${i}]overlay=eof_action=pass:enable='between(t,${n3(x.at)},${n3(x.at + x.dur)})'${out}`);
+    parts.push(`${from}[o${i}]overlay=eof_action=pass:enable='between(t,${n3(x.at)},${n3(x.at + x.dur)})'${out}`);
   });
   return parts.join(';');
 }
@@ -247,7 +276,7 @@ export async function prepareEmphasis(options: {
   if (graph === '[vin]null[vfx]' && !letterbox) return null;
   return {
     graph,
-    inputs: freezes.flatMap((f) => ['-loop', '1', '-i', f.titlePng]),
+    inputs: emphasisInputs(windows),
     letterbox,
     summary: `${windows.shakes.length} shake(s), ${freezes.length} freeze-frame(s), ${windows.zooms.length} chapter zoom(s)${letterbox ? ', letterbox' : ''}`,
   };

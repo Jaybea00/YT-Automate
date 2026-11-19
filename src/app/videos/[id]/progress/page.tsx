@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { formatDuration, type RenderReport } from '@/pipeline/runner/render-report';
 
 interface VideoData {
   id: string;
@@ -327,8 +328,14 @@ export default function PipelineProgressPage() {
           : `Rebuilt ${rebuilt.length} of ${total} beats (${rebuilt.map((b) => b + 1).join(', ')}); the rest reused.`
       : null;
   const qualityReport = video?.script_json?.quality_report as
-    | { passed: boolean; checkedAt: string; checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }> }
+    | {
+        passed: boolean;
+        checkedAt: string;
+        checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }>;
+        fixed?: Array<{ id: string; detail: string }>;
+      }
     | undefined;
+  const renderReport = video?.script_json?.render_report as RenderReport | undefined;
   const job = data?.job;
   const stages = data?.stages || [];
   const units = data?.units || [];
@@ -871,9 +878,43 @@ export default function PipelineProgressPage() {
                 </li>
               ))}
             </ul>
+            {qualityReport.fixed && qualityReport.fixed.length > 0 && (
+              <div className="rounded-xl border border-sky-900 bg-sky-950/40 p-3 space-y-1">
+                <p className="text-xs font-semibold text-sky-300">Fixed automatically before this check</p>
+                {qualityReport.fixed.map((f) => (
+                  <p key={f.id} className="text-xs text-zinc-300">{f.detail}</p>
+                ))}
+              </div>
+            )}
             <p className="text-[11px] text-zinc-500">
               Checked {new Date(qualityReport.checkedAt).toLocaleString()}. Intended dips at chapter changes and the closing fade are not flagged.
             </p>
+          </div>
+        )}
+        {renderReport && renderReport.phases.length > 0 && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-white">Render Report</h2>
+              <span className="text-xs text-zinc-400">{formatDuration(renderReport.totalSec)} in all</span>
+            </div>
+            <div className="space-y-1.5">
+              {renderReport.phases.map((p) => (
+                <div key={p.phase} className="flex items-center gap-3 text-xs">
+                  <span className="w-56 shrink-0 text-zinc-300">{p.label}</span>
+                  <div className="flex-1 h-2 rounded bg-zinc-800 overflow-hidden">
+                    <div className="h-full bg-indigo-500" style={{ width: `${renderReport.totalSec ? Math.max(1, (p.sec / renderReport.totalSec) * 100) : 0}%` }} />
+                  </div>
+                  <span className="w-16 text-right text-zinc-400 tabular-nums">{formatDuration(p.sec)}</span>
+                </div>
+              ))}
+            </div>
+            <ul className="space-y-1 text-xs text-zinc-400 list-disc pl-4">
+              {renderReport.notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+              {renderReport.endScreenSec > 0 && <li>End screen: {Math.round(renderReport.endScreenSec)}s after the last line.</li>}
+            </ul>
+            <p className="text-[11px] text-zinc-500">Rendered {new Date(renderReport.renderedAt).toLocaleString()}.</p>
           </div>
         )}
 

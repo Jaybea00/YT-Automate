@@ -28,6 +28,8 @@ export interface VideoTimeline {
   stems?: { music?: string | null; sfx?: string | null };
   /** Which beats this render built afresh; every other beat reused its scene from an earlier render. */
   rebuiltBeats?: number[];
+  /** The end screen after the last beat (YouTube's end-screen boxes go here); included in totalMs. */
+  endScreenMs?: number;
 }
 
 export function readTimeline(scriptJson: unknown): VideoTimeline | null {
