@@ -56,6 +56,9 @@ import { AssemblyProgressTracker, followFfmpegProgress, progressFilePath } from 
 import { clearJoinCheckpoint, joinFingerprint, readJoinCheckpoint, writeJoinCheckpoint } from '../assembly/join-checkpoint';
 import { packForVideo } from '@/lib/styles/compose';
 import { drawingCode } from '@/lib/stickman/drawing-codes';
+import { loadFootageUsage, recordFootageUse, usedElsewhere } from '@/pipeline/visuals/footage-usage';
+import { isGameTopic, loadMomentFootage } from '@/pipeline/visuals/moments-footage';
+import { videoFootageSources } from '@/pipeline/visuals/storyboard';
 
 export const ScriptSceneSchema = z.object({
   scene_number: z.number(),
@@ -392,8 +395,15 @@ export class JobRunner {
           )
         : new Map<number, BeatPacing>();
       const archiveLookOn = videoRow?.script_json?.archive_look !== 'off';
+      // Footage the channel already showed in other videos is used last (footage-usage.ts)
+      const footageUsage = await loadFootageUsage();
       const sharedRenderState = {
         usedSources: new Set<string>(),
+        // The local first look ranks footage for free and fills shots while the vision check is down
+        ...(process.env.CLIP_LOCAL_LOOK !== 'false' ? { localLook: true } : {}),
+        usedElsewhere: (key: string) => usedElsewhere(footageUsage, key, job.video_id),
+        // Hunted gameplay as footage, for videos about a game
+        ...(isGameTopic(videoRow?.topic) ? { moments: await loadMomentFootage() } : {}),
         motionCounter: { next: 0 },
         ...(archiveLookOn ? { archiveLook: { count: { next: 0 } } } : {}),
         ...(packForVideo(videoRow)?.photoLook === 'collage' ? { collage: { count: { next: 0 } } } : {}),
@@ -562,6 +572,13 @@ export class JobRunner {
         if (rhythm) {
           console.log(`[Visuals] Visual rhythm ${rhythm.score}/100 (${rhythm.risk} slideshow risk): ${rhythm.issues.length} issue(s)`);
         }
+      }
+
+      if (job.video_id) {
+        // What this video shows, so later videos prefer fresh footage (never fails the stage)
+        await videoFootageSources(this.supabase, job.video_id)
+          .then((sources) => recordFootageUse(job.video_id!, sources))
+          .catch((err) => console.warn('[Visuals] Could not record the footage used:', err instanceof Error ? err.message : err));
       }
 
       await this.updateStageStatus('visuals', 'done');

@@ -8,6 +8,9 @@ import { searchWikimediaCommons } from '../providers/stock/wikimedia';
 import { searchUnsplash } from '../providers/stock/unsplash';
 import type { LLMProvider, LlmImage, ProviderCallContext, StockProvider } from '../providers/types';
 import { isUnusableLicense } from '../utils/media-upload';
+import { LOCAL_MATCH, localRank, lookText, shortlist, similarityToScore, type LocalScore } from './local-look';
+import { searchMoments, type MomentFootage } from './moments-footage';
+import { freshnessAdjusted } from './footage-usage';
 import type { MediaCandidate } from './types';
 
 /**
@@ -120,6 +123,8 @@ export interface GatherOptions {
   queries?: string[];
   /** Creative Commons YouTube footage may fill in when moving footage is thin (youtube-cc.ts). */
   youtubeCc?: boolean;
+  /** Hunted moments and link clips to search too (videos about a game only; moments-footage.ts). */
+  moments?: MomentFootage[];
 }
 
 /**
@@ -195,6 +200,8 @@ export async function gatherCandidates(options: GatherOptions): Promise<MediaCan
   const variants = queryVariants(shot.visual_query);
   // The creator's own library comes first: their footage, when it fits, beats anyone's
   add(searchLibrary(`${shot.visual_query} ${shot.covers ?? ''}`, await listLibrary().catch(() => [])), 3);
+  // Then their hunted gameplay, for videos about a game
+  if (options.moments?.length) add(searchMoments(`${shot.visual_query} ${shot.covers ?? ''}`, options.moments), out.length + 3);
   // NASA's public-domain film and photos, first in line for space subjects
   if (SPACE_SUBJECT.test(`${shot.visual_query} ${shot.covers ?? ''}`)) {
     const nasa = await safe(searchNasa(variants[0] ?? shot.visual_query, { limit: 6 }));
@@ -409,6 +416,10 @@ search_suggestions: two short stock-library searches (2 to 3 plain words each) f
 export interface PickFootageOptions extends GatherOptions {
   llmProvider?: LLMProvider;
   llmCtx?: ProviderCallContext;
+  /** Rank candidates with the local model first (local-look.ts): the vision check sees only the best few. */
+  localLook?: boolean;
+  /** How many other videos on the channel already used a source (footage-usage.ts), to prefer fresh footage. */
+  usedElsewhere?: (sourceKey: string) => number;
   /** Overrides VISION_RETRY_DELAYS_MS (tests). */
   retryDelaysMs?: number[];
   /** Overrides the Creative Commons YouTube search (tests). */
@@ -420,11 +431,44 @@ export interface PickFootageOptions extends GatherOptions {
  * returned (possibly none); without it, every candidate in heuristic order.
  */
 export async function pickFootage(options: PickFootageOptions): Promise<FootagePick> {
-  const candidates = await gatherCandidates(options);
+  const pick = await pickFootageUnordered(options);
+  return { ...pick, ranked: preferFresh(pick.ranked, options.usedElsewhere) };
+}
+
+/**
+ * Footage the channel hasn't shown yet comes first among candidates that fit equally well (a
+ * reused clip is still used when it's clearly the best or the only fit).
+ */
+export function preferFresh(ranked: RankedCandidate[], usedElsewhere?: (key: string) => number): RankedCandidate[] {
+  if (!usedElsewhere || ranked.length < 2) return ranked;
+  const adjusted = ranked.map((r, i) => ({ r, i, sortScore: freshnessAdjusted(r.score, usedElsewhere(candidateKey(r.candidate))) }));
+  return adjusted.sort((a, b) => b.sortScore - a.sortScore || a.i - b.i).map((x) => x.r);
+}
+
+/** The local model's picks on the vision check's scale, for when that check can't run. */
+function localPicks(local: LocalScore[]): RankedCandidate[] {
+  return local
+    .filter((s) => s.similarity >= LOCAL_MATCH)
+    .map((s) => ({ candidate: s.candidate, score: similarityToScore(s.similarity), reason: `local look ${s.similarity.toFixed(3)}` }));
+}
+
+async function pickFootageUnordered(options: PickFootageOptions): Promise<FootagePick> {
+  const allCandidates = await gatherCandidates(options);
   const llm = options.llmProvider;
   const ctx = options.llmCtx;
+  // The local first look ranks every candidate for free; the vision check then sees only the best few
+  let local: LocalScore[] | null = null;
+  if (options.localLook && allCandidates.length > 1) {
+    try {
+      local = await localRank(lookText(options.shot.visual_query, options.shot.covers), allCandidates);
+    } catch (err) {
+      console.warn(`[FootagePicker] Local look unavailable (${err instanceof Error ? err.message.slice(0, 120) : err}); judging every candidate`);
+    }
+  }
+  const candidates = local ? shortlist(local) : allCandidates;
   if (!llm?.supportsVision || !ctx) {
-    // No vision model configured at all: title matching is the only ranking there is
+    // No vision model configured: the local look when it ran, else title matching
+    if (local) return { ranked: localPicks(local), checked: false };
     return { ranked: heuristicRank(options.shot, candidates), checked: false };
   }
   const retry = <T>(fn: () => Promise<T>) => withVisionRetries(fn, options.retryDelaysMs);
@@ -447,19 +491,21 @@ export async function pickFootage(options: PickFootageOptions): Promise<FootageP
     const ranked = first.ranked.filter((r) => r.score >= MIN_RELEVANCE);
     if (ranked.length > 0) return { ranked, checked: true };
     // Nothing showed the shot: one more try, searching for its main subject
-    const seen = new Set([...(options.exclude ?? []), ...candidates.map(candidateKey)]);
+    const seen = new Set([...(options.exclude ?? []), ...allCandidates.map(candidateKey)]);
     const broad = await gatherCandidates({ ...options, exclude: seen, broad: true, queries: first.suggestions });
-    if (broad.length === 0) return await lastChance(candidates, first.suggestions);
+    if (broad.length === 0) return await lastChance(allCandidates, first.suggestions);
     const second = await retry(() => visionRank(options.shot, broad, llm, ctx));
     const relevant = second.filter((r) => r.score >= MIN_RELEVANCE);
     if (relevant.length > 0) return { ranked: relevant, checked: true };
-    return await lastChance([...candidates, ...broad], first.suggestions);
+    return await lastChance([...allCandidates, ...broad], first.suggestions);
   } catch (err) {
     // Never fall back to title matching here: it put a bus on screen for "Golden Boy award" and a
     // car for "Inter Milan". The shot is left for a later check instead.
     const reason = err instanceof Error ? err.message.slice(0, 200) : String(err);
-    console.warn(`[FootagePicker] Relevance check unavailable (${reason}); the shot is marked "needs check"`);
-    return { ranked: [], checked: false, unavailable: reason };
+    // The local look's clear matches fill the shot meanwhile; it stays marked "needs check"
+    const fallback = local ? localPicks(local) : [];
+    console.warn(`[FootagePicker] Relevance check unavailable (${reason}); ${fallback.length ? 'using the best local match' : 'nothing picked'}, the shot is marked "needs check"`);
+    return { ranked: fallback, checked: false, unavailable: reason, ...(fallback.length ? { localOnly: true } : {}) };
   }
 }
 
@@ -467,8 +513,10 @@ export interface FootagePick {
   ranked: RankedCandidate[];
   /** True when the vision model judged the candidates (only relevant ones are returned). */
   checked: boolean;
-  /** Set when a vision model is configured but couldn't be reached: nothing was picked, so the shot needs a later check. */
+  /** Set when a vision model is configured but couldn't be reached: the shot needs a later check. */
   unavailable?: string;
+  /** The picks are the local look's (the vision check couldn't run): used, but checked later. */
+  localOnly?: boolean;
 }
 
 // --------------------------------------------------------------------------
