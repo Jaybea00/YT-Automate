@@ -89,6 +89,7 @@ export default function HuntsPage() {
           <div className="flex gap-4 text-sm text-zinc-500">
             <Link href="/" className="hover:text-zinc-300">← Home</Link>
             <Link href="/clips" className="hover:text-zinc-300">✂️ Clip to Short</Link>
+            <Link href="/moments" className="hover:text-zinc-300">🎞️ Compilations</Link>
           </div>
           <h1 className="text-2xl font-bold mt-1">🎯 Stream Hunter</h1>
           <p className="text-sm text-zinc-400 mt-1">

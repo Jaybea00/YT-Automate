@@ -108,6 +108,12 @@ export default function PipelineDashboard() {
               <span>🎯 Stream Hunter</span>
             </Link>
             <Link
+              href="/moments"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
+            >
+              <span>🎞️ Compilations</span>
+            </Link>
+            <Link
               href="/library"
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
             >
