@@ -14,6 +14,8 @@ import { PronunciationPanel } from './pronunciation-panel';
 import { AdCheckPanel, BeatAdIssues } from './ad-check-panel';
 import { PackagingSummary } from './packaging-card';
 import type { AdCheckReport } from '@/lib/script/ad-check-issues';
+import { BeatRetentionIssues, RetentionPanel } from './retention-panel';
+import type { RetentionReport } from '@/lib/script/retention-types';
 import { BeatShots, ShotPlanSummary } from './shots-panel';
 import { DrawingsPanel } from '../drawings-panel';
 import { packForVideo } from '@/lib/styles/compose';
@@ -212,6 +214,16 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
   function setAdCheck(report: AdCheckReport) {
     setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, ad_check: report } } : v));
+  }
+
+  function setRetention(report: RetentionReport) {
+    setVideo((v) => (v && v.script_json ? { ...v, script_json: { ...v.script_json, retention: report } } : v));
+  }
+
+  /** Uses a suggested rewrite of a beat's narration, keeping the old text for undo. */
+  function applyRewrittenText(index: number, text: string) {
+    const beat = editableBeats[index];
+    if (beat) applyBeatReplacement(index, { ...beat, text });
   }
 
   // Handle Beat Text Edit (re-evaluates the "needs check" flag against the research dossier)
@@ -1064,6 +1076,13 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
               <ResearchPanel research={video.script_json.research} beats={editableBeats} />
               <FactCheckPanel videoId={id} report={video.script_json.fact_check} beats={editableBeats} onReport={setFactCheck} />
               <AdCheckPanel videoId={id} report={video.script_json.ad_check} beats={editableBeats} onReport={setAdCheck} />
+              <RetentionPanel
+                videoId={id}
+                report={video.script_json.retention}
+                beats={editableBeats}
+                onReport={setRetention}
+                onUseAll={(fixes) => fixes.forEach((f) => applyRewrittenText(f.beatIndex, f.text))}
+              />
               <PronunciationPanel
                 key={video.script_json.pronunciation_hints?.checkedAt ?? 'none'}
                 videoId={id}
@@ -1267,6 +1286,14 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
                         report={video.script_json?.ad_check}
                         onReport={setAdCheck}
                         onUseSuggestion={(text) => handleBeatTextChange(beat.index, text)}
+                        onRewrite={(instruction) => openRewrite(idx, instruction)}
+                      />
+                      <BeatRetentionIssues
+                        videoId={id}
+                        beat={beat}
+                        report={video.script_json?.retention}
+                        onReport={setRetention}
+                        onUseSuggestion={(text) => applyRewrittenText(idx, text)}
                         onRewrite={(instruction) => openRewrite(idx, instruction)}
                       />
 
