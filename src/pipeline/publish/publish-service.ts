@@ -21,6 +21,7 @@ import { generateThumbnails, rendersDir } from './publish-assets';
 import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, type ShortClip } from './shorts';
 import { subtitlesForVideo } from './subtitle-files';
 import type { Thumbnail } from './thumbnails';
+import { scorePackaging, scoreIsCurrent, type PackagingScore } from './packaging-score';
 
 /**
  * Everything needed to publish a rendered video: the metadata, thumbnails and Shorts (generated
@@ -40,6 +41,8 @@ export interface PublishState {
   edits?: PublishEdits;
   /** Native Short ideas for this long video, and the mini videos made from them. */
   native_shorts?: NativeShorts | null;
+  /** Every title with every thumbnail, scored against the niche (packaging-score.ts). */
+  packaging_score?: PackagingScore | null;
 }
 
 interface VideoRow {
@@ -134,7 +137,36 @@ export async function publishView(supabase: SupabaseClient, video: VideoRow) {
     format: sj.format ?? null,
     parentVideoId: sj.short?.parent_video_id ?? null,
     nativeShorts: ideas.map((i) => ({ ...i, status: i.video_id ? (childStatus.get(i.video_id) ?? 'deleted') : null })),
+    packagingScore: publish.packaging_score
+      ? {
+          ...publish.packaging_score,
+          current: scoreIsCurrent(publish.packaging_score, scoredTitles(video), (publish.thumbnails ?? []).map((t) => t.text)),
+        }
+      : null,
   };
+}
+
+/** The titles to score: the one chosen on the page (an edit), then the generated options. */
+function scoredTitles(video: VideoRow): string[] {
+  const publish = video.script_json?.publish ?? {};
+  return [...new Set([publish.edits?.title, ...(publish.metadata?.titles ?? []).map((t) => t.text)].filter((t): t is string => Boolean(t?.trim())))];
+}
+
+/** Scores every title with every thumbnail against the niche's top videos, and saves it. */
+export async function scorePackagingForVideo(supabase: SupabaseClient, video: VideoRow): Promise<void> {
+  const sj = video.script_json ?? {};
+  const publish = sj.publish ?? {};
+  const llm = await scriptLlm(supabase);
+  if (!llm) throw new Error('No script LLM is configured');
+  const score = await scorePackaging({
+    topic: video.topic ?? video.title ?? '',
+    summary: publish.metadata?.summary || publish.metadata?.hook || (sj.beats ?? []).slice(0, 4).map((b) => b.text).join(' '),
+    titles: scoredTitles(video),
+    thumbnails: (publish.thumbnails ?? []).map((t) => ({ text: t.text, path: t.path })),
+    llm: llm.provider,
+    ctx: withWritingModel(llm.ctx, llm.options),
+  });
+  await savePublish(supabase, video.id, { packaging_score: score });
 }
 
 export async function saveEdits(supabase: SupabaseClient, videoId: string, edits: PublishEdits): Promise<void> {

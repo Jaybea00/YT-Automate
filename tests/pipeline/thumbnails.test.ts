@@ -66,6 +66,32 @@ describe('Thumbnails', () => {
     assert.ok(noTracks.every((m) => m.source === 'final.mp4'));
   });
 
+  it('frames a drawn video from each beat\'s own visual (no burned-in captions), mid-line', async () => {
+    const tracks = await Promise.all(
+      [0, 1].map(async (i) => {
+        const t = path.join(dir, `drawn_${i}.mp4`);
+        await fs.writeFile(t, 'clip');
+        return t;
+      }),
+    );
+    const timeline: VideoTimeline = {
+      version: 1,
+      renderedAt: '',
+      totalMs: 20_000,
+      beats: [
+        { index: 0, sceneStartMs: 0, sceneMs: 10_000, voiceStartMs: 200, voiceMs: 8000, audioPath: null, trackPath: tracks[0] },
+        { index: 1, sceneStartMs: 10_000, sceneMs: 10_000, voiceStartMs: 10_200, voiceMs: 6000, audioPath: null, trackPath: tracks[1] },
+      ],
+    };
+    const moments = await candidateMoments(timeline, 'final.mp4');
+    assert.ok(moments.every((m) => m.source !== 'final.mp4'), 'never the captioned finished video');
+    assert.deepEqual(moments[0], { source: tracks[0], sourceSec: 4.2, atSec: 4.2 });
+    assert.deepEqual(moments[moments.length - 1], { source: tracks[1], sourceSec: 3.2, atSec: 13.2 });
+    // A beat whose visual is gone falls back to the finished video
+    const gone = await candidateMoments({ ...timeline, beats: [{ ...timeline.beats[0], trackPath: path.join(dir, 'missing.mp4') }] }, 'final.mp4');
+    assert.ok(gone.every((m) => m.source === 'final.mp4'));
+  });
+
   it('renders 1280x720 JPEGs under the 2 MB limit', async () => {
     const frame = path.join(dir, 'frame.jpg');
     await execFileAsync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=1920x1080', '-frames:v', '1', frame]);
