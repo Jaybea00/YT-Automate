@@ -8,7 +8,39 @@ interface Note {
   beat: number;
   text: string;
   resolved: boolean;
+  source?: 'ai';
+  kind?: string;
+  severity?: 'high' | 'medium' | 'low';
 }
+
+interface WatchStatus {
+  state: 'preparing' | 'uploading' | 'watching' | 'done' | 'failed';
+  startedAt: string;
+  finishedAt?: string;
+  renderedAt?: string;
+  notes?: number;
+  summary?: string;
+  error?: string;
+}
+
+/** What each kind of AI note is about (mirrors watch-through.ts). */
+const KIND_LABEL: Record<string, string> = {
+  caption: 'Captions',
+  picture_mismatch: 'Picture vs words',
+  pacing: 'Pacing',
+  sound: 'Sound',
+  glitch: 'Glitch',
+  on_screen_text: 'On-screen text',
+  repetition: 'Repetition',
+  opening: 'Opening',
+};
+const SEVERITY_CLASS = { high: 'bg-red-950 text-red-300 border-red-900', medium: 'bg-amber-950 text-amber-300 border-amber-900', low: 'bg-zinc-800 text-zinc-400 border-zinc-700' };
+const WATCH_STEP: Record<string, string> = {
+  preparing: 'Making a small copy of the video…',
+  uploading: 'Sending it to Gemini…',
+  watching: 'Gemini is watching the video (a few minutes for a long one)…',
+};
+const watching = (s: WatchStatus | null) => Boolean(s && ['preparing', 'uploading', 'watching'].includes(s.state));
 
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
@@ -33,6 +65,9 @@ export function ReviewNotes({
   const [text, setText] = useState('');
   const [showResolved, setShowResolved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [watch, setWatch] = useState<WatchStatus | null>(null);
+  /** Bumped when a watch-through starts, so its progress is followed. */
+  const [watchRun, setWatchRun] = useState(0);
 
   const fetchNotes = useCallback(() => fetch(`/api/videos/${videoId}/vibedit/notes`).then((r) => r.json()) as Promise<{ notes?: Note[] }>, [videoId]);
   useEffect(() => {
@@ -46,6 +81,43 @@ export function ReviewNotes({
       cancelled = true;
     };
   }, [fetchNotes]);
+
+  // The AI watch-through: its last result, and progress while one runs (then its notes)
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let wasWatching = false;
+    const poll = () =>
+      fetch(`/api/videos/${videoId}/vibedit/watch`)
+        .then((r) => r.json() as Promise<{ status?: WatchStatus | null }>)
+        .then(async (b) => {
+          if (cancelled) return;
+          const s = b.status ?? null;
+          setWatch(s);
+          if (watching(s)) {
+            wasWatching = true;
+            timer = setTimeout(poll, 4000);
+          } else if (wasWatching && s?.state === 'done') {
+            const n = await fetchNotes();
+            if (!cancelled) setNotes(n.notes ?? []);
+          }
+        })
+        .catch(() => {});
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [videoId, fetchNotes, watchRun]);
+
+  async function startWatch() {
+    setError(null);
+    const res = await fetch(`/api/videos/${videoId}/vibedit/watch`, { method: 'POST' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(json.error || 'Could not start the watch-through');
+    setWatch(json.status);
+    setWatchRun((n) => n + 1);
+  }
 
   async function call(method: string, body?: unknown, query = '') {
     setError(null);
@@ -77,11 +149,35 @@ export function ReviewNotes({
               style={{ left: `${Math.min(100, (n.atSec / totalSec) * 100)}%` }}
               className={`absolute -translate-x-1/2 top-0 text-[10px] leading-none ${n.resolved ? 'opacity-30' : ''}`}
             >
-              📌
+              {n.source === 'ai' ? '🤖' : '📌'}
             </button>
           ))}
         </div>
       )}
+
+      {/* The AI watch-through */}
+      <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2 space-y-1 text-[11px]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-zinc-400">
+            {watching(watch)
+              ? WATCH_STEP[watch!.state]
+              : watch?.state === 'done'
+                ? `AI watched the render of ${watch.renderedAt ? new Date(watch.renderedAt).toLocaleString() : 'this video'}: ${watch.notes ?? 0} note${watch.notes === 1 ? '' : 's'}.`
+                : watch?.state === 'failed'
+                  ? `The last watch-through failed: ${watch.error ?? 'unknown error'}`
+                  : 'Have Gemini watch the finished video and pin notes where something needs fixing.'}
+          </span>
+          <button
+            type="button"
+            onClick={startWatch}
+            disabled={watching(watch)}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold"
+          >
+            {watching(watch) ? 'Watching…' : watch?.state === 'done' ? 'Watch again' : '👁 AI watch-through'}
+          </button>
+        </div>
+        {watch?.state === 'done' && watch.summary && <p className="text-zinc-500 italic">{watch.summary}</p>}
+      </div>
 
       <form
         onSubmit={async (e) => {
@@ -114,7 +210,7 @@ export function ReviewNotes({
               </button>
             )}
           </div>
-          <ul className="space-y-1 max-h-40 overflow-y-auto">
+          <ul className="space-y-1 max-h-64 overflow-y-auto">
             {listed.map((n) => (
               <li key={n.id} className="flex items-start gap-2">
                 <input
@@ -127,7 +223,17 @@ export function ReviewNotes({
                 <button type="button" onClick={() => onSeek(n)} className="font-mono text-indigo-300 hover:underline shrink-0">
                   {clock(n.atSec)}
                 </button>
-                <span className={`flex-1 ${n.resolved ? 'line-through text-zinc-600' : 'text-zinc-300'}`}>{n.text}</span>
+                <span className={`flex-1 ${n.resolved ? 'line-through text-zinc-600' : 'text-zinc-300'}`}>
+                  {n.source === 'ai' && (
+                    <span
+                      className={`mr-1.5 inline-block rounded border px-1 py-px text-[10px] font-semibold ${SEVERITY_CLASS[n.severity ?? 'low']}`}
+                      title={`Found by the AI watch-through${n.severity ? ` (${n.severity})` : ''}`}
+                    >
+                      AI{n.kind ? ` · ${KIND_LABEL[n.kind] ?? n.kind}` : ''}
+                    </span>
+                  )}
+                  {n.text}
+                </span>
                 <button type="button" onClick={() => call('DELETE', undefined, `?noteId=${encodeURIComponent(n.id)}`)} className="text-zinc-600 hover:text-red-300" title="Delete">
                   ✕
                 </button>
