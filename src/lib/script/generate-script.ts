@@ -20,6 +20,7 @@ import type { BriefExtras, ScriptOutline } from './outline';
 import type { FactCheckReport } from './fact-check-issues';
 import type { PronunciationHints } from './pronunciation-hints-types';
 import type { AdCheckReport } from './ad-check-issues';
+import type { RetentionReport } from './retention-types';
 import { leadWithPackageTitle, type PackageOption, type Packaging } from './packaging-types';
 import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
@@ -217,6 +218,8 @@ export interface GeneratedScript {
   pronunciation_hints?: PronunciationHints;
   /** Wording likely to limit ads, with safer suggestions. */
   ad_check?: AdCheckReport;
+  /** Whether viewers would keep watching: interest per beat, open questions, the promise, and fixes. */
+  retention?: RetentionReport;
   /** Title and thumbnail options decided before the script; the script delivers the chosen one. */
   packaging?: Packaging;
   /** 'short' for a native YouTube Short (a linked mini video); absent for normal videos. */
