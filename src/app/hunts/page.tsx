@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { PageContainer, PageHeader } from '@/components/ui/page';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -83,19 +84,12 @@ export default function HuntsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-        <div>
-          <div className="flex gap-4 text-sm text-zinc-500">
-            <Link href="/" className="hover:text-zinc-300">← Home</Link>
-            <Link href="/clips" className="hover:text-zinc-300">✂️ Clip to Short</Link>
-            <Link href="/moments" className="hover:text-zinc-300">🎞️ Compilations</Link>
-          </div>
-          <h1 className="text-2xl font-bold mt-1">🎯 Stream Hunter</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Paste a finished stream (YouTube, Twitch or Kick). The hunter listens to the sound, reads the chat and captions where it can, picks the best moments and cuts them out. Send any moment to the Short editor with one click.
-          </p>
-        </div>
+    <PageContainer width="narrow">
+        <PageHeader
+          eyebrow="Moments from streams"
+          title="Stream Hunter"
+          description="Paste a finished stream (YouTube, Twitch or Kick). The hunter listens to the sound, reads the chat and captions where it can, picks the best moments and cuts them out. Send any moment to the Short editor with one click."
+        />
 
         <form onSubmit={submit} className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-3">
           <label className="block text-sm font-semibold">Stream link</label>
@@ -158,7 +152,6 @@ export default function HuntsPage() {
             </Link>
           ))}
         </div>
-      </div>
-    </div>
+    </PageContainer>
   );
 }

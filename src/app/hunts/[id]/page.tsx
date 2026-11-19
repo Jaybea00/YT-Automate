@@ -2,6 +2,9 @@
 
 import React, { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { PageContainer, EmptyState } from '@/components/ui/page';
+import { ButtonLink } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { useRouter } from 'next/navigation';
 import type { Hunt, Moment, RecipeId } from '@/pipeline/hunter/types';
 
@@ -101,12 +104,17 @@ export default function HuntPage({ params }: { params: Promise<{ id: string }> }
 
   if (notFound) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 p-8">
-        Hunt not found. <Link href="/hunts" className="underline">Back to hunts</Link>
-      </div>
+      <PageContainer>
+        <EmptyState title="Hunt not found" action={<ButtonLink href="/hunts" icon="chevronLeft">Back to hunts</ButtonLink>} />
+      </PageContainer>
     );
   }
-  if (!hunt) return <div className="min-h-screen bg-zinc-950 text-zinc-400 p-8">Loading…</div>;
+  if (!hunt)
+    return (
+      <PageContainer>
+        <EmptyState loading title="Loading the hunt…" />
+      </PageContainer>
+    );
 
   const visible = hunt.moments.filter((m) => (showDiscarded || !m.discarded) && (filter === 'all' || m.recipe === filter));
   const counts = new Map<RecipeId, number>();
@@ -115,12 +123,11 @@ export default function HuntPage({ params }: { params: Promise<{ id: string }> }
   const stepIndex = STEPS.indexOf(hunt.status);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+    <PageContainer>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <Link href="/hunts" className="text-sm text-zinc-500 hover:text-zinc-300">← Hunts</Link>
-            <h1 className="text-xl font-bold mt-1 truncate">{hunt.title || 'New hunt'}</h1>
+            <Link href="/hunts" className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-200"><Icon name="chevronLeft" size={14} />Hunts</Link>
+            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-50 truncate">{hunt.title || 'New hunt'}</h1>
             <a href={hunt.pageUrl} target="_blank" rel="noreferrer" className="text-xs text-zinc-500 hover:text-zinc-300 break-all">
               {hunt.platform}{hunt.uploader ? ` · ${hunt.uploader}` : ''}{hunt.durationSec ? ` · ${clock(hunt.durationSec)}` : ''}
             </a>
@@ -232,7 +239,6 @@ export default function HuntPage({ params }: { params: Promise<{ id: string }> }
           })}
         </div>
         {hunt.status === 'ready' && visible.length === 0 && <p className="text-sm text-zinc-500">No moments here.</p>}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

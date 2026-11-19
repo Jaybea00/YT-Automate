@@ -8,12 +8,16 @@ import { trimBrief } from '@/lib/script/outline';
 import { createQueuedVideo, resolveNewVideoStyle, styledScript, type ResolvedStyle } from '@/lib/script/new-video';
 import { parseSrtToBeats, parseRawTextToParagraphBeats, planVisualsForUploadedBeats } from '@/lib/script/parser';
 
-export async function GET() {
+/** The columns the dashboard needs (?summary=1): no scripts, so a long list stays small. */
+const SUMMARY_COLUMNS = 'id, title, topic, style, target_minutes, status, error_message, render_url, created_at, updated_at';
+
+export async function GET(req: Request) {
   try {
     const supabase = getSupabaseServerClient();
+    const summary = new URL(req.url).searchParams.get('summary') === '1';
     const { data, error } = await supabase
       .from('videos')
-      .select('*')
+      .select(summary ? SUMMARY_COLUMNS : '*')
       .order('created_at', { ascending: false });
 
     if (error) {

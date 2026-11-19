@@ -2,9 +2,13 @@
 
 import React, { useEffect, useState, useRef, use } from 'react';
 import Link from 'next/link';
+import { AiVideoKeyDialog, ShortcutsDialog } from './dialogs';
+import { PageContainer, EmptyState } from '@/components/ui/page';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import type { MediaCandidate } from '@/pipeline/visuals/types';
 import { ChatPanel } from './chat-panel';
-import { SHORTCUTS, useStableCallback, useVibeditShortcuts } from './shortcuts';
+import { useStableCallback, useVibeditShortcuts } from './shortcuts';
 import { BeatPreviewButton } from './beat-preview';
 import { CaptionEditor } from './caption-editor';
 import { BulkFixes } from './bulk-fixes';
@@ -458,23 +462,17 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        <div className="flex items-center gap-3 text-indigo-400">
-          <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <span>Loading Vibedit Studio...</span>
-        </div>
-      </div>
+      <PageContainer width="full">
+        <EmptyState loading title="Loading Vibedit…" />
+      </PageContainer>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-black text-white p-8">
-        <div className="max-w-xl mx-auto p-6 bg-red-950/40 border border-red-800 rounded-xl">
-          <h2 className="text-lg font-bold text-red-200">Error Loading Studio</h2>
-          <p className="text-sm text-red-300 mt-2">{error || 'Video not found'}</p>
-        </div>
-      </div>
+      <PageContainer width="full">
+        <EmptyState title="Could not load Vibedit" description={error || 'Video not found'} />
+      </PageContainer>
     );
   }
 
@@ -484,124 +482,44 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
     (data.video.script_json?.still_motion || 'zoom') as 'zoom' | 'static';
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
-      {showShortcuts && (
-        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setShowShortcuts(false)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-md space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-white">⌨️ Keyboard shortcuts</h2>
-              <button onClick={() => setShowShortcuts(false)} className="text-zinc-400 hover:text-white text-sm">✕</button>
-            </div>
-            <table className="w-full text-xs">
-              <tbody>
-                {SHORTCUTS.map((s) => (
-                  <tr key={s.keys} className="border-t border-zinc-800">
-                    <td className="py-1.5 pr-3 font-mono text-indigo-300 whitespace-nowrap">{s.keys}</td>
-                    <td className="py-1.5 text-zinc-300">{s.does}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-[11px] text-zinc-500">They don&apos;t fire while you type in a box.</p>
-          </div>
-        </div>
-      )}
+    <div className="flex flex-col">
+      {showShortcuts && <ShortcutsDialog onClose={() => setShowShortcuts(false)} />}
 
-      {/* Top Navigation Bar */}
-      <header className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link
-            href="/videos"
-            className="text-xs font-semibold text-zinc-400 hover:text-white transition flex items-center gap-1.5"
-          >
-            <span>←</span> Back to Dashboard
-          </Link>
-          <span className="text-zinc-600">/</span>
-          <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 text-[11px] font-bold uppercase tracking-wider">
-              Vibedit Studio
-            </span>
-            <h1 className="text-sm font-bold text-white truncate max-w-sm">
-              {data.video.title || 'Untitled Production'}
-            </h1>
-            {isRendering && (
-              <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold animate-pulse flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                Rendering Master...
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowShortcuts((s) => !s)}
-            title="Keyboard shortcuts (?)"
-            className="px-2 py-1 rounded-lg bg-zinc-950/80 border border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-100"
-          >
-            ⌨️ Shortcuts
-          </button>
+      {/* Toolbar: what applies to the whole edit */}
+      <div className="border-b border-zinc-800/80 bg-zinc-950">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 px-4 py-3 sm:px-6 lg:px-8">
+          <h1 className="mr-auto text-base font-semibold text-zinc-50">Vibedit</h1>
+          {isRendering && (
+            <Badge tone="warning" pulse>
+              Rendering the master…
+            </Badge>
+          )}
+          <Button variant="ghost" size="sm" onClick={() => setShowShortcuts((v) => !v)} title="Keyboard shortcuts (?)">
+            Shortcuts
+          </Button>
           {/* Still Image Motion Mode */}
-          <div className="flex items-center gap-1 bg-zinc-950/80 border border-zinc-800 rounded-lg p-0.5" title="Still photo motion: Static keeps photos stationary, Zoom applies Ken Burns slow zoom">
-            <span className="text-[10px] text-zinc-400 font-medium px-2">Photos:</span>
-            <button
-              type="button"
-              onClick={() => handleToggleStillMotion('static')}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 ${
-                stillMotion === 'static'
-                  ? 'bg-zinc-700 text-white shadow'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-              title="Static: Still images stay completely locked (only video clips move)"
-            >
-              <span>⏹</span> Static
-            </button>
-            <button
-              type="button"
-              onClick={() => handleToggleStillMotion('zoom')}
-              className={`px-2 py-1 rounded text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 ${
-                stillMotion === 'zoom'
-                  ? 'bg-indigo-600 text-white shadow'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-              title="Zoom: Subtle cinematic slow zoom on still photos"
-            >
-              <span>🎬</span> Zoom
-            </button>
+          <div
+            className="flex h-9 items-center gap-0.5 rounded-lg border border-zinc-800 bg-zinc-900/60 p-0.5"
+            title="Photos: Static keeps them still, Zoom moves slowly across them"
+          >
+            <span className="px-2 text-[11px] font-medium text-zinc-400">Photos</span>
+            {(['static', 'zoom'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => handleToggleStillMotion(m)}
+                aria-pressed={stillMotion === m}
+                className={`h-7 rounded-md px-2.5 text-xs font-semibold transition ${stillMotion === m ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+              >
+                {m === 'static' ? 'Static' : 'Zoom'}
+              </button>
+            ))}
           </div>
-
-          <Link
-            href={`/videos/${id}/visuals`}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-medium text-zinc-300 transition"
-          >
-            Visuals Studio
-          </Link>
-          <Link
-            href={`/videos/${id}/progress`}
-            className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-medium text-zinc-300 transition"
-          >
-            Pipeline Progress
-          </Link>
-          <button
-            onClick={handleStartAssembly}
-            disabled={isAssembling || isRendering}
-            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition shadow-lg flex items-center gap-1.5 cursor-pointer ${
-              isRendering
-                ? 'bg-amber-600/60 text-white cursor-not-allowed'
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-950'
-            }`}
-          >
-            <span>🚀</span>
-            <span>
-              {isAssembling
-                ? 'Queuing...'
-                : isRendering
-                ? 'Rendering Master...'
-                : 'Re-assemble Master Video'}
-            </span>
-          </button>
+          <Button variant="primary" size="sm" icon="refresh" onClick={handleStartAssembly} disabled={isAssembling || isRendering}>
+            {isAssembling ? 'Queuing…' : isRendering ? 'Rendering…' : 'Re-assemble'}
+          </Button>
         </div>
-      </header>
+      </div>
 
       {/* Assembly Feedback Banner */}
       {assemblyMsg && (
@@ -1209,62 +1127,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
         </div>
       </div>
 
-      {/* AI Video Activation Guide Modal */}
-      {keyModalMessage && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <span>🎬</span> Activate AI Video Generation
-              </h3>
-              <button
-                type="button"
-                onClick={() => setKeyModalMessage(null)}
-                className="text-zinc-400 hover:text-white cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-zinc-300 leading-relaxed">
-              {keyModalMessage}
-            </p>
-
-            <div className="space-y-3 pt-1">
-              <div>
-                <span className="text-[11px] font-semibold text-emerald-400 block mb-1">
-                  Option 1: Direct Google Veo API Key (Google AI Studio / Vertex AI)
-                </span>
-                <div className="bg-black/60 rounded-xl p-2.5 border border-zinc-800 font-mono text-[11px] text-emerald-300 select-all">
-                  GOOGLE_VEO_API_KEY=your_google_key_here
-                </div>
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  Works directly with your key from <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-indigo-400 underline">Google AI Studio</a> (or GEMINI_API_KEY).
-                </p>
-              </div>
-
-              <div>
-                <span className="text-[11px] font-semibold text-pink-400 block mb-1">
-                  Option 2: Fal.ai Gateway (Veo 2, Kling, MiniMax)
-                </span>
-                <div className="bg-black/60 rounded-xl p-2.5 border border-zinc-800 font-mono text-[11px] text-pink-300 select-all">
-                  FAL_KEY=your_fal_api_key_here
-                </div>
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  Provides access via <a href="https://fal.ai" target="_blank" rel="noreferrer" className="text-indigo-400 underline">fal.ai</a> for multiple video foundation models.
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setKeyModalMessage(null)}
-              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white cursor-pointer transition mt-2"
-            >
-              Got it!
-            </button>
-          </div>
-        </div>
-      )}
+      {keyModalMessage && <AiVideoKeyDialog message={keyModalMessage} onClose={() => setKeyModalMessage(null)} />}
 
     </div>
   );

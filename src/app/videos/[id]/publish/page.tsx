@@ -2,6 +2,11 @@
 
 import React, { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ActionBar } from '@/components/ui/action-bar';
+import { Card as UiCard } from '@/components/ui/card';
+import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
+import { buttonClass } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 
 interface PublishData {
   videoId: string;
@@ -93,13 +98,9 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 
 function Card({ title, children, actions }: { title: string; children: React.ReactNode; actions?: React.ReactNode }) {
   return (
-    <section className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-bold text-white uppercase tracking-wider">{title}</h2>
-        <div className="flex items-center gap-2">{actions}</div>
-      </div>
-      {children}
-    </section>
+    <UiCard title={title} actions={actions}>
+      <div className="space-y-4">{children}</div>
+    </UiCard>
   );
 }
 
@@ -186,36 +187,39 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
     });
 
   if (!data) {
-    return <div className="min-h-screen bg-zinc-950 text-zinc-400 p-10">{error ?? 'Loading…'}</div>;
+    return (
+      <PageContainer>
+        <EmptyState loading={!error} title={error ?? 'Loading the publish tools…'} />
+      </PageContainer>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link href={`/videos/${id}/progress`} className="text-xs text-zinc-400 hover:text-zinc-200">← Back to progress</Link>
-            <h1 className="text-2xl font-bold text-white mt-1">Publish</h1>
-            <p className="text-xs text-zinc-400">Everything to paste into YouTube Studio, plus one download with all of it.</p>
-          </div>
-          <a
-            href={data.rendered ? `/api/videos/${id}/publish/package` : undefined}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-              data.rendered ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-950' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-            }`}
-          >
-            ⬇ Download package (.zip)
-          </a>
-          <a
-            href={data.hasTimeline ? `/api/videos/${id}/publish/resolve` : undefined}
-            title="The edit for DaVinci Resolve (free): picture, narration, music and effects on their own tracks, plus captions"
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition border ${
-              data.hasTimeline ? 'bg-zinc-900 hover:bg-zinc-800 border-zinc-700 text-zinc-100' : 'bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed'
-            }`}
-          >
-            🎚️ Export for DaVinci Resolve
-          </a>
-        </div>
+    <PageContainer>
+        <PageHeader
+          title="Publish"
+          description="Everything to paste into YouTube Studio, plus one download with all of it."
+          actions={
+            <>
+              <a
+                href={data.hasTimeline ? `/api/videos/${id}/publish/resolve` : undefined}
+                aria-disabled={!data.hasTimeline}
+                title="The edit for DaVinci Resolve (free): picture, narration, music and effects on their own tracks, plus captions"
+                className={buttonClass('secondary', 'md', data.hasTimeline ? '' : 'opacity-50 pointer-events-none')}
+              >
+                Export for DaVinci Resolve
+              </a>
+              <a
+                href={data.rendered ? `/api/videos/${id}/publish/package` : undefined}
+                aria-disabled={!data.rendered}
+                className={buttonClass('primary', 'md', data.rendered ? '' : 'opacity-50 pointer-events-none')}
+              >
+                <Icon name="download" size={16} />
+                Download package (.zip)
+              </a>
+            </>
+          }
+        />
 
         {data.format === 'short' && (
           <div className="px-4 py-3 rounded-xl bg-red-950/30 border border-red-800/60 text-red-100 text-sm">
@@ -644,7 +648,15 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
             <li>Upload the Shorts with their titles, and link the full video from each Short.</li>
           </ol>
         </Card>
-      </div>
-    </div>
+
+        {data.rendered && (
+          <ActionBar hint="One zip with the video, thumbnails, Shorts, subtitles and the text to paste.">
+            <a href={`/api/videos/${id}/publish/package`} className={buttonClass('primary')}>
+              <Icon name="download" size={16} />
+              Download package
+            </a>
+          </ActionBar>
+        )}
+    </PageContainer>
   );
 }

@@ -1,7 +1,9 @@
 'use client';
 
 import React, { use, useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
+import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 interface Shot {
   beatIndex: number;
@@ -126,7 +128,12 @@ export default function StoryboardPage({ params }: { params: Promise<{ id: strin
     }
   }
 
-  if (!board) return <div className="min-h-screen bg-zinc-950 text-zinc-400 p-8">Loading…</div>;
+  if (!board)
+    return (
+      <PageContainer width="full">
+        <EmptyState loading title="Loading the storyboard…" />
+      </PageContainer>
+    );
 
   const issuesFor = (s: Shot) => (board.review?.issues ?? []).filter((i) => i.beatIndex === s.beatIndex && i.shotIndex === s.shotIndex);
   const counts = { high: 0, medium: 0, info: 0 };
@@ -134,35 +141,32 @@ export default function StoryboardPage({ params }: { params: Promise<{ id: strin
   const visible = onlyIssues ? board.shots.filter((s) => issuesFor(s).some((i) => i.severity !== 'info') && !fixed.has(key(s.beatIndex, s.shotIndex))) : board.shots;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-5">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <div className="flex gap-3 text-sm text-zinc-500">
-              <Link href={`/videos/${id}/visuals`} className="hover:text-zinc-300">← Visuals</Link>
-              <Link href={`/videos/${id}/vibedit`} className="hover:text-zinc-300">Vibedit</Link>
-            </div>
-            <h1 className="text-xl font-bold mt-1">🎞️ Storyboard</h1>
-            <p className="text-xs text-zinc-400">
-              {board.shots.length} shots{board.missingBeats.length ? ` · ${board.missingBeats.length} beat${board.missingBeats.length === 1 ? '' : 's'} without a shot plan (not shown)` : ''}
-            </p>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            {board.review && (
-              <span className="text-xs text-zinc-400">
-                Reviewed {new Date(board.review.reviewedAt).toLocaleString()} ·{' '}
-                <span className="text-red-300">{counts.high} serious</span> · <span className="text-amber-300">{counts.medium} to improve</span> · {counts.info} notes
-                {!board.review.textCheck && ' · text/logo check skipped'}
-              </span>
-            )}
-            <label className="text-xs text-zinc-400 flex items-center gap-1.5">
-              <input type="checkbox" checked={onlyIssues} onChange={(e) => setOnlyIssues(e.target.checked)} /> Problems only
-            </label>
-            <button type="button" onClick={review} disabled={reviewing || !board.shots.length} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-semibold text-sm">
-              {reviewing ? `Reviewing ${board.shots.length} shots…` : board.review ? 'Review again' : 'Review the storyboard'}
-            </button>
-          </div>
-        </div>
+    <PageContainer width="full">
+        <PageHeader
+          title="Storyboard"
+          description={`${board.shots.length} shots${board.missingBeats.length ? ` · ${board.missingBeats.length} beat${board.missingBeats.length === 1 ? '' : 's'} without a shot plan (not shown)` : ''}`}
+          meta={
+            board.review && (
+              <>
+                <span>Reviewed {new Date(board.review.reviewedAt).toLocaleString()}</span>
+                <Badge tone="danger">{counts.high} serious</Badge>
+                <Badge tone="warning">{counts.medium} to improve</Badge>
+                <Badge>{counts.info} notes</Badge>
+                {!board.review.textCheck && <span>Text and logo check skipped</span>}
+              </>
+            )
+          }
+          actions={
+            <>
+              <label className="inline-flex h-10 items-center gap-2 rounded-xl border border-zinc-800 px-3 text-sm text-zinc-300">
+                <input type="checkbox" checked={onlyIssues} onChange={(e) => setOnlyIssues(e.target.checked)} className="accent-indigo-500" /> Problems only
+              </label>
+              <Button variant="primary" icon="eye" onClick={review} disabled={reviewing || !board.shots.length}>
+                {reviewing ? `Reviewing ${board.shots.length} shots…` : board.review ? 'Review again' : 'Review the storyboard'}
+              </Button>
+            </>
+          }
+        />
 
         {reviewing && <p className="text-xs text-amber-300">Each shot&apos;s frame is measured once and remembered; the first review of a long video takes a minute or two.</p>}
         {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
@@ -221,7 +225,6 @@ export default function StoryboardPage({ params }: { params: Promise<{ id: strin
           })}
         </div>
         {onlyIssues && visible.length === 0 && board.review && <p className="text-sm text-emerald-300">No problems left in this review.</p>}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

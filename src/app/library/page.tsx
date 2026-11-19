@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
+import { PageContainer, PageHeader } from '@/components/ui/page';
 
 interface Clip {
   id: string;
@@ -84,18 +84,12 @@ export default function LibraryPage() {
   });
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <div>
-          <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
-            ← Dashboard
-          </Link>
-          <h1 className="text-2xl font-bold text-white mt-1">Clip library</h1>
-          <p className="text-xs text-zinc-400">
-            Your own and licensed footage, added once. Each clip is described by what it shows, and the footage picker offers it
-            for every video when it fits a shot.
-          </p>
-        </div>
+    <PageContainer>
+        <PageHeader
+          eyebrow="Footage"
+          title="Clip library"
+          description="Your own and licensed footage, added once. Each clip is described by what it shows, and the footage picker offers it for every video when it fits a shot."
+        />
 
         <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
@@ -169,7 +163,6 @@ export default function LibraryPage() {
             ))}
           </div>
         )}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

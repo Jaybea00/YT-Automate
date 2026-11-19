@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { PageContainer, PageHeader } from '@/components/ui/page';
 import Link from 'next/link';
 
 interface Queue {
@@ -53,18 +54,12 @@ export default function OvernightPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <div>
-          <Link href="/" className="text-xs text-zinc-400 hover:text-zinc-200">
-            ← Dashboard
-          </Link>
-          <h1 className="text-2xl font-bold text-white mt-1">Overnight renders</h1>
-          <p className="text-xs text-zinc-400">
-            Press 🌙 Render tonight on a video&apos;s progress page to hold its render here. When the window opens, the worker
-            starts them one after another. Leave the worker running and the laptop awake.
-          </p>
-        </div>
+    <PageContainer width="narrow">
+        <PageHeader
+          eyebrow="Rendering"
+          title="Overnight renders"
+          description="Press Render tonight on a video's render page to hold its render here. When the window opens, the worker starts them one after another. Leave the worker running and the laptop awake."
+        />
 
         <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-wrap items-center gap-2 text-xs">
           <span className="text-zinc-400">Render between</span>
@@ -109,7 +104,6 @@ export default function OvernightPage() {
             ))}
           </ul>
         )}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

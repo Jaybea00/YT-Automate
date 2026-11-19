@@ -2,8 +2,16 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
+import { ActionBar } from '@/components/ui/action-bar';
+import { PipelineLog, type JobData, type StageData, type UnitData, type VideoAssetData } from './pipeline-log';
+import { RenderResults, type PreviewInfo, type LastRender, type QualityReportView } from './render-results';
+import { PageContainer } from '@/components/ui/page';
+import { Button, ButtonLink, buttonClass } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Icon } from '@/components/ui/icon';
+import { statusOf } from '@/components/shell/video-status';
 import { useParams } from 'next/navigation';
-import { formatDuration, type RenderReport } from '@/pipeline/runner/render-report';
+import type { RenderReport } from '@/pipeline/runner/render-report';
 
 interface VideoData {
   id: string;
@@ -37,49 +45,6 @@ interface ChaptersData {
   customTitles: Record<number, string>;
   /** Music and visual credits the description must carry. */
   creditsText?: string;
-}
-
-interface JobData {
-  id: string;
-  status: 'queued' | 'running' | 'failed' | 'done' | 'cancelled';
-  stages: string[];
-  error: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface StageData {
-  id: string;
-  stage: string;
-  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
-  started_at: string | null;
-  finished_at: string | null;
-  error: string | null;
-}
-
-interface UnitData {
-  id: string;
-  stage: string;
-  unit_index: number;
-  status: 'pending' | 'running' | 'done' | 'failed';
-  duration_ms: number | null;
-  cost_usd: number | null;
-  attempts: number;
-  error: string | null;
-  output_path: string | null;
-}
-
-interface VideoAssetData {
-  id: string;
-  video_id: string;
-  beat_index: number;
-  visual_type: 'chart' | 'screen_recording' | 'stock' | string;
-  source_url: string | null;
-  license_type: string | null;
-  license_source: string | null;
-  attribution_text: string | null;
-  license_proof_url: string | null;
-  created_at?: string;
 }
 
 interface ProgressResponse {
@@ -315,26 +280,9 @@ export default function PipelineProgressPage() {
   }
 
   const video = data?.video;
-  const preview = video?.script_json?.preview as
-    | { renderedAt: string | null; error: string | null; rebuiltBeats?: number[]; beats?: number }
-    | undefined;
-  const lastRender = video?.script_json?.timeline as { renderedAt?: string; rebuiltBeats?: number[]; beats?: unknown[] } | undefined;
-  const rebuildNote = (rebuilt: number[] | undefined, total: number | undefined) =>
-    rebuilt && total
-      ? rebuilt.length >= total
-        ? `All ${total} beats rendered fresh.`
-        : rebuilt.length === 0
-          ? `Nothing changed: all ${total} beats reused.`
-          : `Rebuilt ${rebuilt.length} of ${total} beats (${rebuilt.map((b) => b + 1).join(', ')}); the rest reused.`
-      : null;
-  const qualityReport = video?.script_json?.quality_report as
-    | {
-        passed: boolean;
-        checkedAt: string;
-        checks: Array<{ id: string; label: string; status: 'pass' | 'warn' | 'fail'; detail: string }>;
-        fixed?: Array<{ id: string; detail: string }>;
-      }
-    | undefined;
+  const preview = video?.script_json?.preview as PreviewInfo | undefined;
+  const lastRender = video?.script_json?.timeline as LastRender | undefined;
+  const qualityReport = video?.script_json?.quality_report as QualityReportView | undefined;
   const renderReport = video?.script_json?.render_report as RenderReport | undefined;
   const job = data?.job;
   const stages = data?.stages || [];
@@ -359,93 +307,33 @@ export default function PipelineProgressPage() {
     (job?.stages?.includes('assembly') && job?.status === 'running');
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 md:p-10 font-sans">
-      <div className="max-w-5xl mx-auto space-y-8">
-        {/* Navigation Breadcrumb */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 text-sm text-zinc-400">
-            <Link
-              href={`/videos/${id}/review`}
-              className="hover:text-zinc-200 transition-colors flex items-center gap-1"
-            >
-              ← Back to Script Review
-            </Link>
-            <span>•</span>
-            <Link
-              href={`/videos/${id}/visuals`}
-              className="text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 font-medium"
-            >
-              Manual Visuals →
-            </Link>
-          </div>
-          <button
-            onClick={() => fetchProgress()}
-            className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition"
-          >
-            Refresh
-          </button>
-        </div>
-
+    <PageContainer>
         {/* Video Header Card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-xl">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 sm:p-8 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
-                    video?.status === 'rendered'
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : video?.status === 'failed'
-                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                      : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                  }`}
-                >
-                  Status: {video?.status || 'Unknown'}
-                </span>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <Badge tone={statusOf(video?.status).tone} pulse={statusOf(video?.status).busy}>{statusOf(video?.status).label}</Badge>
                 {job && (
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-xs font-mono border ${
-                      job.status === 'done'
-                        ? 'bg-emerald-950 border-emerald-800 text-emerald-400'
-                        : job.status === 'failed'
-                        ? 'bg-rose-950 border-rose-800 text-rose-400'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-300'
-                    }`}
-                  >
-                    Job: {job.status}
-                  </span>
+                  <Badge tone={job.status === 'done' ? 'success' : job.status === 'failed' ? 'danger' : 'neutral'}>Job {job.status}</Badge>
                 )}
               </div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-white">
-                {video?.title || 'Video Pipeline Progress'}
-              </h1>
-              {video?.topic && (
-                <p className="text-zinc-400 text-sm mt-1">Topic: {video.topic}</p>
-              )}
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-50">Render</h1>
+              <p className="text-zinc-400 text-sm mt-1">Voice, assemble and check the finished video.</p>
             </div>
 
             {/* Action Buttons */}
             <div className="flex flex-wrap items-center gap-3">
-              <Link
-                href={`/videos/${id}/visuals`}
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-medium text-sm transition"
-              >
-                Manage Visuals
-              </Link>
-              <Link
-                href={`/videos/${id}/vibedit`}
-                className="px-4 py-2.5 rounded-xl bg-indigo-950 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 font-medium text-sm transition flex items-center gap-1.5 shadow-md shadow-indigo-950/50"
-              >
-                <span>🎬</span>
-                <span>Vibedit Studio</span>
-              </Link>
+              <Button variant="ghost" icon="refresh" onClick={() => fetchProgress()}>
+                Refresh
+              </Button>
               <button
                 onClick={() => handleStartAssembly(true)}
                 disabled={isTriggering || isRendering}
                 title="A quick, small render to check the edit (cuts instead of transitions, no emphasis effects). The final render reuses its work."
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 text-zinc-100 font-medium text-sm transition"
+                className={buttonClass('secondary')}
               >
-                ⚡ Quick preview
+                Quick preview
               </button>
               {overnight && (
                 <button
@@ -456,20 +344,17 @@ export default function PipelineProgressPage() {
                       ? 'Take it out of tonight\'s queue'
                       : `Render it tonight, between ${overnight.window.start} and ${overnight.window.end}, while the laptop is free`
                   }
-                  className={`px-4 py-2.5 rounded-xl border disabled:opacity-50 font-medium text-sm transition ${
-                    overnight.queued
-                      ? 'bg-sky-950 border-sky-700 text-sky-200 hover:bg-sky-900'
-                      : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-700 text-zinc-100'
-                  }`}
+                  className={buttonClass('secondary', 'md', overnight.queued ? '!border-sky-700 !text-sky-200' : '')}
                 >
-                  {overnight.queued ? `🌙 Queued for ${overnight.window.start} · cancel` : '🌙 Render tonight'}
+                  <Icon name="moon" size={16} />
+                  {overnight.queued ? `Queued for ${overnight.window.start} · cancel` : 'Render tonight'}
                 </button>
               )}
               {video?.status !== 'rendered' && (
                 <button
                   onClick={() => handleStartAssembly()}
                   disabled={isTriggering || isRendering}
-                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-sm transition shadow-lg shadow-indigo-900/40"
+                  className={buttonClass('primary')}
                 >
                   {isTriggering || isRendering ? 'Assembling Video...' : 'Start Assembly'}
                 </button>
@@ -478,7 +363,7 @@ export default function PipelineProgressPage() {
                 <button
                   onClick={handleStartVoicing}
                   disabled={isTriggering}
-                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium text-sm transition shadow-lg shadow-emerald-900/40"
+                  className={buttonClass('primary')}
                 >
                   {isTriggering ? 'Starting...' : 'Start Voicing Pipeline'}
                 </button>
@@ -487,7 +372,7 @@ export default function PipelineProgressPage() {
                 <button
                   onClick={handleStartVoicing}
                   disabled={isTriggering}
-                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-medium text-sm transition"
+                  className={buttonClass('danger')}
                 >
                   {isTriggering ? 'Retrying...' : 'Retry Job'}
                 </button>
@@ -531,7 +416,7 @@ export default function PipelineProgressPage() {
 
           {/* Rendered Video Player / Output */}
           {(video?.render_url || video?.status === 'rendered') && (
-            <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-zinc-950/90 border border-emerald-800/80 shadow-2xl space-y-4">
+            <div className="mt-6 p-4 sm:p-6 rounded-2xl bg-zinc-950/90 border border-emerald-800/80 shadow-2xl space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
                   <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -613,7 +498,7 @@ export default function PipelineProgressPage() {
 
           {/* YouTube Chapters Section */}
           {chaptersData && chaptersData.chapters.length > 0 && (
-            <div className="mt-6 p-5 sm:p-6 rounded-2xl bg-zinc-950/90 border border-zinc-800 shadow-2xl space-y-5">
+            <div className="mt-6 p-4 sm:p-6 rounded-2xl bg-zinc-950/90 border border-zinc-800 shadow-2xl space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -795,7 +680,7 @@ export default function PipelineProgressPage() {
                     Raw YouTube Description Snippet
                   </span>
                 </div>
-                <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300 whitespace-pre-wrap select-all">
+                <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300 whitespace-pre-wrap break-all select-all overflow-x-auto">
                   {chaptersData.formattedText}
                 </pre>
               </div>
@@ -813,7 +698,7 @@ export default function PipelineProgressPage() {
                       {copiedCredits ? '✓ Copied' : 'Copy credits'}
                     </button>
                   </div>
-                  <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300 whitespace-pre-wrap select-all">
+                  <pre className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-mono text-zinc-300 whitespace-pre-wrap break-all select-all overflow-x-auto">
                     {chaptersData.creditsText}
                   </pre>
                 </div>
@@ -822,465 +707,49 @@ export default function PipelineProgressPage() {
           )}
         </div>
 
-        {/* Final quality check on the rendered video */}
-        {rebuildNote(lastRender?.rebuiltBeats, lastRender?.beats?.length) && (
-          <p className="text-xs text-zinc-500 px-1">
-            Last full render: {rebuildNote(lastRender?.rebuiltBeats, lastRender?.beats?.length)} Change a shot and render again: only the beats you changed are rebuilt.
-          </p>
-        )}
+        <RenderResults id={id} preview={preview} lastRender={lastRender} qualityReport={qualityReport} renderReport={renderReport} />
 
-        {preview && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-white">⚡ Quick preview</h2>
-              <span className="text-[11px] text-zinc-500">
-                {preview.renderedAt ? `made ${new Date(preview.renderedAt).toLocaleString()}` : 'failed'}
-              </span>
-            </div>
-            {preview.renderedAt ? (
-              <video
-                src={`/api/videos/${id}/render?preview=1&v=${encodeURIComponent(preview.renderedAt)}`}
-                controls
-                preload="metadata"
-                className="w-full max-w-2xl rounded-lg border border-zinc-800 bg-black"
-              />
-            ) : (
-              <p className="text-xs text-red-300">{preview.error}</p>
-            )}
-            {rebuildNote(preview.rebuiltBeats, preview.beats) && (
-              <p className="text-[11px] text-zinc-400">{rebuildNote(preview.rebuiltBeats, preview.beats)}</p>
-            )}
-            <p className="text-[11px] text-zinc-500">Small and fast: cuts instead of transitions, no emphasis effects. Music, sound effects and captions are as in the final. Start Assembly for the real thing.</p>
-          </div>
-        )}
-        {qualityReport && qualityReport.checks.length > 0 && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Final Quality Check</h2>
-              <span
-                className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
-                  qualityReport.passed
-                    ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                    : 'bg-red-950 text-red-300 border-red-800'
-                }`}
-              >
-                {qualityReport.passed ? '✓ Ready to upload' : '✗ Needs attention'}
-              </span>
-            </div>
-            <ul className="divide-y divide-zinc-800/80">
-              {qualityReport.checks.map((c) => (
-                <li key={c.id} className="flex items-start gap-3 py-2 text-sm">
-                  <span className={c.status === 'pass' ? 'text-emerald-400' : c.status === 'warn' ? 'text-amber-400' : 'text-red-400'}>
-                    {c.status === 'pass' ? '✓' : c.status === 'warn' ? '!' : '✗'}
-                  </span>
-                  <span className="text-zinc-200 font-medium min-w-[14rem]">{c.label}</span>
-                  <span className="text-zinc-400 text-xs pt-0.5">{c.detail}</span>
-                </li>
-              ))}
-            </ul>
-            {qualityReport.fixed && qualityReport.fixed.length > 0 && (
-              <div className="rounded-xl border border-sky-900 bg-sky-950/40 p-3 space-y-1">
-                <p className="text-xs font-semibold text-sky-300">Fixed automatically before this check</p>
-                {qualityReport.fixed.map((f) => (
-                  <p key={f.id} className="text-xs text-zinc-300">{f.detail}</p>
-                ))}
-              </div>
-            )}
-            <p className="text-[11px] text-zinc-500">
-              Checked {new Date(qualityReport.checkedAt).toLocaleString()}. Intended dips at chapter changes and the closing fade are not flagged.
-            </p>
-          </div>
-        )}
-        {renderReport && renderReport.phases.length > 0 && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Render Report</h2>
-              <span className="text-xs text-zinc-400">{formatDuration(renderReport.totalSec)} in all</span>
-            </div>
-            <div className="space-y-1.5">
-              {renderReport.phases.map((p) => (
-                <div key={p.phase} className="flex items-center gap-3 text-xs">
-                  <span className="w-56 shrink-0 text-zinc-300">{p.label}</span>
-                  <div className="flex-1 h-2 rounded bg-zinc-800 overflow-hidden">
-                    <div className="h-full bg-indigo-500" style={{ width: `${renderReport.totalSec ? Math.max(1, (p.sec / renderReport.totalSec) * 100) : 0}%` }} />
-                  </div>
-                  <span className="w-16 text-right text-zinc-400 tabular-nums">{formatDuration(p.sec)}</span>
-                </div>
-              ))}
-            </div>
-            <ul className="space-y-1 text-xs text-zinc-400 list-disc pl-4">
-              {renderReport.notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-              {renderReport.endScreenSec > 0 && <li>End screen: {Math.round(renderReport.endScreenSec)}s after the last line.</li>}
-            </ul>
-            <p className="text-[11px] text-zinc-500">Rendered {new Date(renderReport.renderedAt).toLocaleString()}.</p>
-          </div>
-        )}
+        <PipelineLog
+          job={job}
+          stages={stages}
+          units={units}
+          assets={assets}
+          filteredUnits={filteredUnits}
+          stageFilter={stageFilter}
+          setStageFilter={setStageFilter}
+          completedUnits={completedUnits}
+          totalUnits={totalUnits}
+          totalCost={totalCost}
+          ttsUnitsCount={ttsUnitsCount}
+          visualsUnitsCount={visualsUnitsCount}
+        />
 
-        {/* Pipeline Stages Progress */}
         {job && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-white">Pipeline Stages</h2>
-              <span className="text-xs text-zinc-400 font-mono">Job ID: {job.id}</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(job.stages && job.stages.length > 0
-                ? job.stages
-                : ['research', 'script', 'tts', 'assembly']
-              ).map((stageName) => {
-                const stageRow = stages.find((s) => s.stage === stageName);
-                const stageStatus = stageRow?.status || 'pending';
-
-                return (
-                  <div
-                    key={stageName}
-                    className={`p-4 rounded-xl border flex flex-col justify-between gap-3 ${
-                      stageStatus === 'done'
-                        ? 'bg-emerald-950/20 border-emerald-800/60'
-                        : stageStatus === 'running'
-                        ? 'bg-blue-950/20 border-blue-600'
-                        : stageStatus === 'failed'
-                        ? 'bg-rose-950/20 border-rose-800'
-                        : 'bg-zinc-950 border-zinc-800 opacity-70'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm capitalize text-zinc-200">
-                        {stageName}
-                      </span>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded font-mono ${
-                          stageStatus === 'done'
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : stageStatus === 'running'
-                            ? 'bg-blue-500/10 text-blue-400 animate-pulse'
-                            : stageStatus === 'failed'
-                            ? 'bg-rose-500/10 text-rose-400'
-                            : 'bg-zinc-800 text-zinc-400'
-                        }`}
-                      >
-                        {stageStatus}
-                      </span>
-                    </div>
-
-                    {stageRow?.error && (
-                      <p className="text-xs text-rose-400 line-clamp-2">
-                        {stageRow.error}
-                      </p>
-                    )}
-
-                    {stageRow?.started_at && (
-                      <span className="text-[11px] text-zinc-500">
-                        Started: {new Date(stageRow.started_at).toLocaleTimeString()}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <ActionBar
+            hint={
+              isRendering
+                ? 'Rendering now. You can leave this page; the render keeps going.'
+                : video?.status === 'rendered'
+                  ? 'The video is rendered and checked.'
+                  : 'Check the edit with a quick preview, or render the final video.'
+            }
+          >
+            {video?.status === 'rendered' ? (
+              <ButtonLink href={`/videos/${id}/publish`} variant="primary" iconRight="chevronRight">
+                Go to Publish
+              </ButtonLink>
+            ) : (
+              <>
+                <Button onClick={() => handleStartAssembly(true)} disabled={isTriggering || isRendering}>
+                  Quick preview
+                </Button>
+                <Button variant="primary" onClick={() => handleStartAssembly()} disabled={isTriggering || isRendering}>
+                  {isTriggering || isRendering ? 'Assembling…' : 'Start assembly'}
+                </Button>
+              </>
+            )}
+          </ActionBar>
         )}
-
-        {/* Scene Units Fine-Grained Checkpoints */}
-        {units.length > 0 && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-white">Scene Checkpoints</h2>
-                <p className="text-xs text-zinc-400">
-                  Completed {completedUnits} of {totalUnits} unit tasks
-                  {totalCost > 0 && ` • Estimated Cost: $${totalCost.toFixed(4)}`}
-                </p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                {/* Filter Tabs */}
-                <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs">
-                  <button
-                    onClick={() => setStageFilter('all')}
-                    className={`px-3 py-1.5 rounded-lg font-medium transition ${
-                      stageFilter === 'all'
-                        ? 'bg-zinc-800 text-white shadow'
-                        : 'text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    All ({totalUnits})
-                  </button>
-                  {visualsUnitsCount > 0 && (
-                    <button
-                      onClick={() => setStageFilter('visuals')}
-                      className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
-                        stageFilter === 'visuals'
-                          ? 'bg-emerald-600 text-white shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      <span>Visuals</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-950/80 border border-emerald-500/30">
-                        {visualsUnitsCount}
-                      </span>
-                    </button>
-                  )}
-                  {ttsUnitsCount > 0 && (
-                    <button
-                      onClick={() => setStageFilter('tts')}
-                      className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1.5 ${
-                        stageFilter === 'tts'
-                          ? 'bg-blue-600 text-white shadow'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      <span>TTS</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-950/80 border border-blue-500/30">
-                        {ttsUnitsCount}
-                      </span>
-                    </button>
-                  )}
-                </div>
-
-                <div className="w-full sm:w-36 bg-zinc-800 h-2.5 rounded-full overflow-hidden shrink-0">
-                  <div
-                    className="bg-emerald-500 h-full transition-all duration-500"
-                    style={{
-                      width: `${totalUnits > 0 ? (completedUnits / totalUnits) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {filteredUnits.map((unit) => {
-                const asset =
-                  unit.stage === 'visuals'
-                    ? assets.find((a) => a.beat_index === unit.unit_index)
-                    : null;
-                const visualType =
-                  asset?.visual_type ||
-                  (unit.output_path?.endsWith('.png') ? 'chart' : 'stock');
-
-                if (unit.stage === 'visuals') {
-                  return (
-                    <div
-                      key={unit.id}
-                      className="p-5 rounded-xl bg-zinc-950 border border-zinc-800/90 hover:border-zinc-700/80 transition space-y-4"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xs font-mono font-bold text-zinc-300 shrink-0">
-                            #{unit.unit_index}
-                          </span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                                {unit.stage}
-                              </span>
-                              <span
-                                className={`text-[10px] px-2 py-0.5 rounded font-mono ${
-                                  unit.status === 'done'
-                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                    : unit.status === 'running'
-                                    ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse'
-                                    : unit.status === 'failed'
-                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                                    : 'bg-zinc-800 text-zinc-400'
-                                }`}
-                              >
-                                {unit.status}
-                              </span>
-                            </div>
-                            {unit.output_path && (
-                              <p
-                                className="text-xs text-zinc-500 font-mono truncate max-w-xs sm:max-w-md mt-0.5"
-                                title={unit.output_path}
-                              >
-                                {unit.output_path}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 text-xs text-zinc-400 font-mono self-end sm:self-center">
-                          {unit.duration_ms != null && unit.duration_ms > 0 && (
-                            <span className="bg-zinc-900 px-2.5 py-1 rounded border border-zinc-800 text-zinc-300">
-                              {(unit.duration_ms / 1000).toFixed(1)}s
-                            </span>
-                          )}
-                          {unit.cost_usd != null && (
-                            <span>${Number(unit.cost_usd).toFixed(4)}</span>
-                          )}
-                          {unit.attempts > 1 && (
-                            <span className="text-amber-400">{unit.attempts} attempts</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {job && unit.status === 'done' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start pt-2 border-t border-zinc-900">
-                          {/* Visual Media Preview */}
-                          <div className="space-y-2">
-                            {visualType === 'chart' ? (
-                              <div className="rounded-xl overflow-hidden border border-zinc-800 bg-zinc-900 flex items-center justify-center aspect-video">
-                                <img
-                                  src={`/api/jobs/${job.id}/units/${unit.unit_index}/visual`}
-                                  alt={`Beat ${unit.unit_index} chart`}
-                                  className="w-full h-full object-contain"
-                                  loading="lazy"
-                                />
-                              </div>
-                            ) : (
-                              <div className="rounded-xl overflow-hidden border border-zinc-800 bg-black aspect-video flex items-center justify-center">
-                                <video
-                                  controls
-                                  preload="metadata"
-                                  className="w-full h-full object-contain"
-                                  src={`/api/jobs/${job.id}/units/${unit.unit_index}/visual`}
-                                />
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Provenance Fields */}
-                          <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-xl p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                                Provenance & License
-                              </span>
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                {asset?.visual_type || visualType}
-                              </span>
-                            </div>
-
-                            {asset ? (
-                              <div className="space-y-2.5 text-xs text-zinc-300">
-                                {asset.license_source && (
-                                  <div className="flex items-center justify-between gap-2 border-b border-zinc-800/60 pb-2">
-                                    <span className="text-zinc-400 text-xs">Source Provider:</span>
-                                    <span className="font-medium text-white capitalize bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700/60 font-mono text-[11px]">
-                                      {asset.license_source}
-                                    </span>
-                                  </div>
-                                )}
-
-                                {asset.source_url && (
-                                  <div className="space-y-1 border-b border-zinc-800/60 pb-2">
-                                    <span className="text-zinc-400 text-xs">Original Media URL:</span>
-                                    <div>
-                                      <a
-                                        href={asset.source_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-sky-400 hover:text-sky-300 hover:underline inline-flex items-center gap-1.5 break-all text-[11px] font-mono"
-                                        title={asset.source_url}
-                                      >
-                                        <span className="line-clamp-1">{asset.source_url}</span>
-                                        <span className="shrink-0 text-xs">↗</span>
-                                      </a>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {asset.license_type && (
-                                  <div className="flex items-center justify-between gap-2 border-b border-zinc-800/60 pb-2">
-                                    <span className="text-zinc-400 text-xs">License:</span>
-                                    <span className="text-zinc-200 text-[11px]">
-                                      {asset.license_type}
-                                    </span>
-                                  </div>
-                                )}
-
-                                {asset.attribution_text && (
-                                  <div className="space-y-1">
-                                    <span className="text-zinc-400 text-xs">Attribution:</span>
-                                    <p
-                                      className="text-[11px] text-zinc-300 bg-zinc-950/70 p-2.5 rounded-lg border border-zinc-800/80 font-mono break-words"
-                                      title={asset.attribution_text}
-                                    >
-                                      {asset.attribution_text}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <p className="text-xs text-zinc-500 italic py-2">
-                                No provenance record registered in video_assets.
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-
-                return (
-                  <div
-                    key={unit.id}
-                    className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 flex flex-col md:flex-row md:items-center justify-between gap-4"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center text-xs font-mono font-bold text-zinc-300 shrink-0">
-                        #{unit.unit_index}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold uppercase text-zinc-300">
-                            {unit.stage}
-                          </span>
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded font-mono ${
-                              unit.status === 'done'
-                                ? 'bg-emerald-500/10 text-emerald-400'
-                                : unit.status === 'running'
-                                ? 'bg-blue-500/10 text-blue-400 animate-pulse'
-                                : unit.status === 'failed'
-                                ? 'bg-rose-500/10 text-rose-400'
-                                : 'bg-zinc-800 text-zinc-400'
-                            }`}
-                          >
-                            {unit.status}
-                          </span>
-                        </div>
-                        {unit.output_path && (
-                          <p className="text-xs text-zinc-500 font-mono truncate max-w-xs sm:max-w-md mt-0.5">
-                            {unit.output_path}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-4 self-end md:self-center">
-                      {job && unit.status === 'done' && unit.stage === 'tts' && (
-                        <audio
-                          controls
-                          preload="none"
-                          className="h-8 max-w-[240px] sm:max-w-[280px]"
-                          src={`/api/jobs/${job.id}/units/${unit.unit_index}/audio`}
-                        />
-                      )}
-
-                      <div className="flex items-center gap-4 text-xs text-zinc-400 font-mono">
-                        {unit.duration_ms != null && unit.duration_ms > 0 && (
-                          <span>{(unit.duration_ms / 1000).toFixed(1)}s</span>
-                        )}
-                        {unit.cost_usd != null && (
-                          <span>${Number(unit.cost_usd).toFixed(4)}</span>
-                        )}
-                        {unit.attempts > 1 && (
-                          <span className="text-amber-400">{unit.attempts} attempts</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

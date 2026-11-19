@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
+import { PageContainer } from '@/components/ui/page';
 import type { FormatDef } from '@/lib/styles/formats';
 import type { NicheDef } from '@/lib/styles/niches';
 import type { StyleLibrary, WriterVoice } from '@/lib/styles/compose';
@@ -143,18 +143,11 @@ export default function StylesPage() {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 py-12 px-4 sm:px-6 lg:px-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-10">
+    <PageContainer width="narrow">
         <div>
-          <div className="flex items-center gap-2 text-sm text-zinc-400 mb-6">
-            <Link href="/" className="hover:text-zinc-200">
-              Pipeline Dashboard
-            </Link>
-            <span>/</span>
-            <span className="text-zinc-200 font-medium">Packs &amp; voices</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white">Packs &amp; voices</h1>
-          <p className="text-sm text-zinc-400 mt-1 max-w-2xl">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Styles</p>
+          <h1 className="mt-1.5 text-2xl sm:text-3xl font-bold tracking-tight text-zinc-50">Packs and voices</h1>
+          <p className="text-sm text-zinc-400 mt-1.5 max-w-2xl leading-relaxed">
             A video’s style is a <strong className="text-zinc-200">format</strong> (how it’s built) plus a <strong className="text-zinc-200">niche</strong>{' '}
             (what it’s about and how it looks). Clone a built-in one to make your own, and save your writing <strong className="text-zinc-200">voices</strong>{' '}
             so scripts sound like you. Every video keeps the style it was made with, so editing here never changes finished videos.
@@ -234,7 +227,6 @@ export default function StylesPage() {
             </section>
           </>
         )}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

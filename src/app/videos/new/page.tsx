@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { PageContainer } from '@/components/ui/page';
 import type { FormatDef } from '@/lib/styles/formats';
 import type { NicheDef } from '@/lib/styles/niches';
 import {
@@ -343,27 +344,17 @@ export default function NewVideoPage() {
   const note = runtimeNote(minutes);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 font-sans">
-      <div className="w-full max-w-3xl">
-        <div className="flex items-center justify-between gap-2 text-sm text-zinc-400 mb-8">
-          <div className="flex items-center gap-2">
-            <Link href="/" className="hover:text-zinc-200 transition">
-              Pipeline Dashboard
-            </Link>
-            <span>/</span>
-            <span className="text-zinc-200 font-medium">New Video</span>
-          </div>
-          <Link href="/styles" className="text-xs text-indigo-400 hover:text-indigo-300">
-            Packs &amp; voices →
+    <PageContainer width="narrow">
+        <div className="flex justify-end">
+          <Link href="/styles" className="text-xs font-medium text-indigo-300 hover:text-indigo-200">
+            Packs and voices
           </Link>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden">
           <div className="p-6 sm:p-8 border-b border-zinc-800/80 bg-gradient-to-b from-zinc-800/40 to-transparent">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold uppercase tracking-wider mb-3">
-              Step 1 • Script Creation
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">Create New Video</h1>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Step 1 · Script</p>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-50">New video</h1>
             <p className="mt-1 text-sm text-zinc-400">Start from an idea, paste your own script, or upload SRT subtitles.</p>
             <div className="flex items-center gap-2 mt-6 p-1 bg-zinc-950 rounded-xl border border-zinc-800">
               {tabButton('ai', '🤖 From an idea')}
@@ -791,7 +782,6 @@ export default function NewVideoPage() {
             </div>
           </form>
         </div>
-      </div>
-    </div>
+    </PageContainer>
   );
 }

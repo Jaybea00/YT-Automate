@@ -1,240 +1,238 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { VideoRecord } from '@/lib/types/video';
+import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
+import { ButtonLink } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Icon } from '@/components/ui/icon';
+import { cn } from '@/components/ui/cn';
+import { VIDEO_STEPS, currentStep, statusOf } from '@/components/shell/video-status';
 
-export default function PipelineDashboard() {
-  const [videos, setVideos] = useState<VideoRecord[]>([]);
+interface VideoSummary {
+  id: string;
+  title: string | null;
+  topic: string;
+  style: string | null;
+  target_minutes: number | null;
+  status: string;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+type Filter = 'all' | 'review' | 'production' | 'done' | 'failed';
+
+const FILTERS: Array<{ id: Filter; label: string; statuses?: string[] }> = [
+  { id: 'all', label: 'All' },
+  { id: 'review', label: 'To review', statuses: ['script_review'] },
+  { id: 'production', label: 'In production', statuses: ['queued', 'scripting', 'voicing', 'sourcing', 'assembling'] },
+  { id: 'done', label: 'Rendered', statuses: ['rendered', 'published'] },
+  { id: 'failed', label: 'Failed', statuses: ['failed'] },
+];
+
+const inFilter = (v: VideoSummary, f: Filter) => {
+  const statuses = FILTERS.find((x) => x.id === f)?.statuses;
+  return !statuses || statuses.includes(v.status);
+};
+
+const prettyStyle = (s: string | null) => (s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'No style');
+
+/** A video's thumbnail when it has been rendered, or a quiet placeholder. */
+function Thumb({ video }: { video: VideoSummary }) {
+  const [failed, setFailed] = useState(false);
+  const rendered = video.status === 'rendered' || video.status === 'published';
+  return (
+    <div className="relative aspect-video overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+      {rendered && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`/api/videos/${video.id}/publish/file?kind=thumbnail&n=1`}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+        />
+      ) : (
+        <div className="grid h-full w-full place-items-center bg-[radial-gradient(ellipse_at_top,rgba(99,102,241,0.12),transparent_60%)]">
+          <Icon name="film" size={28} className="text-zinc-700" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The six steps as small marks: done, the one it's at, and the rest. */
+function StepMarks({ status }: { status: string }) {
+  const at = VIDEO_STEPS.findIndex((s) => s.key === currentStep(status));
+  const done = status === 'rendered' || status === 'published';
+  return (
+    <div className="flex items-center gap-1" aria-label={`Step ${at + 1} of ${VIDEO_STEPS.length}`}>
+      {VIDEO_STEPS.map((s, i) => (
+        <span
+          key={s.key}
+          title={s.label}
+          className={cn('h-1.5 flex-1 rounded-full', i < at || done ? 'bg-emerald-500/70' : i === at ? 'bg-indigo-400' : 'bg-zinc-800')}
+        />
+      ))}
+    </div>
+  );
+}
+
+function VideoCard({ video }: { video: VideoSummary }) {
+  const st = statusOf(video.status);
+  const step = VIDEO_STEPS.find((s) => s.key === currentStep(video.status)) ?? VIDEO_STEPS[0];
+  return (
+    <Link
+      href={`/videos/${video.id}/${step.key}`}
+      className="group flex min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-3 transition-colors hover:border-zinc-700 hover:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+    >
+      <Thumb video={video} />
+      <div className="min-w-0 space-y-2 px-1 pb-1">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-zinc-100 group-hover:text-white">{video.title || video.topic}</h3>
+          <Badge tone={st.tone} pulse={st.busy} className="shrink-0">
+            {st.label}
+          </Badge>
+        </div>
+        <p className="truncate text-xs text-zinc-500">
+          {prettyStyle(video.style)}
+          {video.target_minutes ? ` · ${video.target_minutes} min` : ''}
+          {video.created_at ? ` · ${new Date(video.created_at).toLocaleDateString()}` : ''}
+        </p>
+        <StepMarks status={video.status} />
+        <p className="flex items-center gap-1 text-xs font-medium text-zinc-400 group-hover:text-indigo-300">
+          {video.status === 'failed' ? 'See what went wrong' : video.status === 'rendered' || video.status === 'published' ? 'Open Publish' : `Continue: ${step.label}`}
+          <Icon name="chevronRight" size={14} className="transition-transform group-hover:translate-x-0.5" />
+        </p>
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * The studio's home: every video as a card (thumbnail, status, how far it has got), with a
+ * search and filters by where each video stands.
+ */
+export default function VideosDashboard() {
+  const [videos, setVideos] = useState<VideoSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
-    async function loadVideos() {
-      try {
-        const res = await fetch('/api/videos');
-        if (!res.ok) {
-          throw new Error('Failed to fetch videos.');
-        }
+    let cancelled = false;
+    fetch('/api/videos?summary=1')
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Could not load your videos.');
         const data = await res.json();
-        setVideos(Array.isArray(data) ? data : []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadVideos();
+        if (!cancelled) setVideos(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : 'Could not load your videos.'))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const getStatusBadge = (status: VideoRecord['status']) => {
-    switch (status) {
-      case 'script_review':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 border border-amber-500/20 text-amber-400">
-            Review Needed
-          </span>
-        );
-      case 'voicing':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            Approved (Voicing)
-          </span>
-        );
-      case 'scripting':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/10 border border-blue-500/20 text-blue-400 animate-pulse">
-            Generating Script
-          </span>
-        );
-      case 'failed':
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-red-500/10 border border-red-500/20 text-red-400">
-            Failed
-          </span>
-        );
-      default:
-        return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-800 text-zinc-300">
-            {status}
-          </span>
-        );
-    }
-  };
+  const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.id, videos.filter((v) => inFilter(v, f.id)).length])) as Record<Filter, number>, [videos]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return videos.filter((v) => inFilter(v, filter) && (!q || `${v.title ?? ''} ${v.topic} ${v.style ?? ''}`.toLowerCase().includes(q)));
+  }, [videos, filter, query]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-5xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 border-b border-zinc-800">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-xs font-bold tracking-wider text-red-400 uppercase">
-                Autonomous Studio
-              </span>
-            </div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight">
-              YouTube Automation Pipeline
-            </h1>
-            <p className="text-sm text-zinc-400 mt-1">
-              Script generation, AI review, and multi-stage production workflow.
-            </p>
-          </div>
+    <PageContainer>
+      <PageHeader
+        eyebrow="Studio"
+        title="Videos"
+        description="Every video, from script to publish. Open one to pick up where it left off."
+        actions={
+          <ButtonLink href="/videos/new" variant="primary" icon="plus">
+            New video
+          </ButtonLink>
+        }
+      />
 
-          <div className="flex items-center gap-3">
-            <Link
-              href="/narrators"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🎙️ Narrator Voices</span>
-            </Link>
-            <Link
-              href="/styles"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🧩 Packs &amp; Voices</span>
-            </Link>
-            <Link
-              href="/clips"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>✂️ Clip to Short</span>
-            </Link>
-            <Link
-              href="/hunts"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🎯 Stream Hunter</span>
-            </Link>
-            <Link
-              href="/moments"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🎞️ Compilations</span>
-            </Link>
-            <Link
-              href="/library"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🎞️ Clip Library</span>
-            </Link>
-            <Link
-              href="/overnight"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-200 font-semibold text-sm transition cursor-pointer"
-            >
-              <span>🌙 Overnight</span>
-            </Link>
-            <Link
-              href="/videos/new"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 active:bg-red-700 text-white font-semibold text-sm shadow-lg shadow-red-600/20 transition cursor-pointer"
-            >
-              <span>+ New Video</span>
-            </Link>
-          </div>
+      {!loading && !error && videos.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {(['review', 'production', 'done', 'failed'] as const).map((f) => {
+            const item = FILTERS.find((x) => x.id === f)!;
+            return (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFilter(filter === f ? 'all' : f)}
+                aria-pressed={filter === f}
+                className={cn(
+                  'rounded-2xl border p-4 text-left transition-colors',
+                  filter === f ? 'border-indigo-500/60 bg-indigo-500/10' : 'border-zinc-800/80 bg-zinc-900/50 hover:border-zinc-700',
+                )}
+              >
+                <p className="text-xs text-zinc-400">{item.label}</p>
+                <p className={cn('mt-1 text-2xl font-semibold tabular-nums', f === 'failed' && counts[f] ? 'text-red-300' : 'text-zinc-50')}>{counts[f]}</p>
+              </button>
+            );
+          })}
         </div>
+      )}
 
-        {/* Video List */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white">Pipeline Videos</h2>
-            <span className="text-xs text-zinc-400">
-              {videos.length} {videos.length === 1 ? 'project' : 'projects'}
-            </span>
+      {!loading && !error && videos.length > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none]">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFilter(f.id)}
+                aria-pressed={filter === f.id}
+                className={cn(
+                  'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors',
+                  filter === f.id ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100',
+                )}
+              >
+                {f.label}
+                <span className="text-zinc-500 tabular-nums">{counts[f.id]}</span>
+              </button>
+            ))}
           </div>
-
-          {loading ? (
-            <div className="p-12 text-center bg-zinc-900 border border-zinc-800 rounded-2xl">
-              <div className="w-8 h-8 border-3 border-zinc-700 border-t-red-500 rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-xs text-zinc-400">Loading videos from database...</p>
-            </div>
-          ) : error ? (
-            <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-2xl text-center space-y-2">
-              <p className="text-sm text-zinc-400">
-                Could not load videos. Make sure Supabase environment variables are configured.
-              </p>
-              <div className="pt-2">
-                <Link
-                  href="/videos/new"
-                  className="inline-block px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-semibold"
-                >
-                  Create Your First Video
-                </Link>
-              </div>
-            </div>
-          ) : videos.length === 0 ? (
-            <div className="p-12 text-center bg-zinc-900 border border-zinc-800 rounded-2xl space-y-4">
-              <div className="w-12 h-12 rounded-full bg-zinc-800 text-zinc-400 mx-auto flex items-center justify-center text-xl">
-                🎬
-              </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-bold text-white">No videos created yet</h3>
-                <p className="text-xs text-zinc-400 max-w-sm mx-auto">
-                  Start your pipeline by generating your first structured script with Claude.
-                </p>
-              </div>
-              <div>
-                <Link
-                  href="/videos/new"
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs transition"
-                >
-                  Create New Video Script
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {videos.map((vid) => (
-                <Link
-                  key={vid.id}
-                  href={`/videos/${vid.id}/review`}
-                  className="p-5 rounded-2xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900/80 transition flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 group"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-zinc-500">
-                        {vid.id.slice(0, 8)}...
-                      </span>
-                      {getStatusBadge(vid.status)}
-                    </div>
-                    <h3 className="text-base font-bold text-white group-hover:text-red-400 transition">
-                      {vid.title || vid.topic}
-                    </h3>
-                    <div className="flex items-center gap-3 text-xs text-zinc-400">
-                      <span>Style: <strong className="text-zinc-300 uppercase">{vid.style}</strong></span>
-                      <span>•</span>
-                      <span>Target: {vid.target_minutes}m</span>
-                      {vid.created_at && (
-                        <>
-                          <span>•</span>
-                          <span>{new Date(vid.created_at).toLocaleDateString()}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-xs font-semibold text-zinc-400 group-hover:text-zinc-200">
-                    <span>Review Script</span>
-                    <svg
-                      className="w-4 h-4 transition-transform group-hover:translate-x-1"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5l7 7-7 7"
-                      />
-                    </svg>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
+          <label className="relative block sm:w-72">
+            <span className="sr-only">Search videos</span>
+            <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by title, topic or style"
+              className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-900/60 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-zinc-600 focus:outline-none"
+            />
+          </label>
         </div>
-      </div>
-    </div>
+      )}
+
+      {loading ? (
+        <EmptyState loading title="Loading your videos…" />
+      ) : error ? (
+        <EmptyState title={error} description="Check that the Supabase settings in .env.local are filled in." />
+      ) : videos.length === 0 ? (
+        <EmptyState
+          title="Make your first video"
+          description="Start from an idea, a pasted script or subtitles. The studio writes, voices, illustrates and assembles it."
+          action={
+            <ButtonLink href="/videos/new" variant="primary" icon="plus">
+              New video
+            </ButtonLink>
+          }
+        />
+      ) : shown.length === 0 ? (
+        <EmptyState title="No videos match" description="Try another filter or search." />
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {shown.map((v) => (
+            <VideoCard key={v.id} video={v} />
+          ))}
+        </div>
+      )}
+    </PageContainer>
   );
 }

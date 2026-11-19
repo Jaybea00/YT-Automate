@@ -2,6 +2,9 @@
 
 import React, { use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { PageContainer, EmptyState } from '@/components/ui/page';
+import { ButtonLink } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { useRouter } from 'next/navigation';
 import type { Compilation, CompilationItem } from '@/pipeline/compile/types';
 
@@ -162,20 +165,29 @@ export default function CompilationPage({ params }: { params: Promise<{ id: stri
     else setError(((await res.json()) as { error?: string }).error || 'Could not delete');
   };
 
-  if (notFound) return <div className="min-h-screen bg-zinc-950 text-zinc-100 p-8">Compilation not found. <Link href="/moments" className="underline">Back</Link></div>;
-  if (!comp || !draft) return <div className="min-h-screen bg-zinc-950 text-zinc-400 p-8">Loading…</div>;
+  if (notFound)
+    return (
+      <PageContainer>
+        <EmptyState title="Compilation not found" action={<ButtonLink href="/moments" icon="chevronLeft">Back to moments</ButtonLink>} />
+      </PageContainer>
+    );
+  if (!comp || !draft)
+    return (
+      <PageContainer>
+        <EmptyState loading title="Loading the compilation…" />
+      </PageContainer>
+    );
 
   const short = draft.format === 'short';
   const n = draft.items.length;
   const total = draft.items.reduce((s, it) => s + (it.end - it.start), 0);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+    <PageContainer>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <Link href="/moments" className="text-sm text-zinc-500 hover:text-zinc-300">← Moments</Link>
-            <h1 className="text-xl font-bold mt-1 truncate">{comp.titles[0] || comp.theme}</h1>
+            <Link href="/moments" className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-200"><Icon name="chevronLeft" size={14} />Moments</Link>
+            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-50 truncate">{comp.titles[0] || comp.theme}</h1>
             <p className="text-xs text-zinc-500">{short ? 'Short (9:16)' : 'Countdown (16:9)'} · {n} clips · {short ? `${total.toFixed(0)}s of clips` : `${mmss(total)} of clips`}</p>
           </div>
           <button onClick={remove} disabled={working} className="text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40">Delete</button>
@@ -202,7 +214,7 @@ export default function CompilationPage({ params }: { params: Promise<{ id: stri
           <ul className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-amber-300/90 space-y-1 list-disc pl-6">{comp.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         )}
 
-        <div className={`grid gap-5 items-start ${short ? 'lg:grid-cols-[340px_1fr]' : ''}`}>
+        <div className={`grid grid-cols-1 gap-5 items-start [&>*]:min-w-0 ${short ? 'lg:grid-cols-[340px_1fr]' : ''}`}>
           <div className="space-y-3 lg:sticky lg:top-4">
             {comp.output ? (
               <video key={comp.output.renderedAt} src={`/api/compilations/${id}/file?name=video&v=${encodeURIComponent(comp.output.renderedAt)}`} controls playsInline className={`w-full rounded-2xl bg-black border border-zinc-800 ${short ? 'aspect-[9/16]' : 'aspect-video'}`} />
@@ -239,7 +251,7 @@ export default function CompilationPage({ params }: { params: Promise<{ id: stri
                     </div>
                     <input value={it.label} onChange={(e) => setItem(i, { label: e.target.value })} placeholder="Label" className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-sm" />
                     {!short && <input value={it.line} onChange={(e) => setItem(i, { line: e.target.value })} placeholder="Voiceover before the clip" className="w-full bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-xs" />}
-                    <div className="flex items-center gap-2 text-xs text-zinc-500">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                       From <Num value={it.start} onChange={(v) => setItem(i, { start: v })} /> to <Num value={it.end} onChange={(v) => setItem(i, { end: v })} />s
                       <span>({(it.end - it.start).toFixed(1)}s)</span>
                     </div>
@@ -251,8 +263,8 @@ export default function CompilationPage({ params }: { params: Promise<{ id: stri
                   </div>
                 </div>
               ))}
-              <div className="flex gap-2 pt-2 border-t border-zinc-800">
-                <select value={adding} onChange={(e) => setAdding(e.target.value)} className="flex-1 bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-sm">
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-800">
+                <select value={adding} onChange={(e) => setAdding(e.target.value)} className="min-w-0 w-full sm:w-auto flex-1 bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-sm">
                   <option value="">Add a clip from the library…</option>
                   {library.filter((l) => !draft.items.some((it) => it.key === l.key)).map((l) => <option key={l.key} value={l.key}>{l.title.slice(0, 70)} · {l.creator}</option>)}
                 </select>
@@ -328,7 +340,6 @@ export default function CompilationPage({ params }: { params: Promise<{ id: stri
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </PageContainer>
   );
 }
