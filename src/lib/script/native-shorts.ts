@@ -136,7 +136,7 @@ export async function createNativeShort(
     });
     const titled = { ...written, title_options: [idea.title, ...written.title_options.filter((t) => t !== idea.title)] };
     const planned = await planShots(supabase, titled, idea.title, { style: parent.style, pack });
-    const checks = await afterWriteChecks(supabase, idea.title, planned, parent.style, pack);
+    const checks = await afterWriteChecks(supabase, idea.title, planned, parent.style, pack, row.id);
     const scriptJson = {
       ...withStyleDefaults(planned, parent.style, pack),
       ...inherited,

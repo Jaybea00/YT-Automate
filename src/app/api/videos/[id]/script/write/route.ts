@@ -59,7 +59,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       packaging: chosenPackage(packaging),
     });
     const planned = await planShots(supabase, written, video.topic, { style: video.style, pack: packForVideo(video), illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
-    const checks = await afterWriteChecks(supabase, video.topic, planned, video.style, packForVideo(video));
+    const checks = await afterWriteChecks(supabase, video.topic, planned, video.style, packForVideo(video), id);
 
     // Re-read so settings changed while the script was being written aren't lost
     const { data: latest } = await supabase.from('videos').select('script_json').eq('id', id).single();

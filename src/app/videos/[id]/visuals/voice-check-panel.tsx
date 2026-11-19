@@ -66,6 +66,8 @@ export function VoiceCheckPanel({
   const [voicedBeats, setVoicedBeats] = useState(0);
   const [isChecking, setIsChecking] = useState(false);
   const [revoicing, setRevoicing] = useState<number | null>(null);
+  const [fixingAll, setFixingAll] = useState<{ done: number; total: number } | null>(null);
+  const [notes, setNotes] = useState<Map<number, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   function merge(list: BeatVoiceCheck[], voiced?: number) {
@@ -112,24 +114,52 @@ export function VoiceCheckPanel({
     }
   }
 
-  async function revoice(beatIndex: number) {
+  /** Voices the beat again a couple of ways, checks each take, and keeps the best one. */
+  async function retake(beatIndex: number) {
+    const res = await fetch(`/api/videos/${videoId}/beats/${beatIndex}/retake`, { method: 'POST' });
+    const json = (await res.json()) as { status?: string; reason?: string; takesTried?: number; error?: string };
+    if (!res.ok) throw new Error(json.error || 'Re-take failed');
+    const note =
+      json.status === 'fixed'
+        ? 'Fixed: a new take matches the script.'
+        : json.status === 'improved'
+          ? 'Better take kept; some problems remain (edit the wording or add a pronunciation).'
+          : json.status === 'no_better'
+            ? `${json.takesTried} new takes were no better, so the current one is kept. Try rewording the line or adding a pronunciation.`
+            : json.status === 'already_ok'
+              ? 'This beat already matches the script.'
+              : (json.reason ?? 'Skipped.');
+    setNotes((prev) => new Map(prev).set(beatIndex, note));
+    if (json.status === 'fixed' || json.status === 'improved') onRevoiced();
+    // The chosen take's check was saved with it, so this reads it back without listening again
+    await runCheck([beatIndex]);
+  }
+
+  async function retakeOne(beatIndex: number) {
     setRevoicing(beatIndex);
     setError(null);
     try {
-      const res = await fetch(`/api/videos/${videoId}/beats/${beatIndex}/regen-tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Re-voicing failed');
-      onRevoiced();
-      await runCheck([beatIndex], true);
+      await retake(beatIndex);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Re-voicing failed');
+      setError(err instanceof Error ? err.message : 'Re-take failed');
     } finally {
       setRevoicing(null);
     }
+  }
+
+  async function retakeAll(beatIndexes: number[]) {
+    setError(null);
+    for (const [i, beatIndex] of beatIndexes.entries()) {
+      setFixingAll({ done: i, total: beatIndexes.length });
+      setRevoicing(beatIndex);
+      try {
+        await retake(beatIndex);
+      } catch (err) {
+        setNotes((prev) => new Map(prev).set(beatIndex, err instanceof Error ? err.message : 'Re-take failed'));
+      }
+    }
+    setRevoicing(null);
+    setFixingAll(null);
   }
 
   const results = [...checks.values()].filter((c) => c.result);
@@ -157,9 +187,22 @@ export function VoiceCheckPanel({
 
       {voicedBeats === 0 && <p className="text-zinc-500">No voiced beats yet.</p>}
       {results.length > 0 && (
-        <p className={flagged.length ? 'text-amber-300' : 'text-emerald-300'}>
-          {results.length} of {voicedBeats} beats checked · {flagged.length ? `${flagged.length} need attention` : 'all match the script'}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className={flagged.length ? 'text-amber-300' : 'text-emerald-300'}>
+            {results.length} of {voicedBeats} beats checked · {flagged.length ? `${flagged.length} need attention` : 'all match the script'}
+          </p>
+          {flagged.length > 0 && (
+            <button
+              type="button"
+              onClick={() => retakeAll(flagged.map((c) => c.beatIndex))}
+              disabled={revoicing !== null || isChecking}
+              className={`${button} bg-amber-600 hover:bg-amber-500 text-white border-amber-500`}
+              title="Voices each flagged beat again a couple of ways and keeps the best take"
+            >
+              {fixingAll ? `Fixing ${fixingAll.done + 1} of ${fixingAll.total}…` : `Fix all ${flagged.length} automatically`}
+            </button>
+          )}
+        </div>
       )}
       {isChecking && <p className="text-zinc-500">Checking up to 3 beats at a time; this can take a few minutes.</p>}
       {error && <p className="text-red-300">{error}</p>}
@@ -181,14 +224,16 @@ export function VoiceCheckPanel({
                   ))}
                 </ul>
                 <p className="text-zinc-500">Heard: {c.result!.transcript}</p>
+                {notes.get(c.beatIndex) && <p className="text-zinc-300">{notes.get(c.beatIndex)}</p>}
               </div>
               <button
                 type="button"
-                onClick={() => revoice(c.beatIndex)}
+                onClick={() => retakeOne(c.beatIndex)}
                 disabled={revoicing !== null}
                 className={`${button} shrink-0 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border-zinc-700`}
+                title="Voices this beat again a couple of ways and keeps the best take"
               >
-                {revoicing === c.beatIndex ? 'Re-voicing…' : 'Re-voice'}
+                {revoicing === c.beatIndex ? 'Trying takes…' : 'Re-take (best of 2)'}
               </button>
             </li>
           ))}

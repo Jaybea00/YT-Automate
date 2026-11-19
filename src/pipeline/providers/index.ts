@@ -5,6 +5,7 @@ import { anthropicLlm } from './llm/anthropic';
 import { elevenLabsTts } from './tts/elevenlabs';
 import { openAiCompatTts, openAiTts } from './tts/openai-compatible';
 import { geminiTts } from './tts/gemini-tts';
+import { ai33Tts } from './tts/ai33';
 import { openAiImage, openAiCompatImage } from './image/openai';
 import { pollinationsImage } from './image/pollinations';
 import { falVideo } from './video/fal';
@@ -38,6 +39,7 @@ export function registerDefaultProviders(): void {
   registerProvider('tts', 'openai-compatible', openAiCompatTts);
   registerProvider('tts', 'openai', openAiTts);
   registerProvider('tts', 'gemini-tts', geminiTts);
+  registerProvider('tts', 'ai33', ai33Tts);
   registerProvider('image', 'openai', openAiImage);
   registerProvider('image', 'openai-compatible', openAiCompatImage);
   registerProvider('image', 'pollinations', pollinationsImage);

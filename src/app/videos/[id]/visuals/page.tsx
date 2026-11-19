@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckBadge, VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
+import { VoicePlanPanel } from './voice-plan-panel';
 import { ShotEditor } from './shot-editor';
 import { RhythmPanel } from './rhythm-panel';
 import { NeedsCheckBar } from './needs-check-bar';
@@ -1618,6 +1619,14 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             </div>
           </div>
         </div>
+
+        <VoicePlanPanel
+          videoId={id}
+          onRevoiced={() => {
+            setCacheBuster(Date.now());
+            void fetchVideoData();
+          }}
+        />
 
         <VoiceCheckPanel
           videoId={id}

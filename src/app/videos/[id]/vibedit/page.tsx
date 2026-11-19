@@ -974,7 +974,7 @@ export default function VibeditStudioPage({ params }: VibeditPageProps) {
                 {isActive && (
                   <details className="rounded-xl border border-zinc-800 bg-zinc-950/40">
                     <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-zinc-300">
-                      🗣️ Voice: pace, another narrator, record it yourself{data.video.script_json?.beat_voice?.[index] ? ' (changed)' : ''}
+                      🗣️ Voice: delivery, pace, characters, record it yourself{data.video.script_json?.beat_voice?.[index] ? ' (changed)' : ''}
                     </summary>
                     <div className="px-3 pb-3">
                       <BeatVoiceControls

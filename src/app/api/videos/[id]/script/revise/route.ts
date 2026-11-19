@@ -69,7 +69,7 @@ export async function POST(
       packaging: chosenPackage(video.script_json.packaging),
     });
     const revisedScript = await planShots(supabase, rewritten, video.topic, { style: video.style, pack: packForVideo(video), illustrations: video.script_json?.illustrations, drawingBudget: video.script_json?.drawing_budget });
-    const checks = await afterWriteChecks(supabase, video.topic, revisedScript, video.style, packForVideo(video));
+    const checks = await afterWriteChecks(supabase, video.topic, revisedScript, video.style, packForVideo(video), id);
 
     // 3. Update script_json with new result (keeping stored render settings); status stays 'script_review'
     const { data: updatedVideo, error: updateError } = await supabase

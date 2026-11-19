@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { loadPronunciations, savePronunciations } from '@/pipeline/tts/pronunciations';
 import { mergeHintsIntoList, type PronunciationHints } from '@/lib/script/pronunciation-hints';
+import { applyVoicePlan, describePlan, planForApproval } from '@/lib/script/voice-plan';
+import { packForVideo } from '@/lib/styles/compose';
 
 export async function POST(
   req: Request,
@@ -73,6 +75,20 @@ export async function POST(
       } catch (err) {
         console.warn('[approve] Could not add pronunciation hints; voicing without them:', err);
       }
+    }
+
+    // The voice plan: a mood per beat and voices for quoted characters, unless already set by hand
+    const beatVoice = (scriptJson.beat_voice ?? {}) as Record<string, Record<string, unknown>>;
+    const hasPlan = Object.values(beatVoice).some((v) => v?.mood || v?.parts);
+    if (!hasPlan) {
+      // Usually prepared in the background when the script was written, so approving stays quick
+      const beats = (scriptJson.beats as Array<{ text: string }>).map((b, index) => ({ index, text: b.text }));
+      const plan = await planForApproval(supabase, id, beats, scriptJson.voice_plan, packForVideo(video)?.label);
+      if (plan.moods || plan.casting) {
+        scriptJson = { ...scriptJson, beat_voice: applyVoicePlan(beatVoice, plan) };
+        console.log(`[approve] Voice plan (${plan.source}): ${describePlan(plan.moods, plan.casting)}`);
+      }
+      for (const w of plan.warnings) console.warn(`[approve] ${w}`);
     }
 
     // 3. Set script_approved_at = now(), title = selectedTitle, status = 'voicing'
