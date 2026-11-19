@@ -15,6 +15,8 @@ import { illustrationPrompt, renderIllustration } from './illustration';
 import { renderDrawingFile, revealShots } from './drawing-shot';
 import { packForVideo } from '@/lib/styles/compose';
 import { findDrawing, saveDrawing } from './drawings-store';
+import { loadFootageUsage, usedElsewhere } from './footage-usage';
+import { isGameTopic, loadMomentFootage } from './moments-footage';
 
 export type ShotEdit =
   /** Use one of the shot's alternatives, or a search result. */
@@ -31,7 +33,8 @@ export type ShotEdit =
   | { action: 'upload'; filePath: string; mediaType: 'video' | 'image'; license: string; attribution?: string | null; startSec?: number };
 
 export async function editorContext(supabase: SupabaseClient, videoId: string, beat: ComposedBeatRecord, needsBrowser: boolean) {
-  const { data: video } = await supabase.from('videos').select('style, script_json').eq('id', videoId).maybeSingle();
+  const { data: video } = await supabase.from('videos').select('style, topic, script_json').eq('id', videoId).maybeSingle();
+  const footageUsage = await loadFootageUsage();
   const stock = await resolveForStage<StockProvider>('visuals', supabase).catch(() => null);
   const llm = await resolveForStage<LLMProvider>('script', supabase).catch(() => null);
   const browser: Browser | undefined = needsBrowser ? await chromium.launch({ headless: true }) : undefined;
@@ -47,6 +50,9 @@ export async function editorContext(supabase: SupabaseClient, videoId: string, b
     // The beat's other shots are off limits, so a swap never repeats a neighbour
     usedSources: new Set(beat.shots.map((s) => s.sourceUrl).filter((u): u is string => Boolean(u))),
     motionCounter: { next: beat.beatIndex },
+    ...(process.env.CLIP_LOCAL_LOOK !== 'false' ? { localLook: true } : {}),
+    usedElsewhere: (key: string) => usedElsewhere(footageUsage, key, videoId),
+    ...(isGameTopic(video?.topic) ? { moments: await loadMomentFootage() } : {}),
     // A replaced archive shot gets the same texture as the rest of the video (no print beneath:
     // its neighbours are already rendered)
     ...(video?.script_json?.archive_look !== 'off' ? { archiveLook: { count: { next: beat.beatIndex } } } : {}),

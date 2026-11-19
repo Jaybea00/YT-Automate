@@ -19,6 +19,9 @@ import { sharpenSmallPhoto } from './upscale';
 import { ensureArchiveTextures, treatmentFor, type ArchiveTreatment } from './archive-look';
 import type { RenderedShot, ShotAlternative, ShotRenderer, ShotSlot } from './shot-composer';
 import type { MediaCandidate } from './types';
+import type { MomentFootage } from './moments-footage';
+import { graphicForWeakShot } from './weak-match';
+import { findCountry } from './maps/places';
 import { collagePhotoTemplate } from './motion/signature-templates-2';
 import { depthMap, parallaxClip, suitsParallax } from './parallax';
 import type { BibleTranslation } from '@/lib/stickman/bible';
@@ -53,6 +56,12 @@ export interface ShotRenderContext {
   upscale?: boolean;
   /** Creative Commons YouTube footage may fill in where other sources are thin (youtube-cc.ts). */
   youtubeCc?: boolean;
+  /** Rank footage with the local model first, and let it fill shots while the vision check is down (local-look.ts). */
+  localLook?: boolean;
+  /** How many other videos on the channel already used a source, to prefer fresh footage (footage-usage.ts). */
+  usedElsewhere?: (sourceKey: string) => number;
+  /** Hunted moments to use as footage (videos about a game only; moments-footage.ts). */
+  moments?: MomentFootage[];
   /**
    * A drawn (stickman) video: nothing is ever searched; a shot that can't render shows its
    * narration as type instead of footage.
@@ -110,7 +119,7 @@ export async function renderFootageShot(
   const query = options.query ?? shot.visual_query;
   const preferArchive = options.preferArchive ?? shot.visual_type === 'archive';
   const searchShot: ShotPlan = { ...shot, visual_query: query, visual_type: preferArchive ? 'archive' : 'stock' };
-  const { ranked, checked, unavailable } = await pickFootage({
+  const { ranked, checked, unavailable, localOnly } = await pickFootage({
     shot: searchShot,
     stockProvider: ctx.stockProvider,
     stockCtx: ctx.stockCtx,
@@ -118,6 +127,9 @@ export async function renderFootageShot(
     llmProvider: ctx.llmProvider,
     llmCtx: ctx.llmCtx,
     youtubeCc: ctx.youtubeCc,
+    localLook: ctx.localLook,
+    usedElsewhere: ctx.usedElsewhere,
+    moments: ctx.moments,
   });
   if (ranked.length === 0) {
     if (unavailable) {
@@ -138,11 +150,12 @@ export async function renderFootageShot(
   for (const { candidate, score } of ranked.slice(0, MAX_DOWNLOAD_ATTEMPTS)) {
     try {
       const rendered = await renderCandidateShot(searchShot, slot, clipPath, ctx, candidate, {
-        note: [options.note, checked ? `relevance ${score.toFixed(1)}/10` : 'unchecked relevance'].filter(Boolean).join('; '),
+        note: [options.note, checked ? `relevance ${score.toFixed(1)}/10` : localOnly ? `local look ${score.toFixed(1)}/10, not yet checked` : 'unchecked relevance'].filter(Boolean).join('; '),
         captionShot: shot,
         score: checked ? score : undefined,
       });
-      return { ...rendered, alternatives: alternatives(candidate) };
+      // Picked by the local look while the vision check was down: shown now, checked again later
+      return { ...rendered, alternatives: alternatives(candidate), ...(localOnly ? { needsCheck: true } : {}) };
     } catch (err) {
       lastError = err;
       console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: candidate ${candidate.provider} failed: ${err instanceof Error ? err.message.slice(0, 160) : err}`);
@@ -340,6 +353,20 @@ export function createShotRenderer(
       return await renderFootageShot(shot, slot, clipPath, ctx, options);
     } catch (err) {
       if (!(err instanceof NoRelevantFootageError)) throw err;
+      // Nothing fits (and the check did run): a graphic from the shot's own words, when they suggest one
+      if (!err.needsCheck) {
+        const graphic = graphicForWeakShot(shot, (name) => Boolean(findCountry(name)));
+        const render = graphic ? typed[graphic.visual_type] : undefined;
+        if (graphic && render) {
+          try {
+            const shown = await render(graphic, { ...slot, shot: graphic }, clipPath, ctx);
+            console.log(`[ShotRenderer] Beat ${ctx.beatIndex}: ${err.message}; shown as a ${graphic.visual_type} instead`);
+            return { ...shown, note: [options.note, `no footage fit: ${graphic.visual_type} from the narration`].filter(Boolean).join('; ') };
+          } catch (graphicErr) {
+            console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: ${graphic.visual_type} instead of footage failed (${graphicErr instanceof Error ? graphicErr.message.slice(0, 120) : graphicErr})`);
+          }
+        }
+      }
       console.warn(`[ShotRenderer] Beat ${ctx.beatIndex}: ${err.message}; showing the narration as type instead`);
       const card = await renderTextCard(shot, slot, clipPath, ctx, [options.note, err.message].filter(Boolean).join('; '));
       // Marked so the composer can let neighbouring footage cover it instead, and, when the check
