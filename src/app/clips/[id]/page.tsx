@@ -2,6 +2,9 @@
 
 import React, { use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { PageContainer, EmptyState } from '@/components/ui/page';
+import { ButtonLink } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { useRouter } from 'next/navigation';
 import type { ClipPlan, ClipProject, TextOverlay, VoiceLine } from '@/pipeline/clipping/types';
 
@@ -133,12 +136,17 @@ export default function ClipPage({ params }: { params: Promise<{ id: string }> }
 
   if (notFound) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 p-8">
-        <p>Clip not found. <Link href="/clips" className="underline">Back to clips</Link></p>
-      </div>
+      <PageContainer>
+        <EmptyState title="Clip not found" action={<ButtonLink href="/clips" icon="chevronLeft">Back to clips</ButtonLink>} />
+      </PageContainer>
     );
   }
-  if (!clip) return <div className="min-h-screen bg-zinc-950 text-zinc-400 p-8">Loading…</div>;
+  if (!clip)
+    return (
+      <PageContainer>
+        <EmptyState loading title="Loading the clip…" />
+      </PageContainer>
+    );
 
   const a = clip.analysis;
   const stepIndex = STEPS.indexOf(clip.status);
@@ -146,12 +154,11 @@ export default function ClipPage({ params }: { params: Promise<{ id: string }> }
   const setOverlay = (i: number, change: Partial<TextOverlay>) => edit({ overlays: draft!.overlays.map((o, k) => (k === i ? { ...o, ...change } : o)) });
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+    <PageContainer>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-0">
-            <Link href="/clips" className="text-sm text-zinc-500 hover:text-zinc-300">← Clips</Link>
-            <h1 className="text-xl font-bold mt-1 truncate">{clip.plan?.titles[0] || clip.source?.title || 'New clip'}</h1>
+            <Link href="/clips" className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-200"><Icon name="chevronLeft" size={14} />Clips</Link>
+            <h1 className="mt-1.5 text-2xl font-bold tracking-tight text-zinc-50 truncate">{clip.plan?.titles[0] || clip.source?.title || 'New clip'}</h1>
             <a href={clip.source?.pageUrl || clip.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-zinc-500 hover:text-zinc-300 break-all">
               {clip.source ? `${clip.source.platform} · ${clip.creator || clip.source.uploaderHandle || clip.source.uploader}` : clip.sourceUrl}
             </a>
@@ -347,7 +354,6 @@ export default function ClipPage({ params }: { params: Promise<{ id: string }> }
             <div className={`${card} text-sm text-zinc-500`}>The editor appears once the clip has been analysed and scripted.</div>
           )}
         </div>
-      </div>
-    </div>
+    </PageContainer>
   );
 }

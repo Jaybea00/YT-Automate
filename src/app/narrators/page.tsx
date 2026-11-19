@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import Link from 'next/link';
+import { PageContainer, PageHeader } from '@/components/ui/page';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Icon } from '@/components/ui/icon';
 import { PronunciationEditor } from './pronunciation-editor';
 import { STYLE_PACKS } from '@/lib/styles/packs';
 
@@ -237,96 +240,39 @@ export default function NarratorsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 py-10 px-4 sm:px-6 lg:px-8 font-sans selection:bg-red-500/30">
-      <div className="max-w-6xl mx-auto space-y-10">
-        {/* Navigation Breadcrumb */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-            <Link href="/" className="hover:text-zinc-200 transition-colors">
-              Pipeline Dashboard
-            </Link>
-            <span>/</span>
-            <span className="text-zinc-200 font-medium">Narrators & Voice Studio</span>
-          </div>
+    <PageContainer>
+        <PageHeader
+          eyebrow="Voices"
+          title="Narrators"
+          description="Sync the voices from Kokoro (on this laptop) and ElevenLabs, and choose the default voice for each style, so new videos get the right narrator."
+          meta={
+            <>
+              <Badge>{narrators.length} voices</Badge>
+              <Badge tone="success">{groupedNarrators.length} providers</Badge>
+              <Badge tone="info">
+                {Object.keys(styleDefaults).length} of {VIDEO_STYLES.length} style defaults
+              </Badge>
+            </>
+          }
+          actions={
+            <Button variant="primary" icon="refresh" onClick={() => handleSync()} disabled={syncingAll || Boolean(syncingProviderId)}>
+              {syncingAll ? 'Syncing all providers…' : 'Sync all providers'}
+            </Button>
+          }
+        />
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => handleSync()}
-              disabled={syncingAll || Boolean(syncingProviderId)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 active:scale-[0.98] text-white font-semibold text-xs shadow-lg shadow-red-600/25 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {syncingAll ? (
-                <>
-                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Syncing All Providers...</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  <span>Sync All Providers</span>
-                </>
-              )}
+        {syncMessage && (
+          <div
+            className={`flex items-center justify-between gap-3 rounded-xl border p-3 text-xs font-medium ${
+              syncMessage.type === 'success' ? 'border-emerald-800 bg-emerald-950/40 text-emerald-300' : 'border-red-800 bg-red-950/40 text-red-300'
+            }`}
+          >
+            <span>{syncMessage.text}</span>
+            <button onClick={() => setSyncMessage(null)} className="text-zinc-400 hover:text-white" aria-label="Dismiss">
+              <Icon name="x" size={14} />
             </button>
           </div>
-        </div>
-
-        {/* Hero Header */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-zinc-900 via-zinc-900/90 to-zinc-950 border border-zinc-800 p-8 sm:p-10 shadow-2xl">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-red-600/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                Multi-Voice Synthesis Engine
-              </div>
-              <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-                Narrator & Voice Picker
-              </h1>
-              <p className="text-zinc-400 text-sm max-w-2xl leading-relaxed">
-                Sync and audit voice rosters from Kokoro (Local Neural Engine) and ElevenLabs. Configure permanent style-to-voice mappings so video pipelines auto-assign the optimal voice.
-              </p>
-            </div>
-
-            {/* Quick Stats Badges */}
-            <div className="flex flex-wrap md:flex-col gap-3 shrink-0">
-              <div className="px-4 py-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 flex items-center justify-between gap-4">
-                <span className="text-xs text-zinc-400">Total Voices:</span>
-                <span className="text-sm font-mono font-bold text-white">{narrators.length}</span>
-              </div>
-              <div className="px-4 py-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 flex items-center justify-between gap-4">
-                <span className="text-xs text-zinc-400">Active Providers:</span>
-                <span className="text-sm font-mono font-bold text-emerald-400">{groupedNarrators.length}</span>
-              </div>
-              <div className="px-4 py-2 rounded-xl bg-zinc-950/80 border border-zinc-800/80 flex items-center justify-between gap-4">
-                <span className="text-xs text-zinc-400">Style Defaults:</span>
-                <span className="text-sm font-mono font-bold text-cyan-400">
-                  {Object.keys(styleDefaults).length} / {VIDEO_STYLES.length}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Sync Message Feedback */}
-          {syncMessage && (
-            <div
-              className={`mt-6 p-4 rounded-xl text-xs font-medium border flex items-center justify-between ${
-                syncMessage.type === 'success'
-                  ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
-                  : 'bg-red-950/40 border-red-800 text-red-300'
-              }`}
-            >
-              <span>{syncMessage.text}</span>
-              <button
-                onClick={() => setSyncMessage(null)}
-                className="text-zinc-400 hover:text-white text-xs cursor-pointer ml-4"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Section 1: Style-to-Narrator Defaults (Admin Section) */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
@@ -560,7 +506,6 @@ export default function NarratorsPage() {
         </div>
 
         <PronunciationEditor />
-      </div>
-    </div>
+    </PageContainer>
   );
 }

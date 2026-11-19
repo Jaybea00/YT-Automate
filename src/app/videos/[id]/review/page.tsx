@@ -2,6 +2,12 @@
 
 import React, { useEffect, useState, use } from 'react';
 import Link from 'next/link';
+import { ActionBar } from '@/components/ui/action-bar';
+import { VoicingPanel, type NarratorOption } from './voicing-panel';
+import { ImportScriptDialog } from './import-script-dialog';
+import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useRouter } from 'next/navigation';
 import { VideoRecord } from '@/lib/types/video';
 import { ScriptBeat } from '@/lib/script/generate-script';
@@ -20,7 +26,7 @@ import { BeatShots, ShotPlanSummary } from './shots-panel';
 import { DrawingsPanel } from '../drawings-panel';
 import { packForVideo } from '@/lib/styles/compose';
 import { CreationProgress, creationOf, RetryCreationButton } from './creation-progress';
-import { SENTENCE_BREATH_SEC, VOICE_SPEED_OPTIONS, videoPacing } from '@/lib/script/voice-pacing';
+import { videoPacing } from '@/lib/script/voice-pacing';
 import { BeatRewritePanel, HookLab, RuntimeMeter, ScriptDoctor } from './editor-panels';
 
 interface ReviewPageProps {
@@ -53,15 +59,7 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
   const [, setApprovalSuccess] = useState(false);
 
   // Narrator State
-  const [narrators, setNarrators] = useState<Array<{
-    id: string;
-    voice_id: string;
-    name: string;
-    sample_url: string | null;
-    tier: string | null;
-    provider_slug: string | null;
-    yt_provider_configs?: { label?: string; provider?: string } | null;
-  }>>([]);
+  const [narrators, setNarrators] = useState<NarratorOption[]>([]);
   const [styleDefaults, setStyleDefaults] = useState<Record<string, string>>({});
   const [selectedNarratorId, setSelectedNarratorId] = useState<string>('');
   const [voiceSpeed, setVoiceSpeed] = useState<number>(1);
@@ -71,13 +69,6 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
   // Script Import & Enhancement State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importTab, setImportTab] = useState<'raw' | 'srt'>('raw');
-  const [importRawText, setImportRawText] = useState('');
-  const [importRawMode, setImportRawMode] = useState<'raw_paragraphs' | 'raw_ai'>('raw_paragraphs');
-  const [importSrtText, setImportSrtText] = useState('');
-  const [importSmartMerge, setImportSmartMerge] = useState(true);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
   const [isGeneratingHints, setIsGeneratingHints] = useState(false);
   const [isPlanningShots, setIsPlanningShots] = useState(false);
   const [shotPlanError, setShotPlanError] = useState<string | null>(null);
@@ -394,44 +385,6 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
     setSaveFeedback(null);
   }
 
-  async function handleImportScript() {
-    setIsImporting(true);
-    setImportError(null);
-    try {
-      const payload: Record<string, unknown> = {
-        mode: importTab === 'srt' ? 'srt' : importRawMode,
-      };
-
-      if (importTab === 'srt') {
-        if (!importSrtText.trim()) throw new Error('Please provide SRT subtitle content.');
-        payload.srtText = importSrtText.trim();
-        payload.minBeatDurationSeconds = importSmartMerge ? 4.0 : 0;
-      } else {
-        if (!importRawText.trim()) throw new Error('Please provide script text.');
-        payload.rawText = importRawText.trim();
-      }
-
-      const res = await fetch(`/api/videos/${id}/script/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to import script');
-
-      if (json.script?.beats) {
-        setEditableBeats(json.script.beats);
-      }
-      setHasUnsavedEdits(false);
-      setIsImportModalOpen(false);
-      await fetchVideo(true);
-    } catch (err) {
-      setImportError(err instanceof Error ? err.message : 'Import failed');
-    } finally {
-      setIsImporting(false);
-    }
-  }
 
   async function handleAutoVisualHints() {
     setIsGeneratingHints(true);
@@ -541,162 +494,46 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 text-zinc-100">
-        <div className="w-10 h-10 border-4 border-zinc-800 border-t-red-500 rounded-full animate-spin mb-4" />
-        <p className="text-zinc-400 text-sm">Loading video details...</p>
-      </div>
+      <PageContainer>
+        <EmptyState loading title="Loading the script…" />
+      </PageContainer>
     );
   }
 
   if (error || !video) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6 text-zinc-100">
-        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 mx-auto flex items-center justify-center">
-            !
-          </div>
-          <h2 className="text-lg font-bold text-white">Unable to Load Video</h2>
-          <p className="text-sm text-zinc-400">{error || 'Video not found.'}</p>
-          <div className="flex justify-center gap-3 pt-2">
-            <Link
-              href="/"
-              className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-200 text-sm hover:bg-zinc-700 transition"
-            >
-              Dashboard
-            </Link>
-            <button
-              onClick={() => fetchVideo()}
-              className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm hover:bg-red-500 transition"
-            >
+      <PageContainer>
+        <EmptyState
+          title="Could not load this video"
+          description={error || 'Video not found.'}
+          action={
+            <Button variant="primary" icon="refresh" onClick={() => fetchVideo()}>
               Retry
-            </button>
-          </div>
-        </div>
-      </div>
+            </Button>
+          }
+        />
+      </PageContainer>
     );
   }
 
-  // Visual badge renderer
-  const renderVisualBadge = (type: ScriptBeat['visual_type']) => {
-    switch (type) {
-      case 'newspaper':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 border border-amber-500/20 text-amber-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            📰 Newspaper
-          </span>
-        );
-      case 'geo_map':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 border border-blue-500/20 text-blue-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-            🗺️ Map
-          </span>
-        );
-      case 'archive':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/10 border border-orange-500/20 text-orange-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-            🏛️ Archive
-          </span>
-        );
-      case 'chart':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            📊 Chart
-          </span>
-        );
-      case 'screen_recording':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            💻 Screen
-          </span>
-        );
-      case 'stock':
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 border border-purple-500/20 text-purple-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            🎬 Stock
-          </span>
-        );
-    }
-  };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center py-10 px-4 sm:px-6 lg:px-8">
-      <div className="w-full max-w-5xl space-y-8">
-        {/* Navigation Breadcrumb */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
-            <Link href="/" className="hover:text-zinc-200 transition">
-              Pipeline Dashboard
-            </Link>
-            <span>/</span>
-            <Link href="/videos/new" className="hover:text-zinc-200 transition">
-              New Video
-            </Link>
-            <span>/</span>
-            <span className="text-zinc-200 font-medium">Script Review</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs uppercase tracking-wider text-zinc-400 font-semibold">
-              Status:
-            </span>
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                video.status === 'script_review'
-                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                  : video.status === 'voicing'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                  : video.status === 'scripting'
-                  ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse'
-                  : video.status === 'failed'
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                  : 'bg-zinc-800 text-zinc-300'
-              }`}
-            >
-              {video.status}
-            </span>
-          </div>
-        </div>
-
-        {/* Video Topic & Metadata Header */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1">
-                Topic Angle
-              </p>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                {video.topic}
-              </h1>
-              <div className="flex flex-wrap items-center gap-4 mt-3 text-xs text-zinc-400">
-                <span className="flex items-center gap-1.5 bg-zinc-950 px-3 py-1 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400">Style:</span>
-                  <span className="font-semibold text-zinc-200 uppercase">{video.style}</span>
-                </span>
-                <span className="flex items-center gap-1.5 bg-zinc-950 px-3 py-1 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400">Target Duration:</span>
-                  <span className="font-semibold text-zinc-200">
-                    {video.target_minutes} min
-                  </span>
-                </span>
-                {video.script_json?.beats?.length ? (
-                  <span className="flex items-center gap-1.5 bg-zinc-950 px-3 py-1 rounded-lg border border-zinc-800">
-                    <span className="text-zinc-400">Estimated Duration:</span>
-                    <span className="font-semibold text-amber-400">
-                      ~{totalMinutesFormatted} min ({totalSeconds}s)
-                    </span>
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
+    <PageContainer>
+        <PageHeader
+          eyebrow="Script"
+          title={video.topic}
+          meta={
+            <>
+              <Badge>{String(video.style ?? '').replace(/_/g, ' ')}</Badge>
+              <Badge>Target {video.target_minutes} min</Badge>
+              {video.script_json?.beats?.length ? (
+                <Badge tone="warning">
+                  About {totalMinutesFormatted} min ({Math.round(totalSeconds)} s)
+                </Badge>
+              ) : null}
+            </>
+          }
+        />
 
         {/* Case 1: Status = 'scripting' (Generating/Polling) */}
         {video.status === 'scripting' && (
@@ -729,220 +566,21 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           </div>
         )}
 
-        {/* Case 3: Status = 'voicing' or later (Approved), or a later stage failed: pick a narrator and voice again */}
-        {video.status !== 'scripting' && video.status !== 'script_review' && (video.status !== 'failed' || Boolean(video.script_json?.beats?.length)) && (
-          <div className="bg-emerald-950/30 border border-emerald-800 rounded-2xl p-8 space-y-6 shadow-xl">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xl shrink-0">
-                ✓
-              </div>
-              <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold mb-1">
-                  Ready for Pipeline Stage 2
-                </div>
-                <h2 className="text-2xl font-bold text-white">
-                  Script Approved — {video.title || 'Untitled'}
-                </h2>
-                {video.script_approved_at && (
-                  <p className="text-xs text-zinc-400">
-                    Approved at: {new Date(video.script_approved_at).toLocaleString()}
-                  </p>
-                )}
-                {video.status === 'failed' && (
-                  <div className="mt-3 p-3 rounded-xl bg-red-950/40 border border-red-800 text-xs text-red-200">
-                    The last stage failed{video.error_message ? `: ${video.error_message}` : '.'} Your script is safe: pick a narrator below
-                    (a Kokoro voice is free and unlimited) and start voicing again.
-                  </div>
-                )}
-                {/* Narrator Voice Picker Card */}
-                <div className="mt-6 p-6 rounded-2xl bg-zinc-950/80 border border-zinc-800 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
-                    <div>
-                      <h3 className="text-base font-bold text-white flex items-center gap-2">
-                        <span>🎙️ Narrator Voice Selection</span>
-                        {styleDefaults[video.style] === selectedNarratorId && selectedNarratorId && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 border border-cyan-500/30 text-cyan-300">
-                            Pre-selected by Style Default ({video.style})
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-xs text-zinc-400 mt-0.5">
-                        Choose the voice actor for this video before initiating the TTS synthesis pipeline.
-                      </p>
-                    </div>
-                    <Link
-                      href="/narrators"
-                      className="text-xs text-zinc-400 hover:text-white transition flex items-center gap-1"
-                    >
-                      <span>Manage Defaults & Studio</span>
-                      <span>→</span>
-                    </Link>
-                  </div>
-
-                  {voiceTriggerError && (
-                    <div className="p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-300 text-xs">
-                      {voiceTriggerError}
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider block">
-                        Assigned Narrator Voice:
-                      </label>
-                      <select
-                        value={selectedNarratorId}
-                        onChange={(e) => setSelectedNarratorId(e.target.value)}
-                        className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-700/80 rounded-xl text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-red-500 cursor-pointer"
-                      >
-                        {narrators.length === 0 ? (
-                          <option value="">No voices synced yet</option>
-                        ) : (
-                          narrators.map((n) => (
-                            <option key={n.id} value={n.id}>
-                              {n.name} — {n.yt_provider_configs?.label || n.provider_slug || 'TTS'} {n.tier ? `(${n.tier})` : ''}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                    </div>
-
-                    {/* Voice details / Audio Preview */}
-                    <div className="space-y-1.5">
-                      {(() => {
-                        const sel = narrators.find((n) => n.id === selectedNarratorId);
-                        if (!sel) {
-                          return (
-                            <div className="text-xs text-zinc-500 italic p-2 rounded-lg bg-zinc-900/50">
-                              Please select a narrator or sync voices in the Narrator Studio.
-                            </div>
-                          );
-                        }
-                        return (
-                          <div>
-                            <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-1">
-                              Voice Preview:
-                            </span>
-                            {sel.sample_url ? (
-                              <audio
-                                controls
-                                preload="none"
-                                src={sel.sample_url}
-                                className="w-full h-9 rounded bg-zinc-900 accent-red-500 text-xs"
-                              />
-                            ) : (
-                              <div className="px-3 py-2 rounded-lg bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 flex items-center justify-between">
-                                <span className="flex items-center gap-1.5">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                  {sel.provider_slug === 'gemini-tts' || sel.yt_provider_configs?.provider === 'gemini-tts'
-                                    ? 'Gemini cloud voice'
-                                    : 'Local Kokoro Neural Voice'}
-                                </span>
-                                <span className="font-mono text-zinc-500">{sel.voice_id}</span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* Voice pace for this video */}
-                  <div className="space-y-2 pt-1">
-                    <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Voice speed</span>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {[
-                        ...VOICE_SPEED_OPTIONS,
-                        ...(VOICE_SPEED_OPTIONS.some((o) => o.speed === voiceSpeed) ? [] : [{ speed: voiceSpeed, label: 'Style pace', desc: `${Math.round(voiceSpeed * 100)}% of normal` }]),
-                      ].map((o) => (
-                        <button
-                          key={o.speed}
-                          type="button"
-                          onClick={() => setVoiceSpeed(o.speed)}
-                          className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                            voiceSpeed === o.speed ? 'bg-indigo-950/40 border-indigo-500/80 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                          }`}
-                        >
-                          <span className="block text-xs font-medium">{o.label}</span>
-                          <span className="block text-[10px] text-zinc-400 mt-0.5">{o.desc}</span>
-                        </button>
-                      ))}
-                    </div>
-                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
-                      <input type="checkbox" checked={breathSec > 0} onChange={(e) => setBreathSec(e.target.checked ? SENTENCE_BREATH_SEC : 0)} className="accent-indigo-500" />
-                      A short breath after each sentence
-                    </label>
-                    <p className="text-[11px] text-zinc-500">
-                      Speed works with Kokoro and ElevenLabs voices; the breath needs Kokoro. Gemini voices keep their own pace. A new speed re-voices every beat.
-                    </p>
-                  </div>
-
-                  <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-zinc-900">
-                    <p className="text-xs text-zinc-400">
-                      Voicing runs scenes in parallel and generates checkpointed audio files.
-                    </p>
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                      <button
-                        onClick={handleStartVoicing}
-                        disabled={isTriggeringVoice || !selectedNarratorId}
-                        className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 active:scale-[0.98] text-white font-bold text-xs shadow-lg shadow-red-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isTriggeringVoice ? (
-                          <>
-                            <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            <span>Queuing Voicing Job...</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>Start Voicing Pipeline</span>
-                            <span>→</span>
-                          </>
-                        )}
-                      </button>
-                      <Link
-                        href={`/videos/${id}/progress`}
-                        className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 text-xs font-semibold transition"
-                      >
-                        View Progress
-                      </Link>
-                      <Link
-                        href={`/videos/${id}/visuals`}
-                        className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-indigo-400 hover:text-indigo-300 text-xs font-semibold transition"
-                      >
-                        Upload Visuals →
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Approved Beats (Read-only review) */}
-            <div className="pt-4 border-t border-emerald-900/40">
-              <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">
-                Approved Script Beats ({video.script_json?.beats?.length || 0})
-              </h3>
-              <div className="space-y-3">
-                {video.script_json?.beats?.map((beat) => (
-                  <div
-                    key={beat.index}
-                    className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col gap-2"
-                  >
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      <span className="font-bold text-zinc-300">Beat #{beat.index}</span>
-                      <div className="flex items-center gap-2">
-                        {renderVisualBadge(beat.visual_type)}
-                        <span className="text-zinc-400">{beat.duration_estimate_seconds}s</span>
-                      </div>
-                    </div>
-                    <p className="text-sm text-zinc-200">{beat.text}</p>
-                    <p className="text-xs text-zinc-400 italic">Visual: {beat.visual_query}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        <VoicingPanel
+          id={id}
+          video={video}
+          narrators={narrators}
+          styleDefaults={styleDefaults}
+          selectedNarratorId={selectedNarratorId}
+          setSelectedNarratorId={setSelectedNarratorId}
+          voiceSpeed={voiceSpeed}
+          setVoiceSpeed={setVoiceSpeed}
+          breathSec={breathSec}
+          setBreathSec={setBreathSec}
+          isTriggeringVoice={isTriggeringVoice}
+          voiceTriggerError={voiceTriggerError}
+          onStartVoicing={handleStartVoicing}
+        />
 
         {/* Brief mode: the outline is approved before the full script is written */}
         {video.status === 'script_review' && video.script_json?.outline && !video.script_json.beats?.length && (
@@ -1453,154 +1091,33 @@ export default function ScriptReviewPage({ params }: ReviewPageProps) {
           </div>
         )}
 
-        {/* SCRIPT IMPORT MODAL */}
         {isImportModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in font-sans">
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-xl p-6 shadow-2xl space-y-5">
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white">Import / Replace Script</h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">
-                    Overwrite current beats with pre-written text or timed SRT subtitles.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsImportModalOpen(false)}
-                  className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-800"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Mode Tabs */}
-              <div className="flex items-center gap-2 p-1 bg-zinc-950 rounded-xl border border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setImportTab('raw')}
-                  className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition ${
-                    importTab === 'raw'
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  📝 Text / Markdown
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setImportTab('srt')}
-                  className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-lg transition ${
-                    importTab === 'srt'
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  ⏱️ SRT Subtitles
-                </button>
-              </div>
-
-              {importError && (
-                <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-xs text-red-200">
-                  ⚠️ {importError}
-                </div>
-              )}
-
-              {/* TAB 1: RAW TEXT */}
-              {importTab === 'raw' && (
-                <div className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-zinc-400">
-                      Paste Script Text (scenes separated by blank lines):
-                    </label>
-                    <textarea
-                      rows={6}
-                      value={importRawText}
-                      onChange={(e) => setImportRawText(e.target.value)}
-                      placeholder="Paste your narration script here..."
-                      className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800/80 space-y-2">
-                    <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
-                      Segmentation Strategy:
-                    </span>
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
-                      <input
-                        type="radio"
-                        name="importRawMode"
-                        checked={importRawMode === 'raw_paragraphs'}
-                        onChange={() => setImportRawMode('raw_paragraphs')}
-                        className="text-indigo-600 focus:ring-0"
-                      />
-                      <span>Instant Paragraph Split (Zero AI)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
-                      <input
-                        type="radio"
-                        name="importRawMode"
-                        checked={importRawMode === 'raw_ai'}
-                        onChange={() => setImportRawMode('raw_ai')}
-                        className="text-indigo-600 focus:ring-0"
-                      />
-                      <span>AI Beat Segmentation & Visual Queries</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* TAB 2: SRT */}
-              {importTab === 'srt' && (
-                <div className="space-y-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-zinc-400">
-                      Paste SRT Subtitle Content:
-                    </label>
-                    <textarea
-                      rows={6}
-                      value={importSrtText}
-                      onChange={(e) => setImportSrtText(e.target.value)}
-                      placeholder={`1\n00:00:01,000 --> 00:00:04,500\nFirst line...\n\n2\n00:00:04,600 --> 00:00:08,000\nSecond line...`}
-                      className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-100 font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800/80">
-                    <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={importSmartMerge}
-                        onChange={(e) => setImportSmartMerge(e.target.checked)}
-                        className="rounded text-indigo-600 focus:ring-0"
-                      />
-                      <span>Smart Scene Merging (combines short 1–2s cues into ~4–8s beats)</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {/* Modal Actions */}
-              <div className="flex items-center justify-end gap-3 pt-2 border-t border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsImportModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-400 hover:text-zinc-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleImportScript}
-                  disabled={isImporting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition disabled:opacity-50"
-                >
-                  {isImporting ? 'Importing Script...' : 'Replace & Apply Beats'}
-                </button>
-              </div>
-            </div>
-          </div>
+          <ImportScriptDialog
+            videoId={id}
+            onClose={() => setIsImportModalOpen(false)}
+            onImported={async (beats) => {
+              if (beats) setEditableBeats(beats);
+              setHasUnsavedEdits(false);
+              setIsImportModalOpen(false);
+              await fetchVideo(true);
+            }}
+          />
         )}
-      </div>
-    </div>
+
+        {video.status === 'script_review' && (
+          <ActionBar hint={selectedTitle ? `Title: “${selectedTitle}”. Approving sends the script to voicing.` : 'Pick a title above to approve the script.'}>
+            <Button variant="primary" icon="check" onClick={handleApprove} disabled={!selectedTitle || isApproving}>
+              {isApproving ? 'Approving…' : 'Approve script'}
+            </Button>
+          </ActionBar>
+        )}
+        {['voicing', 'sourcing'].includes(video.status) && (
+          <ActionBar hint="The script is approved. Voice it with the narrator above, then add the visuals.">
+            <Button variant="primary" icon="mic" onClick={handleStartVoicing} disabled={isTriggeringVoice || !selectedNarratorId}>
+              {isTriggeringVoice ? 'Starting…' : 'Start voicing'}
+            </Button>
+          </ActionBar>
+        )}
+    </PageContainer>
   );
 }

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { PageContainer, PageHeader } from '@/components/ui/page';
 import { useRouter } from 'next/navigation';
 
 interface Item {
@@ -105,17 +106,13 @@ export default function MomentsPage() {
   const toggle = (key: string) => setSelected((s) => (s.includes(key) ? s.filter((k) => k !== key) : [...s, key]));
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 pb-24">
-      <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">
-        <div>
-          <div className="flex gap-4 text-sm text-zinc-500">
-            <Link href="/" className="hover:text-zinc-300">← Home</Link>
-            <Link href="/hunts" className="hover:text-zinc-300">🎯 Stream Hunter</Link>
-            <Link href="/clips" className="hover:text-zinc-300">✂️ Clip to Short</Link>
-          </div>
-          <h1 className="text-2xl font-bold mt-1">🎞️ Moments & Compilations</h1>
-          <p className="text-sm text-zinc-400 mt-1">Every moment from your hunts and every clip you made from a link. Pick a theme, or tick clips, to make a compilation.</p>
-        </div>
+    <div className="pb-24">
+      <PageContainer>
+        <PageHeader
+          eyebrow="Compilations"
+          title="Moments and compilations"
+          description="Every moment from your hunts and every clip you made from a link. Pick a theme, or tick clips, to make a compilation."
+        />
 
         {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
 
@@ -211,7 +208,7 @@ export default function MomentsPage() {
             })}
           </div>
         </div>
-      </div>
+      </PageContainer>
 
       {selected.length > 0 && (
         <div className="fixed bottom-0 inset-x-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur px-4 py-3">

@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useRef, use } from 'react';
-import Link from 'next/link';
+import { ActionBar } from '@/components/ui/action-bar';
+import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useRouter } from 'next/navigation';
 import BatchVisualUploader from './batch-uploader';
 import { VoiceCheckPanel, type BeatVoiceCheck } from './voice-check-panel';
@@ -604,144 +607,59 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-6 font-sans">
-        <div className="flex items-center gap-3 text-zinc-400">
-          <div className="w-5 h-5 border-2 border-zinc-600 border-t-zinc-200 rounded-full animate-spin" />
-          <span>Loading beat visuals...</span>
-        </div>
-      </div>
+      <PageContainer>
+        <EmptyState loading title="Loading the visuals…" />
+      </PageContainer>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 p-8 max-w-4xl mx-auto font-sans">
-        <div className="bg-red-950/40 border border-red-800 rounded-xl p-6 text-red-200">
-          <h2 className="text-lg font-semibold mb-2">Error Loading Visuals</h2>
-          <p>{error || 'Video not found'}</p>
-          <Link
-            href={`/videos/${id}/progress`}
-            className="inline-block mt-4 text-sm text-red-300 hover:text-red-100 underline"
-          >
-            ← Back to Progress
-          </Link>
-        </div>
-      </div>
+      <PageContainer>
+        <EmptyState title="Could not load the visuals" description={error || 'Video not found'} />
+      </PageContainer>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 md:p-10 font-sans">
-      <div className="max-w-5xl mx-auto space-y-8">
-        {/* Navigation Breadcrumb */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 text-sm text-zinc-400">
-            <Link
-              href={`/videos/${id}/review`}
-              className="hover:text-zinc-200 transition-colors flex items-center gap-1"
-            >
-              ← Script Review
-            </Link>
-            <span>/</span>
-            <Link
-              href={`/videos/${id}/progress`}
-              className="hover:text-zinc-200 transition-colors flex items-center gap-1"
-            >
-              Progress
-            </Link>
-            <span>/</span>
-            <Link
-              href={`/videos/${id}/storyboard`}
-              className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-800 transition flex items-center gap-1 text-xs font-semibold"
-            >
-              <span>🎞️</span>
-              <span>Storyboard</span>
-            </Link>
-            <Link
-              href={`/videos/${id}/vibedit`}
-              className="px-2 py-0.5 rounded-md bg-indigo-950 border border-indigo-700/60 text-indigo-300 hover:text-white hover:bg-indigo-900 transition flex items-center gap-1 text-xs font-semibold"
-            >
-              <span>🎬</span>
-              <span>Vibedit Studio</span>
-            </Link>
-          </div>
-          <button
-            onClick={() => fetchVideoData()}
-            className="px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-700 text-xs font-medium text-zinc-300 hover:bg-zinc-800 transition"
-          >
-            Refresh
-          </button>
-        </div>
-
+    <PageContainer>
         {/* Page Header Card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-zinc-800 text-zinc-300">
-                  Manual Visuals
-                </span>
-                <span
-                  className={`px-3 py-0.5 rounded-full text-xs font-semibold ${
-                    allBeatsHaveVisuals
-                      ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
-                      : 'bg-amber-900/40 text-amber-300 border border-amber-700'
-                  }`}
-                >
-                  {beatsWithVisualsCount} of {beats.length} beats have visuals
-                </span>
-              </div>
-              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-                {data.video.title || 'Video Visuals'}
-              </h1>
-              <p className="text-sm text-zinc-400 mt-1">
-                {drawn
-                  ? 'A stickman video shows only your drawings and its doodle cards. Drop your drawings on the drawing brief below; a shot without its drawing shows its line as doodle text until it arrives.'
-                  : 'Beats you don’t upload for are auto-generated (chart, map, newspaper, archive, stock) from their visual type during voicing. Upload only to override one. Accepted formats: MP4, MOV, WebM, PNG, JPG, WebP.'}
-              </p>
-            </div>
-
-            {/* Assemble Gate & Batch Actions */}
-            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+        <PageHeader
+          title="Visuals"
+          description={
+            drawn
+              ? 'A stickman video shows only your drawings and its doodle cards. Drop your drawings on the drawing brief below; a shot without its drawing shows its line as doodle text until it arrives.'
+              : 'Beats you don’t upload for are made automatically (chart, map, newspaper, archive, stock) from their visual type. Upload only to replace one: MP4, MOV, WebM, PNG, JPG or WebP.'
+          }
+          meta={
+            <Badge tone={allBeatsHaveVisuals ? 'success' : 'warning'}>
+              {beatsWithVisualsCount} of {beats.length} beats have visuals
+            </Badge>
+          }
+          actions={
+            <>
+              <Button variant="ghost" icon="refresh" onClick={() => fetchVideoData()}>
+                Refresh
+              </Button>
               {/* Stickman videos take drawings in the drawing brief below instead */}
               {!drawn && (
-              <button
-                type="button"
-                onClick={() => setShowBatchUploader((prev) => !prev)}
-                className="px-4 py-2.5 rounded-xl font-bold text-xs transition shadow-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-850 text-indigo-300 border border-indigo-500/30 hover:border-indigo-500/60 flex items-center gap-2 cursor-pointer"
-              >
-                <span>🚀</span>
-                <span>{showBatchUploader ? 'Hide Batch Uploader' : 'Batch Upload Visuals'}</span>
-              </button>
+                <Button icon="upload" onClick={() => setShowBatchUploader((prev) => !prev)}>
+                  {showBatchUploader ? 'Hide batch upload' : 'Batch upload'}
+                </Button>
               )}
-
-              <div className="flex flex-col items-end gap-1">
-                <button
-                  onClick={handleStartAssembly}
-                  disabled={isAssembling || !allBeatsHaveVisuals}
-                  className={`px-5 py-2.5 rounded-xl font-medium text-sm transition shadow-lg ${
-                    allBeatsHaveVisuals
-                      ? 'bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer shadow-indigo-500/20'
-                      : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700'
-                  }`}
-                  title={
-                    !allBeatsHaveVisuals
-                      ? `Cannot assemble: ${beats.length - beatsWithVisualsCount} beats missing visuals`
-                      : 'Proceed to Video Assembly'
-                  }
-                >
-                  {isAssembling ? 'Starting Assembly...' : 'Assemble Video →'}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {assemblyError && (
-            <div className="mt-4 p-3 rounded-lg bg-red-950/50 border border-red-800 text-xs text-red-200">
-              {assemblyError}
-            </div>
-          )}
-        </div>
+              <Button
+                variant="primary"
+                iconRight="chevronRight"
+                onClick={handleStartAssembly}
+                disabled={isAssembling || !allBeatsHaveVisuals}
+                title={!allBeatsHaveVisuals ? `Cannot assemble: ${beats.length - beatsWithVisualsCount} beats missing visuals` : 'Go on to assembly'}
+              >
+                {isAssembling ? 'Starting assembly…' : 'Assemble video'}
+              </Button>
+            </>
+          }
+        />
+        {assemblyError && <div className="rounded-xl border border-red-800 bg-red-950/50 p-3 text-xs text-red-200">{assemblyError}</div>}
 
         {drawn && (
           <DrawingsPanel
@@ -895,7 +813,12 @@ export default function BeatVisualsPage({ params }: VisualsPageProps) {
             })
           )}
         </div>
-      </div>
-    </div>
+
+        <ActionBar hint={allBeatsHaveVisuals ? 'Every beat has its visual.' : `${beats.length - beatsWithVisualsCount} beats still need a visual.`}>
+          <Button variant="primary" iconRight="chevronRight" onClick={handleStartAssembly} disabled={isAssembling || !allBeatsHaveVisuals}>
+            {isAssembling ? 'Starting assembly…' : 'Assemble video'}
+          </Button>
+        </ActionBar>
+    </PageContainer>
   );
 }

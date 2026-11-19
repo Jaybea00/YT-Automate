@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
+/*
+ * The app is dark only: every page is designed on zinc-950, so the page itself is dark too (no
+ * white edges when the system is in light mode).
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #09090b;
+  --foreground: #f4f4f5;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -12,15 +17,27 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(99 102 241 / 0.35);
+}
+
+/* Quiet scrollbars that match the dark surfaces */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+/* Long words and links never push a page wider than the screen */
+p, li, h1, h2, h3, td, dd, label {
+  overflow-wrap: anywhere;
 }
