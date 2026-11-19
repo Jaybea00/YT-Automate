@@ -31,7 +31,27 @@ interface PublishData {
     video_id?: string;
     status: string | null;
   }>;
+  packagingScore: PackagingScore | null;
 }
+
+/** Every title with every thumbnail, scored against the niche (see packaging-score.ts). */
+interface PackagingScore {
+  scoredAt: string;
+  query: string;
+  competitors: Array<{ id: string; title: string; channel: string; views: number; thumbUrl: string }>;
+  titles: string[];
+  thumbnailTexts: string[];
+  pairs: Array<{ title: number; thumbnail: number; score: number; reason: string }>;
+  best: Array<{ title: number; thumbnail: number }>;
+  niche: string;
+  advice: string[];
+  /** False once the titles or thumbnails changed after scoring. */
+  current: boolean;
+}
+
+const scoreClass = (n: number) =>
+  n >= 8 ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : n >= 6 ? 'bg-amber-950 text-amber-300 border-amber-800' : 'bg-red-950 text-red-300 border-red-900';
+const shortViews = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
 
 const STATUS_LABEL: Record<string, string> = {
   scripting: 'Writing…',
@@ -353,6 +373,146 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
             <p className="text-sm text-zinc-500 italic">No thumbnails yet.</p>
           )}
         </Card>
+
+        {data.thumbnails.length > 0 && (data.titles.length > 0 || title) && (
+          <Card
+            title="Title & thumbnail pairs"
+            actions={
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => run('score', 'Comparing every pair with the top videos on this topic… (under a minute)', `/api/videos/${id}/publish/score`)}
+                className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 text-[11px] font-medium disabled:opacity-50"
+              >
+                {data.packagingScore ? '↻ Score again' : 'Score the pairs'}
+              </button>
+            }
+          >
+            {!data.packagingScore ? (
+              <p className="text-sm text-zinc-500">
+                Scores every title with every thumbnail the way viewers meet them: small, in a feed next to the most-watched videos on this topic. It says which pairs to put up
+                first in &quot;Test &amp; compare&quot; and what would lift the weaker ones.
+              </p>
+            ) : (
+              (() => {
+                const sc = data.packagingScore;
+                const pairOf = (t: number, n: number) => sc.pairs.find((p) => p.title === t && p.thumbnail === n);
+                return (
+                  <div className="space-y-4">
+                    {!sc.current && (
+                      <p className="text-[11px] text-amber-300">The titles or thumbnails changed since this was scored: score again to compare the new ones.</p>
+                    )}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-zinc-300">Test these first</p>
+                      {sc.best.map((b, i) => {
+                        const p = pairOf(b.title, b.thumbnail);
+                        const t = sc.titles[b.title] ?? '';
+                        return (
+                          <div key={`${b.title}-${b.thumbnail}`} className="flex gap-3 items-start rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={`/api/videos/${id}/publish/file?kind=thumbnail&n=${b.thumbnail}&v=${version}`} alt="" className="w-32 aspect-video rounded border border-zinc-800 object-cover shrink-0" />
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] text-zinc-500">#{i + 1}</span>
+                                {p && <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${scoreClass(p.score)}`}>{p.score}/10</span>}
+                                <span className="text-[11px] text-zinc-500">Thumbnail {b.thumbnail}</span>
+                              </div>
+                              <p className="text-sm text-zinc-100 font-medium">{t}</p>
+                              {p && <p className="text-[11px] text-zinc-400">{p.reason}</p>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setTitle(t)}
+                              disabled={title === t}
+                              className="shrink-0 px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[11px] font-semibold"
+                              title="Puts this title in the Title box above (then Save)"
+                            >
+                              {title === t ? 'In use' : 'Use title'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead>
+                          <tr className="text-zinc-500">
+                            <th className="text-left font-medium pb-1">Title</th>
+                            {sc.thumbnailTexts.map((_, n) => (
+                              <th key={n} className="font-medium pb-1 px-1 w-16">Thumb {n + 1}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sc.titles.map((t, ti) => (
+                            <tr key={ti} className="border-t border-zinc-800/70">
+                              <td className="py-1.5 pr-2 text-zinc-300">{t}</td>
+                              {sc.thumbnailTexts.map((_, n) => {
+                                const p = pairOf(ti, n + 1);
+                                return (
+                                  <td key={n} className="px-1 text-center">
+                                    {p ? (
+                                      <span title={p.reason} className={`inline-block min-w-[2.5rem] font-bold px-1.5 py-0.5 rounded border ${scoreClass(p.score)}`}>
+                                        {p.score}
+                                      </span>
+                                    ) : (
+                                      <span className="text-zinc-600">–</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="text-[10px] text-zinc-500 pt-1">Hover a score for its reason.</p>
+                    </div>
+
+                    {(sc.niche || sc.advice.length > 0) && (
+                      <div className="space-y-1 text-xs">
+                        {sc.niche && (
+                          <p className="text-zinc-400">
+                            <span className="text-zinc-300 font-semibold">What the top videos do: </span>
+                            {sc.niche}
+                          </p>
+                        )}
+                        {sc.advice.length > 0 && (
+                          <ul className="list-disc pl-4 text-zinc-400 space-y-0.5">
+                            {sc.advice.map((a) => (
+                              <li key={a}>{a}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
+                    {sc.competitors.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="text-[11px] text-zinc-500">Compared with the most-watched videos for &quot;{sc.query}&quot;:</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {sc.competitors.map((c) => (
+                            <a key={c.id} href={`https://www.youtube.com/watch?v=${c.id}`} target="_blank" rel="noreferrer" className="space-y-0.5 group">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={c.thumbUrl} alt="" className="w-full aspect-video rounded border border-zinc-800 object-cover group-hover:border-zinc-600" />
+                              <p className="text-[10px] text-zinc-300 line-clamp-2">{c.title}</p>
+                              <p className="text-[10px] text-zinc-500">
+                                {c.channel} · {shortViews(c.views)} views
+                              </p>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-zinc-500">Scored on their own: no niche videos were available (no YouTube key, or today&apos;s search allowance is used up).</p>
+                    )}
+                    <p className="text-[10px] text-zinc-600">Scored {new Date(sc.scoredAt).toLocaleString()}. A guide, not a promise: YouTube&apos;s own test decides.</p>
+                  </div>
+                );
+              })()
+            )}
+          </Card>
+        )}
 
         <Card
           title={`Shorts (${data.shorts.length})`}

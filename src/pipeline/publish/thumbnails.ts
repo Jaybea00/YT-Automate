@@ -53,9 +53,31 @@ export interface FrameMoment {
 }
 
 /**
+ * Evenly spread beats, each framed mid-line from its own visual (the beat's picture before
+ * captions are burned in at mastering). The finished video, captions and all, only for a beat
+ * whose visual is gone.
+ */
+export async function evenBeatMoments(timeline: VideoTimeline, finalVideoPath: string): Promise<FrameMoment[]> {
+  const beats = timeline.beats;
+  const total = timeline.totalMs / 1000;
+  return Promise.all(
+    Array.from({ length: MAX_CANDIDATES }, async (_, i) => {
+      const at = total * (0.05 + (0.9 * i) / (MAX_CANDIDATES - 1));
+      const beat = [...beats].reverse().find((b) => b.sceneStartMs / 1000 <= at) ?? beats[0];
+      const visual = beat?.trackPath && (await fs.stat(beat.trackPath).then((s) => s.size > 0).catch(() => false)) ? beat.trackPath : null;
+      if (!beat || !visual) return { source: finalVideoPath, sourceSec: at, atSec: at };
+      // The middle of the beat's line, inside its own clip
+      const mid = (beat.voiceStartMs - beat.sceneStartMs + (beat.voiceMs ?? beat.sceneMs) / 2) / 1000;
+      const sourceSec = Math.max(0, Math.min(beat.sceneMs / 1000 - 0.1, mid));
+      return { source: visual, sourceSec, atSec: beat.sceneStartMs / 1000 + sourceSec };
+    }),
+  );
+}
+
+/**
  * Moments worth a thumbnail: the middle of each clean footage or photo shot, taken from the
  * composed beat (no burned-in captions, no name captions or scan credits), spread across the
- * video. Without composed beats, evenly spaced frames of the finished video.
+ * video. Without enough of those (a drawn video), evenly spread beats from their own visuals.
  */
 export async function candidateMoments(timeline: VideoTimeline, finalVideoPath: string): Promise<FrameMoment[]> {
   const moments: FrameMoment[] = [];
@@ -69,13 +91,7 @@ export async function candidateMoments(timeline: VideoTimeline, finalVideoPath: 
       moments.push({ source: beat.trackPath, sourceSec, atSec: beat.sceneStartMs / 1000 + sourceSec });
     }
   }
-  const total = timeline.totalMs / 1000;
-  const pool: FrameMoment[] = moments.length >= VARIANTS
-    ? moments
-    : Array.from({ length: MAX_CANDIDATES }, (_, i) => {
-        const at = total * (0.05 + (0.9 * i) / (MAX_CANDIDATES - 1));
-        return { source: finalVideoPath, sourceSec: at, atSec: at };
-      });
+  const pool: FrameMoment[] = moments.length >= VARIANTS ? moments : await evenBeatMoments(timeline, finalVideoPath);
   if (pool.length <= MAX_CANDIDATES) return pool;
   // Evenly spaced picks keep the whole story represented
   return Array.from({ length: MAX_CANDIDATES }, (_, i) => pool[Math.round((i * (pool.length - 1)) / (MAX_CANDIDATES - 1))]);
