@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { listLibrary } from '@/pipeline/compile/library';
+import { loadChannelProfile } from '@/pipeline/channel/store';
 import { composeCompilationDescription, writeCompilationUploadInfo } from '@/pipeline/compile/package';
 import { enqueueCompilation, isCompilationBusy, itemFromLibrary, type CompilationRunFrom } from '@/pipeline/compile/run';
 import { compilationDir, deleteCompilation, loadCompilation, updateCompilation } from '@/pipeline/compile/store';
@@ -13,7 +14,7 @@ export async function GET(_req: Request, context: RouteContext) {
   const { id } = await context.params;
   const c = await loadCompilation(id);
   if (!c) return NextResponse.json({ error: 'Compilation not found' }, { status: 404 });
-  return NextResponse.json({ compilation: c, busy: isCompilationBusy(id), uploadDescription: composeCompilationDescription(c) });
+  return NextResponse.json({ compilation: c, busy: isCompilationBusy(id), uploadDescription: composeCompilationDescription(c, await loadChannelProfile()) });
 }
 
 const Edit = z.object({
@@ -69,8 +70,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       });
     }
   });
-  if (updated.output) await writeCompilationUploadInfo(compilationDir(id), updated);
-  return NextResponse.json({ compilation: updated, uploadDescription: composeCompilationDescription(updated) });
+  const channel = await loadChannelProfile();
+  if (updated.output) await writeCompilationUploadInfo(compilationDir(id), updated, channel);
+  return NextResponse.json({ compilation: updated, uploadDescription: composeCompilationDescription(updated, channel) });
 }
 
 /** Makes it again: { from: "render" } after edits, "script" for fresh words, "all" to also re-fit the clips. */

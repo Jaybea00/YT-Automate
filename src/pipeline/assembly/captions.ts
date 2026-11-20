@@ -50,6 +50,12 @@ export interface GenerateCaptionsOptions {
   fontSize?: number;
   /** Lines shown for the whole video (e.g. a Short's hook banner), in ASS override syntax-free text. */
   banners?: Array<{ text: string; startMs: number; endMs: number; position: 'top' | 'bottom' }>;
+  /** A channel's caption font, overriding the preset's (a font installed with Windows). */
+  fontName?: string;
+  /** Colour (#rrggbb) for banners (hook, closing line); the active-word colour otherwise. */
+  bannerHex?: string;
+  /** A small, steady mark for the whole video (a channel's @handle) in a top corner. */
+  mark?: { text: string; corner: 'top-left' | 'top-right'; endMs: number };
 }
 
 export interface CaptionWord {
@@ -196,8 +202,14 @@ export function generateAssCaptions(options: GenerateCaptionsOptions): {
   const highlightColour = options.highlightHex ? toAssColour(options.highlightHex) : DEFAULT_HIGHLIGHT;
   const { width = 1920, height = 1080 } = options.resolution ?? {};
   const size = options.fontSize ?? look.size;
+  const bannerColour = options.bannerHex ? toAssColour(options.bannerHex) : highlightColour;
+  const font = options.fontName?.trim() || look.font;
+  const markText = options.mark?.text.replace(/[{}\\]/g, '').trim() ?? '';
+  const markLine = markText
+    ? `Style: Mark, ${font}, ${Math.round(height * 0.02)}, &H40FFFFFF, &H40FFFFFF, &H60000000, &H00000000, -1, 0, 0, 0, 100, 100, 0, 0, 1, 2, 0, ${options.mark?.corner === 'top-left' ? 7 : 9}, ${Math.round(width * 0.045)}, ${Math.round(width * 0.045)}, ${Math.round(height * 0.03)}, 1\n`
+    : '';
   const styleLine = (name: string, marginV: number, alignment = 2, fontSize = size) =>
-    `Style: ${name}, ${look.font}, ${fontSize}, ${look.primary ?? '&H00FFFFFF'}, &H00FFFFFF, ${look.outlineColour ?? '&H00101010'}, ${look.back}, ${look.bold ? -1 : 0}, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, ${alignment}, 60, 60, ${marginV}, 1`;
+    `Style: ${name}, ${font}, ${fontSize}, ${look.primary ?? '&H00FFFFFF'}, &H00FFFFFF, ${look.outlineColour ?? '&H00101010'}, ${look.back}, ${look.bold ? -1 : 0}, 0, 0, 0, 100, 100, 0, 0, ${look.borderStyle}, ${look.outline}, ${look.shadow}, ${alignment}, 60, 60, ${marginV}, 1`;
   const banners = options.banners ?? [];
 
   const header = `[Script Info]
@@ -213,7 +225,7 @@ PlayResY: ${height}
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 ${styleLine(look.name, options.marginV ?? look.marginV)}
 ${styleLine(`${look.name}Raised`, RAISED_MARGIN_V)}
-${banners.length ? `${styleLine('Banner', Math.round(height * 0.08), 8, Math.round(size * 1.05))}\n` : ''}
+${banners.length ? `${styleLine('Banner', Math.round(height * 0.08), 8, Math.round(size * 1.05))}\n` : ''}${markLine}
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
@@ -277,8 +289,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const text = b.text.replace(/[{}\\]/g, '').trim();
     // Banners use the top-centred Banner style (bottom ones the base style); the active-word
     // highlight colour picks out the whole banner
-    if (text) dialogues.push({ startMs: b.startMs, endMs: b.endMs, text: `{\\c${highlightColour}}${text}`, style: b.position === 'top' ? 'Banner' : look.name });
+    if (text) dialogues.push({ startMs: b.startMs, endMs: b.endMs, text: `{\\c${bannerColour}}${text}`, style: b.position === 'top' ? 'Banner' : look.name });
   }
+  if (markText && options.mark) dialogues.push({ startMs: 0, endMs: options.mark.endMs, text: markText, style: 'Mark' });
 
   const dialogueLines = dialogues.map(
     (d) => `Dialogue: 0,${formatAssTime(d.startMs)},${formatAssTime(d.endMs)},${d.style},,0,0,0,,${d.text}`,

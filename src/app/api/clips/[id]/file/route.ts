@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import yazl from 'yazl';
 import { fileResponse } from '@/lib/file-response';
 import { createSafeWebStream } from '@/lib/streaming';
+import { loadChannelProfile } from '@/pipeline/channel/store';
 import { uploadInfoText } from '@/pipeline/clipping/package';
 import { clipFile, loadClip } from '@/pipeline/clipping/store';
 
@@ -30,7 +31,7 @@ export async function GET(req: Request, context: RouteContext) {
     zip.addFile(clipFile(id, clip.output.video), `${slug}/short.mp4`);
     const thumb = clipFile(id, clip.output.thumbnail);
     if (await stat(thumb).then((s) => s.isFile()).catch(() => false)) zip.addFile(thumb, `${slug}/thumbnail.jpg`);
-    zip.addBuffer(Buffer.from(uploadInfoText(clip), 'utf-8'), `${slug}/upload-info.txt`);
+    zip.addBuffer(Buffer.from(uploadInfoText(clip, await loadChannelProfile()), 'utf-8'), `${slug}/upload-info.txt`);
     zip.end();
     return new Response(createSafeWebStream(zip.outputStream as unknown as fs.ReadStream, { signal: req.signal }), {
       headers: { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${slug}.zip"`, 'Cache-Control': 'no-cache' },

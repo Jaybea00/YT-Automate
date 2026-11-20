@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { loadChannelProfile } from '../channel/store';
 import { voiceLines } from '../clipping/voice';
 import { analyzeItem } from './analyze';
 import { listLibrary } from './library';
@@ -116,6 +117,7 @@ export async function processCompilation(id: string, from: CompilationRunFrom): 
   try {
     let c = await loadCompilation(id);
     if (!c) return;
+    const channel = await loadChannelProfile();
     const warnings: string[] = from === 'render' ? c.warnings.filter((w) => !/voiced|transcribed|render/i.test(w)) : [];
 
     // Analyse any clip not yet analysed
@@ -138,7 +140,7 @@ export async function processCompilation(id: string, from: CompilationRunFrom): 
 
     if (from !== 'render' || !c.titles.length) {
       await setStep(id, 'writing', 'Writing titles, hook and voiceover');
-      const { script, warning } = await writeCompilationScript(c);
+      const { script, warning } = await writeCompilationScript(c, channel);
       if (warning) warnings.push(warning);
       c = await updateCompilation(id, (x) => {
         x.titles = script.titles.map((t) => t.trim()).filter(Boolean).slice(0, 5);
@@ -162,7 +164,7 @@ export async function processCompilation(id: string, from: CompilationRunFrom): 
       const voiced = await voiceLines(
         dir,
         wanted.map((l) => ({ at: 0, text: l.text, slot: 'other' as const, audioFile: c!.voice[l.key]?.file, audioKey: c!.voice[l.key]?.key })),
-        c.options.voice,
+        c.options.voice || channel.voice,
       );
       warnings.push(...voiced.warnings.slice(0, 1));
       c = await updateCompilation(id, (x) => {
@@ -176,7 +178,7 @@ export async function processCompilation(id: string, from: CompilationRunFrom): 
 
     const total = c.items.length + (c.format === 'long' ? c.items.length + 2 : 0);
     await setStep(id, 'rendering', `Rendering part 1 of ${total}`, 0);
-    const output = await renderCompilation(dir, c, (done, all) => setStep(id, 'rendering', `Rendering part ${Math.min(done + 1, all)} of ${all}`, Math.floor((done / all) * 100)));
+    const output = await renderCompilation(dir, c, (done, all) => setStep(id, 'rendering', `Rendering part ${Math.min(done + 1, all)} of ${all}`, Math.floor((done / all) * 100)), channel);
     if (c.format === 'short' && output.durationSec > 60) warnings.push(`The Short is ${output.durationSec.toFixed(0)}s long; trim the clips to stay under 60s.`);
     c = await updateCompilation(id, (x) => {
       x.output = { ...output, renderedAt: new Date().toISOString() };
@@ -185,7 +187,7 @@ export async function processCompilation(id: string, from: CompilationRunFrom): 
       x.progress = undefined;
       x.warnings = [...new Set(warnings)];
     });
-    await writeCompilationUploadInfo(dir, c);
+    await writeCompilationUploadInfo(dir, c, channel);
   } catch (err) {
     await updateCompilation(id, (x) => {
       x.status = 'failed';

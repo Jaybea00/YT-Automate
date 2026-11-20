@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { descriptionFooter, formatCredit, type ChannelProfile } from '@/lib/channel/profile';
 import type { ClipProject } from './types';
 
 /** "gta 6 funny moments" -> "#GTA6FunnyMoments"-style hashtag, kept short. */
@@ -14,23 +15,32 @@ export function creditName(project: ClipProject): string {
   return project.creator.trim() || project.source?.uploaderHandle || project.source?.uploader || 'the original creator';
 }
 
-/** The description to paste: the summary, the credit with a link, then hashtags (#Shorts first). */
-export function composeUploadDescription(project: ClipProject): string {
+/**
+ * The description to paste: the summary, the credit with a link, then hashtags (#Shorts first).
+ * With a channel profile: the channel's credit wording, footer, hashtags and fan-channel note.
+ */
+export function composeUploadDescription(project: ClipProject, channel?: ChannelProfile): string {
   const plan = project.plan;
-  const credit = `🎥 Clip by ${creditName(project)}${project.source?.pageUrl ? ` (${project.source.pageUrl})` : ''}`;
+  const link = project.source?.pageUrl ? ` (${project.source.pageUrl})` : '';
+  if (channel) {
+    const credit = `${formatCredit(channel, creditName(project))}${link}`;
+    const clipTags = (plan?.tags ?? []).slice(0, 3).map(hashtag);
+    return [plan?.description?.trim(), credit, descriptionFooter(channel, clipTags)].filter(Boolean).join('\n\n');
+  }
+  const credit = `🎥 Clip by ${creditName(project)}${link}`;
   const tags = ['#Shorts', ...(plan?.tags ?? []).slice(0, 4).map(hashtag)].filter((t, i, all) => t && all.indexOf(t) === i);
   return [plan?.description?.trim(), credit, tags.join(' ')].filter(Boolean).join('\n\n');
 }
 
 /** Everything needed to upload by hand, as one text file. */
-export function uploadInfoText(project: ClipProject): string {
+export function uploadInfoText(project: ClipProject, channel?: ChannelProfile): string {
   const plan = project.plan;
   const lines = [
     'TITLE OPTIONS',
     ...(plan?.titles ?? []).map((t, i) => `${i + 1}. ${t}`),
     '',
     'DESCRIPTION',
-    composeUploadDescription(project),
+    composeUploadDescription(project, channel),
     '',
     'TAGS (paste into the tags box)',
     (plan?.tags ?? []).join(', '),
@@ -45,9 +55,9 @@ export function uploadInfoText(project: ClipProject): string {
   return lines.join('\n') + '\n';
 }
 
-export async function writeUploadInfo(dir: string, project: ClipProject): Promise<string> {
+export async function writeUploadInfo(dir: string, project: ClipProject, channel?: ChannelProfile): Promise<string> {
   const file = path.join(dir, 'export', 'upload-info.txt');
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, uploadInfoText(project), 'utf-8');
+  await fs.writeFile(file, uploadInfoText(project, channel), 'utf-8');
   return file;
 }

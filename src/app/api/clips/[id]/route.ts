@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { loadChannelProfile } from '@/pipeline/channel/store';
 import { composeUploadDescription, writeUploadInfo } from '@/pipeline/clipping/package';
 import { isClipBusy } from '@/pipeline/clipping/run';
 import { clipDir, deleteClip, loadClip, updateClip } from '@/pipeline/clipping/store';
@@ -12,7 +13,7 @@ export async function GET(_req: Request, context: RouteContext) {
   const { id } = await context.params;
   const clip = await loadClip(id);
   if (!clip) return NextResponse.json({ error: 'Clip not found' }, { status: 404 });
-  return NextResponse.json({ clip, busy: isClipBusy(id), uploadDescription: clip.plan ? composeUploadDescription(clip) : '' });
+  return NextResponse.json({ clip, busy: isClipBusy(id), uploadDescription: clip.plan ? composeUploadDescription(clip, await loadChannelProfile()) : '' });
 }
 
 const VoiceLineEdit = z.object({
@@ -78,8 +79,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       p.plan = next;
     }
   });
-  if (updated.output) await writeUploadInfo(clipDir(id), updated);
-  return NextResponse.json({ clip: updated, uploadDescription: updated.plan ? composeUploadDescription(updated) : '' });
+  const channel = await loadChannelProfile();
+  if (updated.output) await writeUploadInfo(clipDir(id), updated, channel);
+  return NextResponse.json({ clip: updated, uploadDescription: updated.plan ? composeUploadDescription(updated, channel) : '' });
 }
 
 export async function DELETE(_req: Request, context: RouteContext) {

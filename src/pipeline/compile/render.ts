@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { shortBranding, type ChannelProfile } from '@/lib/channel/profile';
 import { formatAssTime, generateAssCaptions } from '../assembly/captions';
 import { ensureSoundLibrary, soundPath } from '../assembly/sfx';
 import { maskSwear, stripEmoji } from '../clipping/render';
@@ -109,8 +110,9 @@ async function renderClipPiece(opts: {
   analysis: ItemAnalysis;
   c: Compilation;
   index: number;
+  channel?: ChannelProfile;
 }): Promise<number> {
-  const { workDir, out, item, analysis, c, index } = opts;
+  const { workDir, out, item, analysis, c, index, channel } = opts;
   const { w, h } = SIZE[c.format];
   const durationSec = Math.max(1, Math.min(item.end, analysis.durationSec) - item.start);
   const n = c.items.length;
@@ -122,17 +124,24 @@ async function renderClipPiece(opts: {
         .map((wd) => ({ word: c.options.cleanCaptions ? maskSwear(wd.word) : wd.word, start: wd.start - item.start, end: wd.end - item.start }))
     : [];
   const short = c.format === 'short';
+  // The channel's look; a Short ends on the closing line and shows the @handle throughout
+  const brand = channel ? shortBranding(channel, Math.round(durationSec * 1000)) : null;
+  const hook = short && index === 0 && stripEmoji(c.hook) ? [{ text: stripEmoji(c.hook), startMs: 0, endMs: Math.round(Math.min(2.5, durationSec) * 1000), position: 'top' as const }] : [];
+  const closing = short && index === n - 1 && brand?.closing && brand.closing.startMs >= (hook[0]?.endMs ?? 0) ? [brand.closing] : [];
   const { assContent } = generateAssCaptions({
     beats: [{ index: 0, text: '' }],
     units: [{ unit_index: 0, duration_ms: Math.round(durationSec * 1000) }],
     beatStartMs: [0],
     words: { 0: words },
     preset: 'social_pop',
-    highlightHex: '#ffd400',
+    highlightHex: brand?.highlightHex ?? '#ffd400',
+    bannerHex: brand?.bannerHex,
+    fontName: brand?.fontName,
+    mark: short ? brand?.mark : undefined,
     resolution: { width: w, height: h },
     fontSize: short ? 78 : 62,
     marginV: short ? 420 : 90,
-    banners: short && index === 0 && stripEmoji(c.hook) ? [{ text: stripEmoji(c.hook), startMs: 0, endMs: Math.round(Math.min(2.5, durationSec) * 1000), position: 'top' }] : [],
+    banners: [...hook, ...closing],
   });
   const tag = c.options.nameCards && item.creator ? (short ? item.creator : `#${n - index}  ·  ${item.creator}`) : '';
   const caps = `caps_${index}.ass`;
@@ -204,6 +213,7 @@ export async function renderCompilation(
   dir: string,
   c: Compilation,
   onProgress: (done: number, total: number) => Promise<void> | void = () => {},
+  channel?: ChannelProfile,
 ): Promise<{ video: string; thumbnail: string; durationSec: number }> {
   if (!c.items.length) throw new Error('The compilation has no clips');
   const workDir = path.join(dir, 'work');
@@ -254,7 +264,7 @@ export async function renderCompilation(
       await onProgress(++done, total);
     }
     const out = piece(`clip${i}`);
-    durationSec += await renderClipPiece({ workDir, out, item, analysis, c, index: i });
+    durationSec += await renderClipPiece({ workDir, out, item, analysis, c, index: i, channel });
     pieces.push(out);
     await onProgress(++done, total);
   }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { shortBranding, type ChannelProfile } from '@/lib/channel/profile';
 import { generateAssCaptions } from '../assembly/captions';
 import { ensureSoundLibrary, soundPath } from '../assembly/sfx';
 import { getFfmpegPath } from '../utils/ffmpeg';
@@ -138,19 +139,33 @@ export function captionTrack(plan: ClipPlan, analysis: ClipAnalysis): { words: C
 // Render
 // --------------------------------------------------------------------------
 
-export async function renderShort(dir: string, sourceFile: string, plan: ClipPlan, analysis: ClipAnalysis): Promise<{ video: string; thumbnail: string; durationSec: number }> {
+/** Adds the closing line; on-screen texts give way to it (cut short, or dropped when they'd start under it). */
+export function withClosing<T extends { startMs: number; endMs: number }>(banners: T[], closing: T | null): T[] {
+  if (!closing) return banners;
+  const kept = banners.filter((b) => b.startMs < closing.startMs - 300).map((b) => ({ ...b, endMs: Math.min(b.endMs, closing.startMs) }));
+  return [...kept, closing];
+}
+
+export async function renderShort(dir: string, sourceFile: string, plan: ClipPlan, analysis: ClipAnalysis, channel?: ChannelProfile): Promise<{ video: string; thumbnail: string; durationSec: number }> {
   const durationSec = Math.max(1, plan.trimEnd - plan.trimStart);
   await fs.mkdir(path.join(dir, 'export'), { recursive: true });
 
   // Captions and banners
-  const { words, banners } = captionTrack(plan, analysis);
+  const track = captionTrack(plan, analysis);
+  const { words } = track;
+  // The channel's look: colours, font, a closing line over the last seconds and the @handle
+  const brand = channel ? shortBranding(channel, Math.round(durationSec * 1000)) : null;
+  const banners = withClosing(track.banners, brand?.closing ?? null);
   const { assContent } = generateAssCaptions({
     beats: [{ index: 0, text: '' }],
     units: [{ unit_index: 0, duration_ms: Math.round(durationSec * 1000) }],
     beatStartMs: [0],
     words: { 0: words },
     preset: 'social_pop',
-    highlightHex: '#ffd400',
+    highlightHex: brand?.highlightHex ?? '#ffd400',
+    bannerHex: brand?.bannerHex,
+    fontName: brand?.fontName,
+    mark: brand?.mark,
     resolution: { width: SHORT_W, height: SHORT_H },
     fontSize: 80,
     marginV: 420,

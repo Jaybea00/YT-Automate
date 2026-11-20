@@ -17,6 +17,7 @@ export const NAV_ITEMS: Array<{ href: string; label: string; icon: IconName; mat
   { href: '/overnight', label: 'Overnight', icon: 'moon' },
   { href: '/narrators', label: 'Narrators', icon: 'mic' },
   { href: '/styles', label: 'Styles', icon: 'palette' },
+  { href: '/channel', label: 'Channel', icon: 'settings' },
 ];
 
 const isActive = (item: (typeof NAV_ITEMS)[number], path: string) => (item.match ? item.match(path) : path === item.href || path.startsWith(`${item.href}/`));
@@ -58,7 +59,7 @@ export function AppNav() {
                   active ? 'bg-zinc-800/80 text-zinc-50' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100',
                 )}
               >
-                <Icon name={item.icon} size={15} />
+                <Icon name={item.icon} size={15} className="hidden xl:block" />
                 {item.label}
               </Link>
             );
@@ -66,11 +67,9 @@ export function AppNav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <ButtonLink href="/videos/new" variant="primary" size="sm" icon="plus" className="hidden sm:inline-flex">
-            New video
-          </ButtonLink>
-          <ButtonLink href="/videos/new" variant="primary" size="sm" className="sm:hidden w-9 px-0" aria-label="New video">
-            <Icon name="plus" size={16} />
+          {/* One button: the label folds away on a phone, leaving the + */}
+          <ButtonLink href="/videos/new" variant="primary" size="sm" icon="plus" className="w-9 px-0 sm:w-auto sm:px-3" aria-label="New video">
+            <span className="hidden sm:inline">New video</span>
           </ButtonLink>
           <button
             type="button"

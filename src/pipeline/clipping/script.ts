@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
+import { channelPromptBlock, type ChannelProfile } from '@/lib/channel/profile';
 import { geminiLlm } from '../providers/llm/gemini';
 import { anthropicLlm } from '../providers/llm/anthropic';
 import type { LLMProvider, LlmImage, ProviderCallContext } from '../providers/types';
@@ -154,14 +155,14 @@ const STYLE_GUIDE: Record<VoiceStyle, string> = {
   info: 'Informative: points out what most players miss, a tip, or how the mechanic works. Calm and clear.',
 };
 
-export function buildScriptPrompt(project: ClipProject, analysis: ClipAnalysis, style: VoiceStyle, gaps: Array<{ start: number; end: number }>): string {
+export function buildScriptPrompt(project: ClipProject, analysis: ClipAnalysis, style: VoiceStyle, gaps: Array<{ start: number; end: number }>, channel?: ChannelProfile): string {
   const s = project.source;
   const dialogue = analysis.words.length
     ? groupLines(analysis.words).map((l) => `[${l.start.toFixed(1)}s] ${l.text}`).join('\n')
     : '(no dialogue: gameplay sound only)';
   const frames = analysis.frames.map((f, i) => `Image ${i + 1}: ${f.at.toFixed(1)}s`).join(', ');
   return `You write the packaging for a YouTube Short made from a GTA (Grand Theft Auto) gameplay clip.
-
+${channel ? `\n${channelPromptBlock(channel)}\n` : ''}
 CLIP
 - Length: ${analysis.durationSec.toFixed(1)}s, ${analysis.width}x${analysis.height}
 - Posted on ${s?.platform ?? 'unknown'} by ${project.creator || s?.uploaderHandle || s?.uploader || 'unknown'}
@@ -177,7 +178,7 @@ ${dialogue}
 
 QUIET GAPS where a voiceover may go (seconds): ${gaps.map((g) => `${g.start.toFixed(1)}-${g.end.toFixed(1)} (max ${Math.floor((g.end - g.start - 0.3) * 2.5)} words)`).join(', ') || '(none)'}
 
-VOICE STYLE: ${STYLE_GUIDE[style]}
+VOICE STYLE: ${STYLE_GUIDE[style]}${channel?.tone ? ` In the channel's voice: ${channel.tone}` : ''}
 
 RULES
 - Only describe what the stills, dialogue and post show. Never invent events, names or claims.
@@ -215,8 +216,8 @@ async function loadImages(dir: string, frames: ClipAnalysis['frames']): Promise<
 export const defaultTags = ['gta', 'gta 6', 'gta 6 gameplay', 'gta 6 funny moments', 'gta shorts', 'gaming'];
 
 /** The editable plan from the writer's draft, with every rule enforced. */
-export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, analysis: ClipAnalysis, previous?: ClipPlan): ClipPlan {
-  const style = previous?.voiceStyle ?? 'hype';
+export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, analysis: ClipAnalysis, previous?: ClipPlan, channel?: ChannelProfile): ClipPlan {
+  const style = previous?.voiceStyle ?? channel?.defaultVoiceStyle ?? 'hype';
   const vertical = analysis.height > analysis.width * 1.2;
   const peakSec = clampPeak(draft?.peakSec ?? analysis.peaks[0]?.at ?? null, analysis.durationSec);
   const { trimStart, trimEnd } = chooseTrim(analysis.durationSec, { start: draft?.trimStart, end: draft?.trimEnd }, peakSec);
@@ -244,7 +245,7 @@ export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, a
     zoomOnPeak: previous?.zoomOnPeak ?? peakSec != null,
     sfxOnPeak: previous?.sfxOnPeak ?? false,
     voiceStyle: style,
-    voice: previous?.voice ?? '',
+    voice: previous?.voice ?? channel?.voice ?? '',
   };
 }
 
@@ -257,20 +258,20 @@ function clampPeak(peak: number | null, durationSec: number): number | null {
  * Writes the hook, on-screen texts, voice lines, titles and tags. If the model can't be reached
  * the clip still gets a plain plan (hook from the note, no voiceover) and a warning.
  */
-export async function writeScript(dir: string, project: ClipProject, analysis: ClipAnalysis, previous?: ClipPlan): Promise<{ plan: ClipPlan; warnings: string[] }> {
-  const style = previous?.voiceStyle ?? 'hype';
+export async function writeScript(dir: string, project: ClipProject, analysis: ClipAnalysis, previous?: ClipPlan, channel?: ChannelProfile): Promise<{ plan: ClipPlan; warnings: string[] }> {
+  const style = previous?.voiceStyle ?? channel?.defaultVoiceStyle ?? 'hype';
   // The writer sees the gaps of the whole clip (it may move the window); the rules re-check them
   const gaps = voiceGaps(analysis.words, 0, analysis.durationSec, analysis.peaks[0]?.at ?? null);
   try {
     const { provider, ctx, name } = clipLlm();
     const images = provider.supportsVision ? await loadImages(dir, analysis.frames) : [];
-    const { data } = await provider.generateJson({ prompt: buildScriptPrompt(project, analysis, style, gaps), schema: ScriptSchema, images, maxTokens: 12000 }, ctx);
-    const plan = planFromDraft(data, project, analysis, previous);
+    const { data } = await provider.generateJson({ prompt: buildScriptPrompt(project, analysis, style, gaps, channel), schema: ScriptSchema, images, maxTokens: 12000 }, ctx);
+    const plan = planFromDraft(data, project, analysis, previous, channel);
     const warnings = images.length ? [] : [`${name} could not look at the stills, so the script is based on the dialogue and post text only.`];
     return { plan, warnings };
   } catch (err) {
     return {
-      plan: planFromDraft(null, project, analysis, previous),
+      plan: planFromDraft(null, project, analysis, previous, channel),
       warnings: [`The script writer failed, so a plain plan was used (no voiceover): ${err instanceof Error ? err.message.slice(0, 200) : err}`],
     };
   }
