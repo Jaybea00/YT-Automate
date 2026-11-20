@@ -20,6 +20,10 @@ const execFileAsync = promisify(execFile);
 
 /** A word ending a sentence: ".", "!" or "?", possibly followed by a closing quote or bracket. */
 const SENTENCE_END = /[.!?]["'”’)\]]*$/;
+/** Initials such as "D.B.", "F." or "U.S.": their dots are not a sentence end ("D.B. Cooper"). */
+const INITIALS = /^["'“‘(]*(?:\p{Lu}\.)+$/u;
+
+const endsSentence = (word: string) => SENTENCE_END.test(word) && !INITIALS.test(word);
 
 /**
  * Where to add a pause, in seconds into the audio: midway through the natural gap after each
@@ -29,7 +33,7 @@ export function sentencePausePoints(narration: string, aligned: WordTiming[]): n
   const words = narration.trim().split(/\s+/).filter(Boolean);
   const points: number[] = [];
   for (let i = 0; i < Math.min(words.length, aligned.length) - 1; i++) {
-    if (!SENTENCE_END.test(words[i])) continue;
+    if (!endsSentence(words[i])) continue;
     const gapStart = aligned[i].end;
     const gapEnd = aligned[i + 1].start;
     points.push(Math.round(((gapStart + Math.max(gapStart, gapEnd)) / 2) * 1000) / 1000);
@@ -70,7 +74,7 @@ export function pacingPausePoints(
     while (j + 1 < n && PUNCTUATION_ONLY.test(words[j + 1])) ending += words[++j];
     if (j >= n - 1) break;
     const dramatic = opts.dramaticPauseSec > 0 && ELLIPSIS_END.test(ending);
-    const sentenceEnd = SENTENCE_END.test(words[i]) || SENTENCE_END.test(ending);
+    const sentenceEnd = endsSentence(words[i]) || (ending !== words[i] && SENTENCE_END.test(ending));
     const sec = dramatic ? Math.max(opts.dramaticPauseSec, opts.sentencePauseSec) : sentenceEnd ? opts.sentencePauseSec : 0;
     if (sec <= 0) continue;
     const gapStart = aligned[i].end;
