@@ -30,7 +30,7 @@ export function clipLlm(env: Record<string, string | undefined> = process.env): 
   }
   const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY || '';
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set in .env.local');
-  return { provider: geminiLlm, ctx: { apiKey, model: env.CLIP_GEMINI_MODEL || 'gemini-3.5-flash', options: {} }, name: 'Gemini' };
+  return { provider: geminiLlm, ctx: { apiKey, model: env.CLIP_GEMINI_MODEL || 'gemini-4-hydrogen', options: {} }, name: 'Gemini' };
 }
 
 // --------------------------------------------------------------------------

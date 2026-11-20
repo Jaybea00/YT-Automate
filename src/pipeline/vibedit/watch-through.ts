@@ -226,11 +226,11 @@ async function watcher(supabase: SupabaseClient): Promise<{ apiKey: string; mode
   const resolved = await resolveForStage<LLMProvider>('script', supabase).catch(() => null);
   if (resolved && resolved.provider.id.startsWith('gemini') && resolved.ctx.apiKey) {
     const ctx = withWritingModel(resolved.ctx, resolved.options);
-    return { apiKey: ctx.apiKey, model: ctx.model || 'gemini-3.5-flash' };
+    return { apiKey: ctx.apiKey, model: ctx.model || 'gemini-4-neon' };
   }
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('The watch-through needs Gemini: set GEMINI_API_KEY.');
-  return { apiKey, model: 'gemini-3.5-flash' };
+  return { apiKey, model: 'gemini-4-neon' };
 }
 
 async function uploadAndWait(files: GoogleAIFileManager, filePath: string, displayName: string) {
