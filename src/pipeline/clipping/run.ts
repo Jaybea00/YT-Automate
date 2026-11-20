@@ -1,5 +1,6 @@
 import { analyzeClip } from './analyze';
 import { downloadClip } from './ingest';
+import { loadChannelProfile } from '../channel/store';
 import { writeUploadInfo } from './package';
 import { renderShort } from './render';
 import { writeScript } from './script';
@@ -64,6 +65,7 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
   try {
     let project = await loadClip(id);
     if (!project) return;
+    const channel = await loadChannelProfile();
     const warnings = from === 'all' ? [] : project.warnings.filter((w) => !/voiced|voiceover|script writer|stills/i.test(w));
 
     if ((from === 'all' && !project.localSource) || !project.source) {
@@ -85,7 +87,7 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
 
     if (from !== 'render' || !project.plan) {
       await setStatus(id, 'writing', 'Writing the hook, voiceover and titles');
-      const { plan, warnings: w } = await writeScript(dir, project, project.analysis!, project.plan);
+      const { plan, warnings: w } = await writeScript(dir, project, project.analysis!, project.plan, channel);
       warnings.push(...w);
       project = await updateClip(id, (p) => {
         p.plan = plan;
@@ -104,14 +106,14 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
     }
 
     await setStatus(id, 'rendering', 'Rendering the Short');
-    const output = await renderShort(dir, project.source!.file, plan, project.analysis!);
+    const output = await renderShort(dir, project.source!.file, plan, project.analysis!, channel);
     project = await updateClip(id, (p) => {
       p.output = { ...output, renderedAt: new Date().toISOString() };
       p.status = 'ready';
       p.step = 'Ready';
       p.warnings = [...new Set(warnings)];
     });
-    await writeUploadInfo(dir, project);
+    await writeUploadInfo(dir, project, channel);
   } catch (err) {
     await updateClip(id, (p) => {
       p.status = 'failed';

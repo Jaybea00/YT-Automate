@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import yazl from 'yazl';
 import { fileResponse } from '@/lib/file-response';
 import { createSafeWebStream } from '@/lib/streaming';
+import { loadChannelProfile } from '@/pipeline/channel/store';
 import { compilationUploadText } from '@/pipeline/compile/package';
 import { compilationFile, loadCompilation } from '@/pipeline/compile/store';
 
@@ -25,7 +26,7 @@ export async function GET(req: Request, context: RouteContext) {
     zip.addFile(compilationFile(id, c.output.video), `${slug}/${c.format === 'short' ? 'short' : 'video'}.mp4`);
     const thumb = compilationFile(id, c.output.thumbnail);
     if (await stat(thumb).then((s) => s.isFile()).catch(() => false)) zip.addFile(thumb, `${slug}/thumbnail.jpg`);
-    zip.addBuffer(Buffer.from(compilationUploadText(c), 'utf-8'), `${slug}/upload-info.txt`);
+    zip.addBuffer(Buffer.from(compilationUploadText(c, await loadChannelProfile()), 'utf-8'), `${slug}/upload-info.txt`);
     zip.end();
     return new Response(createSafeWebStream(zip.outputStream as unknown as fs.ReadStream, { signal: req.signal }), {
       headers: { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${slug}.zip"`, 'Cache-Control': 'no-cache' },
