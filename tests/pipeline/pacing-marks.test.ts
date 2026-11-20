@@ -46,6 +46,17 @@ describe('Pacing marks', () => {
     assert.deepEqual(pacingPausePoints(text, aligned, { sentencePauseSec: 0.35, dramaticPauseSec: 0 }), [{ at: 1.2, sec: 0.35 }]);
   });
 
+  it('does not treat initials as a sentence end', () => {
+    const text = 'Then D.B. Cooper and John F. Kennedy left the U.S. Nobody knew.';
+    const aligned = text.split(' ').map((word, i) => w(word, i, i + 0.8));
+    // Initials never get a sentence pause, even "U.S." at a real sentence end (a small price)
+    assert.deepEqual(pacingPausePoints(text, aligned, { sentencePauseSec: 0.35, dramaticPauseSec: 0.8 }), []);
+    assert.deepEqual(sentencePausePoints(text, aligned), []);
+    const plain = 'He was D.B. Cooper. Nobody knew.';
+    const timed = plain.split(' ').map((word, i) => w(word, i, i + 0.8));
+    assert.deepEqual(pacingPausePoints(plain, timed, { sentencePauseSec: 0.35, dramaticPauseSec: 0 }), [{ at: 3.9, sec: 0.35 }]);
+  });
+
   it('matches the old sentence pauses when there are no marks', () => {
     const plain = 'He was twenty-one. He had won everything. What happened next?';
     const timings = [
