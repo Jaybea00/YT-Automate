@@ -75,7 +75,7 @@ export async function checkVoiceAudio(
 ): Promise<{ transcript: string; issues: VoiceIssue[] }> {
   const mimeType = AUDIO_MIME[path.extname(audioPath).toLowerCase()] ?? 'audio/mpeg';
   const audio = (await fs.readFile(audioPath)).toString('base64');
-  const model = ctx.model || 'gemini-3.5-flash-lite';
+  const model = ctx.model || 'gemini-4-hydrogen';
   const baseUrl = (ctx.baseUrl || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
 
   const response = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {

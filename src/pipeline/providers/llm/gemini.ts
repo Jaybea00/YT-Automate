@@ -4,13 +4,25 @@ import { ProviderError } from '../errors';
 import { mapHttpOrSdkError } from '../error-mapper';
 import type { LLMProvider, LlmImage, ProviderCallContext, Usage } from '../types';
 
+/**
+ * Two tiers, by how hard the job is. Fast: everyday, high-volume jobs (checks, planning helpers,
+ * research) on Gemini 4 Hydrogen. Strong: the work that decides quality (writing, fact checks,
+ * watching the video) on Gemini 4 Neon. A busy model falls back within its tier first.
+ */
+export const FAST_MODEL = 'gemini-4-hydrogen';
+export const STRONG_MODEL = 'gemini-4-neon';
+
 const FALLBACK_MODELS = [
+  FAST_MODEL,
   'gemini-3.5-flash-lite',
-  'gemini-flash-lite-latest',
-  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  STRONG_MODEL,
+  'gemini-3.8-flash',
   'gemini-3.6-flash',
-  'gemini-3.7-flash',
 ];
+
+/** The fast tier: Hydrogen and the Flash-Lite models. */
+export const isFastModel = (m: string) => /lite|hydrogen/i.test(m);
 
 /** How long a model that reported being overloaded is skipped before being tried again. */
 const BUSY_COOLDOWN_MS = 10 * 60 * 1000;
@@ -25,17 +37,16 @@ export function resetModelCooldowns(): void {
 }
 
 /**
- * Primary first, then fallbacks of the same tier (lite vs full), so a busy full model doesn't
- * silently degrade to lite. Models that recently reported overload move to the end, so a
+ * Primary first, then fallbacks of the same tier (fast vs strong), so a busy strong model doesn't
+ * silently degrade to a fast one. Models that recently reported overload move to the end, so a
  * multi-call job doesn't wait on the same failing models for every call.
  */
 export function modelFallbackOrder(primaryModel: string, now = Date.now()): string[] {
-  const isLite = (m: string) => /lite/i.test(m);
   const rest = FALLBACK_MODELS.filter((m) => m !== primaryModel);
   const ordered = [
     primaryModel,
-    ...rest.filter((m) => isLite(m) === isLite(primaryModel)),
-    ...rest.filter((m) => isLite(m) !== isLite(primaryModel)),
+    ...rest.filter((m) => isFastModel(m) === isFastModel(primaryModel)),
+    ...rest.filter((m) => isFastModel(m) !== isFastModel(primaryModel)),
   ];
   const isBusy = (m: string) => (busyUntil.get(m) ?? 0) > now;
   return [...ordered.filter((m) => !isBusy(m)), ...ordered.filter(isBusy)];
@@ -140,7 +151,7 @@ export class GeminiLlmProvider implements LLMProvider {
     req: { system?: string; prompt: string; maxTokens?: number; temperature?: number },
     ctx: ProviderCallContext,
   ): Promise<{ text: string; usage: Usage }> {
-    const primaryModel = ctx.model || 'gemini-3.5-flash-lite';
+    const primaryModel = ctx.model || FAST_MODEL;
     const modelsToTry = modelFallbackOrder(primaryModel);
 
     let lastError: unknown;
@@ -204,7 +215,7 @@ export class GeminiLlmProvider implements LLMProvider {
             ...(req.images ?? []).map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })),
           ]
         : req.prompt;
-    const primaryModel = ctx.model || 'gemini-3.5-flash-lite';
+    const primaryModel = ctx.model || FAST_MODEL;
     const modelsToTry = modelFallbackOrder(primaryModel);
 
     // Constrained decoding makes Gemini emit JSON matching the schema (no unquoted strings, missing fields)

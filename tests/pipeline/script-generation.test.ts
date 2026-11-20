@@ -284,11 +284,13 @@ describe('Part B: Script Generation via Registry & LLM Adapters', () => {
     assert.equal(beat.properties.duration_estimate_seconds.type, 'number');
   });
 
-  it('falls back within the same model tier before crossing between lite and full models', () => {
-    const order = modelFallbackOrder('gemini-3.8-flash');
-    assert.equal(order[0], 'gemini-3.8-flash');
-    assert.ok(order.indexOf('gemini-3.7-flash') < order.indexOf('gemini-3.5-flash-lite'));
-    assert.equal(modelFallbackOrder('gemini-3.5-flash-lite')[1], 'gemini-flash-lite-latest');
+  it('falls back within the same tier (strong Neon, fast Hydrogen) before crossing over', () => {
+    const strong = modelFallbackOrder('gemini-4-neon');
+    assert.deepEqual(strong.slice(0, 3), ['gemini-4-neon', 'gemini-3.8-flash', 'gemini-3.6-flash']);
+    assert.ok(strong.indexOf('gemini-3.6-flash') < strong.indexOf('gemini-4-hydrogen'));
+    const fast = modelFallbackOrder('gemini-4-hydrogen');
+    assert.deepEqual(fast.slice(0, 3), ['gemini-4-hydrogen', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']);
+    assert.ok(fast.indexOf('gemini-3.1-flash-lite') < fast.indexOf('gemini-4-neon'));
   });
 
   it('uses the binding option writingModel for full-script writing only', () => {

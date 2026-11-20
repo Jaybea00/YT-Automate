@@ -22,6 +22,7 @@ import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, type 
 import { subtitlesForVideo } from './subtitle-files';
 import type { Thumbnail } from './thumbnails';
 import { scorePackaging, scoreIsCurrent, type PackagingScore } from './packaging-score';
+import { buildUploadChecks, uploadVerdict } from './upload-check';
 
 /**
  * Everything needed to publish a rendered video: the metadata, thumbnails and Shorts (generated
@@ -118,15 +119,41 @@ export async function publishView(supabase: SupabaseClient, video: VideoRow) {
     ? await supabase.from('videos').select('id, status').in('id', childIds)
     : { data: [] as Array<{ id: string; status: string }> };
   const childStatus = new Map((children ?? []).map((c: { id: string; status: string }) => [c.id, c.status]));
+  // The ready-to-upload check, from what the page shows and what the render left behind
+  const attributionParts = (assets ?? []).flatMap((a: { attribution_text: string | null }) => (a.attribution_text ?? '').split(' · ').map((t) => t.trim()).filter(Boolean));
+  const notes = Array.isArray(sj.review_notes) ? (sj.review_notes as Array<{ resolved?: boolean; source?: 'ai'; severity?: 'high' | 'medium' | 'low' }>) : [];
+  const timeline = readTimeline(sj);
+  const title = edits.title ?? meta?.titles[0]?.text ?? video.title ?? '';
+  const description = edits.description ?? generatedDescription;
+  const tags = edits.tags ?? meta?.tags ?? [];
+  const uploadChecks = buildUploadChecks({
+    videoId: video.id,
+    rendered,
+    qualityReport: (sj.quality_report as { passed: boolean; checks: Array<{ status: 'pass' | 'warn' | 'fail'; label: string }> } | undefined) ?? null,
+    openNotes: notes.filter((n) => !n.resolved),
+    title,
+    description,
+    credits,
+    chapters: sj.formatted_chapters ?? '',
+    tags,
+    thumbnailTexts: (publish.thumbnails ?? []).map((t) => t.text),
+    hasTimeline: Boolean(timeline),
+    endScreenSec: (timeline?.endScreenMs ?? 0) / 1000,
+    drawn: Boolean(packForVideo(video)?.drawn),
+    aiVisuals: attributionParts.filter((t: string) => /\bAI\b/.test(t)),
+    permissionFootage: attributionParts.filter((t: string) => /^Gameplay:/i.test(t)).length,
+  });
   return {
     videoId: video.id,
     rendered,
+    uploadChecks,
+    uploadVerdict: uploadVerdict(uploadChecks),
     hasTimeline: Boolean(readTimeline(sj)),
     titles: meta?.titles ?? [],
-    title: edits.title ?? meta?.titles[0]?.text ?? video.title ?? '',
-    description: edits.description ?? generatedDescription,
+    title,
+    description,
     generatedDescription,
-    tags: edits.tags ?? meta?.tags ?? [],
+    tags,
     hashtags: meta?.hashtags ?? [],
     chapters: sj.formatted_chapters ?? '',
     credits,
