@@ -262,6 +262,9 @@ export interface NarrationSegment {
  * The beat's narration split around its character quotes, in order. A quote not found word for
  * word in the narration (the beat was edited) is skipped, so it's voiced by the narrator.
  */
+/** A piece of narration with words in it, not just quote marks or punctuation. */
+const speakable = (text: string) => /[\p{L}\p{N}]/u.test(text);
+
 export function splitNarration(narration: string, parts: BeatPart[] | undefined): NarrationSegment[] {
   if (!parts?.length) return [{ text: narration }];
   const segments: NarrationSegment[] = [];
@@ -273,12 +276,13 @@ export function splitNarration(narration: string, parts: BeatPart[] | undefined)
   for (const { part, at } of found) {
     if (at < cursor) continue; // overlaps the previous quote
     const before = narration.slice(cursor, at).trim();
-    if (before) segments.push({ text: before });
+    if (speakable(before)) segments.push({ text: before });
     segments.push({ text: part.text, part });
     cursor = at + part.text.length;
   }
   const rest = narration.slice(cursor).trim();
-  if (rest) segments.push({ text: rest });
+  // What's left after a quote is often just its closing mark ('"' or '."'): nothing to voice
+  if (speakable(rest)) segments.push({ text: rest });
   return segments.length ? segments : [{ text: narration }];
 }
 

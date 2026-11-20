@@ -95,6 +95,15 @@ describe('character voices', () => {
     assert.deepEqual(splitNarration('plain', undefined), [{ text: 'plain' }]);
   });
 
+  it('never sends a lone closing quote mark to the voice', () => {
+    const quote = "I think it's highly unlikely Cooper survived the jump.";
+    assert.deepEqual(
+      splitNarration(`Carr concluded, "${quote}"`, [{ text: quote, narratorId: 'n2' }]).map((s) => s.text),
+      ['Carr concluded, "', quote],
+    );
+    assert.deepEqual(splitNarration(`"${quote}"`, [{ text: quote, narratorId: 'n2' }]).map((s) => s.text), [quote]);
+  });
+
   it('keeps only castings that can be voiced', () => {
     const casting = normalizeCasting(
       {
