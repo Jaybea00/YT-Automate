@@ -7,6 +7,7 @@ import { Card as UiCard } from '@/components/ui/card';
 import { PageContainer, PageHeader, EmptyState } from '@/components/ui/page';
 import { buttonClass } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
+import { Badge } from '@/components/ui/badge';
 
 interface PublishData {
   videoId: string;
@@ -37,6 +38,69 @@ interface PublishData {
     status: string | null;
   }>;
   packagingScore: PackagingScore | null;
+  uploadChecks: UploadCheck[];
+  uploadVerdict: { ready: boolean; fail: number; warn: number };
+}
+
+/** One item of the ready-to-upload check (see upload-check.ts). */
+interface UploadCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail' | 'info';
+  detail: string;
+  fix?: { label: string; href: string };
+}
+
+const CHECK_MARK: Record<UploadCheck['status'], { icon: 'check' | 'alert' | 'x' | 'eye'; tone: string }> = {
+  pass: { icon: 'check', tone: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
+  warn: { icon: 'alert', tone: 'text-amber-300 bg-amber-500/10 border-amber-500/25' },
+  fail: { icon: 'x', tone: 'text-red-300 bg-red-500/10 border-red-500/25' },
+  info: { icon: 'eye', tone: 'text-sky-300 bg-sky-500/10 border-sky-500/25' },
+};
+
+/** The ready-to-upload check: what must be fixed, what to look at, and what to answer in YouTube Studio. */
+function UploadChecklist({ checks, verdict }: { checks: UploadCheck[]; verdict: { ready: boolean; fail: number; warn: number } }) {
+  const order = { fail: 0, warn: 1, info: 2, pass: 3 } as const;
+  const sorted = [...checks].sort((a, b) => order[a.status] - order[b.status]);
+  return (
+    <UiCard
+      title="Ready to upload?"
+      description="Everything that hurts a video once it's live, checked before you upload it."
+      actions={
+        <Badge tone={!verdict.ready ? 'danger' : verdict.warn ? 'warning' : 'success'}>
+          {!verdict.ready
+            ? `${verdict.fail} to fix${verdict.warn ? ` · ${verdict.warn} to check` : ''}`
+            : verdict.warn
+              ? `Ready · ${verdict.warn} to check`
+              : 'Ready to upload'}
+        </Badge>
+      }
+    >
+      <ul className="divide-y divide-zinc-800/80">
+        {sorted.map((c) => (
+          <li key={c.id} className="flex items-start gap-3 py-2.5">
+            <span className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border ${CHECK_MARK[c.status].tone}`}>
+              <Icon name={CHECK_MARK[c.status].icon} size={13} strokeWidth={2.4} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-zinc-100">{c.label}</p>
+              <p className="text-xs text-zinc-400 leading-relaxed">{c.detail}</p>
+            </div>
+            {c.fix &&
+              (c.fix.href.startsWith('#') ? (
+                <a href={c.fix.href} className={buttonClass('ghost', 'sm', 'shrink-0')}>
+                  {c.fix.label}
+                </a>
+              ) : (
+                <Link href={c.fix.href} className={buttonClass('ghost', 'sm', 'shrink-0')}>
+                  {c.fix.label}
+                </Link>
+              ))}
+          </li>
+        ))}
+      </ul>
+    </UiCard>
+  );
 }
 
 /** Every title with every thumbnail, scored against the niche (see packaging-score.ts). */
@@ -96,9 +160,9 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
   );
 }
 
-function Card({ title, children, actions }: { title: string; children: React.ReactNode; actions?: React.ReactNode }) {
+function Card({ title, children, actions, id }: { title: string; children: React.ReactNode; actions?: React.ReactNode; id?: string }) {
   return (
-    <UiCard title={title} actions={actions}>
+    <UiCard id={id} title={title} actions={actions} className="scroll-mt-24">
       <div className="space-y-4">{children}</div>
     </UiCard>
   );
@@ -221,6 +285,8 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
           }
         />
 
+        {data.uploadChecks?.length > 0 && <UploadChecklist checks={data.uploadChecks} verdict={data.uploadVerdict} />}
+
         {data.format === 'short' && (
           <div className="px-4 py-3 rounded-xl bg-red-950/30 border border-red-800/60 text-red-100 text-sm">
             This is a native Short. &quot;Render vertical Short&quot; below turns the whole video into one 9:16 Short.
@@ -246,6 +312,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
         )}
 
         <Card
+          id="publish-title"
           title="Title"
           actions={
             <>
@@ -291,6 +358,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
         </Card>
 
         <Card
+          id="publish-description"
           title="Description"
           actions={
             <>
@@ -319,7 +387,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
           </p>
         </Card>
 
-        <Card title="Tags" actions={<CopyButton text={tags.join(', ')} />}>
+        <Card id="publish-tags" title="Tags" actions={<CopyButton text={tags.join(', ')} />}>
           <textarea
             value={tagsText}
             rows={3}
@@ -345,6 +413,7 @@ export default function PublishPage({ params }: { params: Promise<{ id: string }
         )}
 
         <Card
+          id="publish-thumbnails"
           title={`Thumbnails (${data.thumbnails.length})`}
           actions={
             <button
