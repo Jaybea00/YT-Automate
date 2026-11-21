@@ -23,6 +23,11 @@ export const SHORT_HEIGHT = 1920;
 const MIN_SHORT_SEC = 20;
 /** YouTube counts up to 60 s as a Short; a second of margin keeps it safely under. */
 const MAX_SHORT_SEC = 59;
+/**
+ * A Short made as a whole (native or ranking) may run to YouTube's 3-minute limit (a second of
+ * margin); cut-downs of a long video still aim under a minute, where they hold viewers best.
+ */
+export const WHOLE_SHORT_MAX_SEC = 179;
 const MAX_SHORTS = 3;
 const END_CARD_SEC = 2.5;
 const EDGE_FADE_SEC = 0.3;
@@ -50,19 +55,19 @@ export function spanOf(timeline: VideoTimeline, startBeat: number, endBeat: numb
 }
 
 /**
- * Keeps plans usable: real beat ranges, 20-59 s (a too-long range is shortened by whole beats),
- * no overlaps, at most three.
+ * Keeps plans usable: real beat ranges, 20-59 s (or up to `maxSec`; a too-long range is shortened
+ * by whole beats), no overlaps, at most three.
  */
-export function normalizeShortPlans(plans: ShortPlan[], timeline: VideoTimeline): ShortPlan[] {
+export function normalizeShortPlans(plans: ShortPlan[], timeline: VideoTimeline, maxSec = MAX_SHORT_SEC): ShortPlan[] {
   const out: ShortPlan[] = [];
   for (const p of plans) {
     let end = p.endBeat;
     let span = spanOf(timeline, p.startBeat, end);
-    while (span && span.endSec - span.startSec > MAX_SHORT_SEC && end > p.startBeat) {
+    while (span && span.endSec - span.startSec > maxSec && end > p.startBeat) {
       end--;
       span = spanOf(timeline, p.startBeat, end);
     }
-    if (!span || span.endSec - span.startSec < MIN_SHORT_SEC || span.endSec - span.startSec > MAX_SHORT_SEC) continue;
+    if (!span || span.endSec - span.startSec < MIN_SHORT_SEC || span.endSec - span.startSec > maxSec) continue;
     if (out.some((o) => p.startBeat <= o.endBeat && end >= o.startBeat)) continue;
     const title = p.title.replace(/\s+/g, ' ').trim().slice(0, 90);
     const hook = p.hook.replace(/["“”]/g, '').replace(/\s+/g, ' ').trim().toUpperCase().split(' ').slice(0, 6).join(' ');
@@ -160,6 +165,33 @@ export function verticalFilter(
   );
 }
 
+export interface ShortBanner {
+  text: string;
+  startMs: number;
+  endMs: number;
+  position: 'top' | 'bottom';
+}
+
+/**
+ * The lines on top of a Short: the hook, then (in a ranking) each item's "#3 NAME" badge from the
+ * moment it starts, then the end card. `ranks` start times are ms into the Short.
+ */
+export function shortBanners(
+  hook: string,
+  durationSec: number,
+  opts: { ranks?: Array<{ text: string; startMs: number }>; endCard?: string; endCardStartMs?: number } = {},
+): ShortBanner[] {
+  const total = Math.round(durationSec * 1000);
+  // The end card shows while its line is spoken (when it is), else for the last 2.5 seconds
+  const spoken = opts.endCardStartMs != null && opts.endCardStartMs > 0 && opts.endCardStartMs < total - 500;
+  const endStart = spoken ? Math.round(opts.endCardStartMs!) : Math.round((durationSec - END_CARD_SEC) * 1000);
+  const ranks = (opts.ranks ?? []).filter((r) => r.startMs > 0 && r.startMs < endStart - 500).sort((a, b) => a.startMs - b.startMs);
+  const out: ShortBanner[] = [{ text: hook, startMs: 0, endMs: ranks[0]?.startMs ?? endStart, position: 'top' }];
+  ranks.forEach((r, i) => out.push({ text: r.text, startMs: r.startMs, endMs: ranks[i + 1]?.startMs ?? endStart, position: 'top' }));
+  out.push({ text: opts.endCard ?? 'FULL STORY ON THE CHANNEL', startMs: endStart, endMs: total, position: 'top' });
+  return out.filter((b) => b.endMs > b.startMs);
+}
+
 async function frameSize(file: string): Promise<{ width: number; height: number }> {
   const { stdout } = await execFileAsync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file]);
   const [width, height] = stdout.trim().split(',').map(Number);
@@ -179,6 +211,12 @@ export async function renderShort(options: {
   reframe?: boolean;
   /** Tests: where the subject is in a frame (default: the depth model). */
   findSubject?: SubjectFinder;
+  /** A ranking: each item's badge and the beat (timeline index) it starts on. */
+  ranks?: Array<{ text: string; beat: number }>;
+  /** The closing line (default: a pointer to the full video). */
+  endCard?: string;
+  /** The beat (timeline index) that says the closing line: the end card shows from its start. */
+  endCardBeat?: number;
 }): Promise<ShortClip> {
   const { videoPath, plan, timeline, beats, words, highlightHex, outPath } = options;
   const span = spanOf(timeline, plan.startBeat, plan.endBeat);
@@ -200,10 +238,12 @@ export async function renderShort(options: {
       resolution: { width: SHORT_WIDTH, height: SHORT_HEIGHT },
       fontSize: 84,
       marginV: 420,
-      banners: [
-        { text: plan.hook, startMs: 0, endMs: Math.round((duration - END_CARD_SEC) * 1000), position: 'top' },
-        { text: 'FULL STORY ON THE CHANNEL', startMs: Math.round((duration - END_CARD_SEC) * 1000), endMs: Math.round(duration * 1000), position: 'top' },
-      ],
+      banners: shortBanners(plan.hook, duration, {
+        ranks: options.ranks
+          ?.map((r) => ({ text: r.text, startMs: Math.round((timeline.beats.find((b) => b.index === r.beat)?.voiceStartMs ?? -1) - span.startSec * 1000) })),
+        endCard: options.endCard,
+        endCardStartMs: options.endCardBeat != null ? (timeline.beats.find((b) => b.index === options.endCardBeat)?.voiceStartMs ?? -1) - span.startSec * 1000 : undefined,
+      }),
     },
     assPath,
   );
