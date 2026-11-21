@@ -25,6 +25,7 @@ import type { SavedVoicePlan } from './voice-plan';
 import { leadWithPackageTitle, type PackageOption, type Packaging } from './packaging-types';
 import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
+import { rankingShortRules, type RankingSize } from './ranking';
 
 export const SHOT_TYPES = [
   'stock',
@@ -228,7 +229,9 @@ export interface GeneratedScript {
   /** 'short' for a native YouTube Short (a linked mini video); absent for normal videos. */
   format?: 'short';
   /** For a native Short: the long video it came from, and the on-screen hook banner. */
-  short?: { parent_video_id: string; hook_banner: string };
+  short?: { parent_video_id?: string | null; hook_banner: string };
+  /** A ranking Short: a countdown whose items start "Number N:" (see ranking.ts). */
+  ranking?: boolean;
 }
 
 export const ScriptBeatSchema = z.object({
@@ -263,6 +266,9 @@ export interface GenerateScriptInput {
   packaging?: PackageOption | null;
   /** 'short': a native YouTube Short of about a minute, written for vertical viewing. */
   format?: 'short';
+  /** With format 'short': a ranking countdown (rankingShortRules), of `rankingItems` (default 5). */
+  ranking?: boolean;
+  rankingItems?: RankingSize;
 }
 
 export interface GenerateScriptOptions {
@@ -325,7 +331,8 @@ export const SHORT_FORMAT_RULES = `THIS IS A YOUTUBE SHORT (vertical, under 60 s
 
 function briefSection(input: GenerateScriptInput): string {
   const parts: string[] = [];
-  if (input.format === 'short') parts.push(SHORT_FORMAT_RULES);
+  // A ranking has its own Short rules (several items, possibly two minutes), not the one-idea ones
+  if (input.format === 'short') parts.push(input.ranking ? rankingShortRules(input.rankingItems) : SHORT_FORMAT_RULES);
   if (input.brief?.trim()) {
     parts.push(`CREATOR'S BRIEF (follow its structure, angle, tone and chapter order; use any opening or closing lines it gives, word for word; it overrides the style's defaults where they conflict, but never the research rules and never the word budget; ignore its title, thumbnail and source notes, which are used elsewhere):
 """

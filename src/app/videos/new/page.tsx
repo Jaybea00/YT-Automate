@@ -19,6 +19,7 @@ import {
 } from '@/lib/styles/compose';
 import { narrationPaceFactor } from '@/lib/styles/packs';
 import { briefForAngle, type VideoAngle } from '@/lib/script/angle-brief';
+import { RANKING_SIZES, type RankingSize } from '@/lib/script/ranking';
 import { describeEstimate, estimateCreation, presetFor, RUNTIME_PRESETS, runtimeNote } from '@/lib/script/creation-estimate';
 
 type Tab = 'ai' | 'raw' | 'srt';
@@ -66,6 +67,51 @@ const card = (selected: boolean) =>
     selected ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'
   }`;
 
+/** Makes the video a vertical ranking Short of its own: a countdown of about a minute. */
+function RankingShortToggle({
+  checked,
+  onChange,
+  pasted = false,
+  items = 5,
+  onItems,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  pasted?: boolean;
+  items?: RankingSize;
+  onItems?: (n: RankingSize) => void;
+}) {
+  return (
+    <div className={`p-4 rounded-xl border transition ${checked ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700'}`}>
+      <label className="flex items-start gap-3 cursor-pointer">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-1" />
+        <div>
+          <span className="text-sm font-semibold text-zinc-200 block">Ranking Short</span>
+          <span className="text-xs text-zinc-400">
+            {pasted
+              ? 'A vertical countdown (Shorts can run to 3 minutes). Start each item’s paragraph with “Number 3: Its Name.” to get its #3 badge on screen.'
+              : 'A vertical countdown (“Top 5 heists that actually worked”): a teaser of #1, then each item with a #3 badge, ending on #1. Make the Short on its Publish page once it’s rendered.'}
+          </span>
+        </div>
+      </label>
+      {checked && onItems && (
+        <div className="flex gap-2 mt-3 ml-7">
+          {RANKING_SIZES.map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => onItems(n)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition ${items === n ? 'border-indigo-500 bg-indigo-500/15 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700'}`}
+            >
+              Top {n} · {n === 5 ? '~1 min' : '~2 min'}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NewVideoPage() {
   const router = useRouter();
 
@@ -97,6 +143,8 @@ export default function NewVideoPage() {
   const [rawMode, setRawMode] = useState<'raw_paragraphs' | 'raw_ai'>('raw_paragraphs');
   const [srtText, setSrtText] = useState('');
   const [smartMerge, setSmartMerge] = useState(true);
+  const [rankingShort, setRankingShort] = useState(false);
+  const [rankingItems, setRankingItems] = useState<RankingSize>(5);
 
   const [recent, setRecent] = useState<RecentVideo[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -283,6 +331,10 @@ export default function NewVideoPage() {
       }
       payload.targetMinutes = minutes;
       if (brief.trim()) payload.brief = brief.trim();
+      if (rankingShort && !batchMode) {
+        payload.shortFormat = 'ranking';
+        payload.rankingItems = rankingItems;
+      }
     } else if (tab === 'raw') {
       if (!rawText.trim()) {
         setErrorMessage('Please paste or upload your script text.');
@@ -291,6 +343,7 @@ export default function NewVideoPage() {
       payload.mode = rawMode;
       payload.rawText = rawText.trim();
       payload.topic = topic.trim() || undefined;
+      if (rankingShort) payload.shortFormat = 'ranking';
     } else {
       if (!srtText.trim()) {
         setErrorMessage('Please paste or upload your SRT subtitle text.');
@@ -452,7 +505,9 @@ export default function NewVideoPage() {
                   )}
                 </div>
 
-                <div>
+                {!batchMode && <RankingShortToggle checked={rankingShort} onChange={setRankingShort} items={rankingItems} onItems={setRankingItems} />}
+
+                <div className={rankingShort && !batchMode ? 'hidden' : ''}>
                   <span className="block text-sm font-medium text-zinc-200 mb-2">Length</span>
                   <div className="flex flex-wrap gap-2">
                     {RUNTIME_PRESETS.map((p) => (
@@ -549,6 +604,7 @@ export default function NewVideoPage() {
                   />
                   <p className="text-xs text-zinc-500 mt-1.5">The video’s length comes from your text.</p>
                 </div>
+                <RankingShortToggle checked={rankingShort} onChange={setRankingShort} pasted />
                 <div className="p-4 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-3">
                   <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Splitting into beats</span>
                   <label className="flex items-start gap-3 cursor-pointer">

@@ -16,9 +16,10 @@ import { composeDescription, descriptionSources, generateMetadata, type VideoMet
 import { chosenPackage, type Packaging } from '@/lib/script/packaging-types';
 import { createNativeShort, draftShortIdeas, type NativeShorts } from '@/lib/script/native-shorts';
 import type { VideoStyle } from '@/lib/script/style-templates';
+import { closingBeat, RANKING_END_CARD, rankBadge, rankMarkers } from '@/lib/script/ranking';
 import type { ResearchDossier } from '@/lib/research/types';
 import { generateThumbnails, rendersDir } from './publish-assets';
-import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, type ShortClip } from './shorts';
+import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, WHOLE_SHORT_MAX_SEC, type ShortClip } from './shorts';
 import { subtitlesForVideo } from './subtitle-files';
 import type { Thumbnail } from './thumbnails';
 import { scorePackaging, scoreIsCurrent, type PackagingScore } from './packaging-score';
@@ -63,7 +64,9 @@ interface VideoRow {
     brief_extras?: { title_ideas?: string[]; thumbnail_ideas?: string[]; sources?: string[] };
     packaging?: Packaging;
     format?: 'short';
-    short?: { parent_video_id: string; hook_banner: string };
+    short?: { parent_video_id?: string | null; hook_banner: string };
+    /** A ranking Short: items start with "Number N:" and get a "#N" badge. */
+    ranking?: boolean;
   }) | null;
 }
 
@@ -291,9 +294,14 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
     ? normalizeShortPlans(
         [{ startBeat: timeline.beats[0].index, endBeat: timeline.beats[timeline.beats.length - 1].index, title, hook: sj.short?.hook_banner || title }],
         timeline,
+        WHOLE_SHORT_MAX_SEC,
       )
     : null;
-  if (whole && whole.length === 0) throw new Error('This Short is outside 20-59 seconds; shorten or lengthen its script and re-voice it');
+  if (whole && whole.length === 0) throw new Error('This Short is under 20 seconds; lengthen its script and re-voice it');
+  // Whole beats are dropped from the end to fit 3 minutes; say so rather than cut the ending silently
+  if (whole?.[0] && whole[0].endBeat < timeline.beats[timeline.beats.length - 1].index) {
+    console.warn(`[Shorts] The script runs past 3 minutes; the Short ends at beat ${whole[0].endBeat + 1}`);
+  }
   let plans = whole ?? (llm
     ? await planShorts({ beats, timeline, topic: video.topic ?? '', llm: llm.provider, ctx: llm.ctx }).catch((err) => {
         console.warn(`[Shorts] Planning with the LLM failed; using section openings: ${err instanceof Error ? err.message.slice(0, 160) : err}`);
@@ -305,6 +313,11 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
 
   const captionBeats = timeline.beats.map((b) => ({ index: b.index, text: beats[b.index]?.text ?? '', audioPath: b.audioPath, durationSec: (b.voiceMs ?? 0) / 1000 }));
   const words = applyCaptionEdits(captionBeats, await loadCaptionWords(captionBeats), (sj as { caption_edits?: CaptionEdits }).caption_edits);
+  // A ranking Short shows each item's "#3" badge; a Short of its own (no long video) points to the channel
+  const ranks = whole && sj.ranking ? rankMarkers(beats).map((m) => ({ text: rankBadge(m), beat: m.beat })) : undefined;
+  const endCard = whole && sj.ranking ? RANKING_END_CARD : whole && !sj.short?.parent_video_id ? 'MORE ON THE CHANNEL' : undefined;
+  const spokenEnd = whole && sj.ranking ? closingBeat(beats) : -1;
+  const endCardBeat = spokenEnd >= 0 ? spokenEnd : undefined;
   const dir = path.join(rendersDir(video.id), 'shorts');
   await fsp.rm(dir, { recursive: true, force: true });
   const shorts: ShortClip[] = [];
@@ -319,6 +332,9 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
         highlightHex: themeForVideo(video).accent,
         outPath: path.join(dir, `short_${i + 1}.mp4`),
         reframe: options.reframe !== false,
+        ranks,
+        endCard,
+        endCardBeat,
       }),
     );
   }

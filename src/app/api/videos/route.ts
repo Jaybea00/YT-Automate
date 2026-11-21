@@ -7,6 +7,9 @@ import { planShots } from '@/lib/script/shot-planner';
 import { trimBrief } from '@/lib/script/outline';
 import { createQueuedVideo, resolveNewVideoStyle, styledScript, type ResolvedStyle } from '@/lib/script/new-video';
 import { parseSrtToBeats, parseRawTextToParagraphBeats, planVisualsForUploadedBeats } from '@/lib/script/parser';
+import { asRankingShort, isRankingSize, rankingMinutes } from '@/lib/script/ranking';
+import { ReadyScriptSchema, scriptFromReady } from '@/lib/script/ready-script';
+import { scriptMinutes } from '@/lib/script/create-video';
 
 /** The columns the dashboard needs (?summary=1): no scripts, so a long list stays small. */
 const SUMMARY_COLUMNS = 'id, title, topic, style, target_minutes, status, error_message, render_url, created_at, updated_at';
@@ -51,19 +54,55 @@ export async function POST(req: Request) {
       srtText,
       minBeatDurationSeconds,
       brief: rawBrief,
+      shortFormat,
     } = body as {
-      mode?: 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt';
+      mode?: 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt' | 'ready';
       topic?: string;
       targetMinutes?: number | string;
       rawText?: string;
       srtText?: string;
       minBeatDurationSeconds?: number;
       brief?: string;
+      /** 'ranking': a vertical countdown Short of its own. */
+      shortFormat?: string;
     };
 
     const supabase = getSupabaseServerClient();
     const resolved = await resolveNewVideoStyle(body);
     const { style } = resolved;
+    const ranking = shortFormat === 'ranking';
+    const rankingItems = isRankingSize(Number((body as { rankingItems?: unknown }).rankingItems)) ? (Number((body as { rankingItems?: unknown }).rankingItems) as 5 | 10) : 5;
+
+    // -------------------------------------------------------------
+    // MODE 0: A FINISHED SCRIPT (beats, visuals, titles; no AI call)
+    // -------------------------------------------------------------
+    if (mode === 'ready') {
+      const parsed = ReadyScriptSchema.safeParse((body as { script?: unknown }).script);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        return NextResponse.json({ error: `Invalid script: ${issue?.path.join('.')} ${issue?.message ?? ''}`.trim() }, { status: 400 });
+      }
+      const script = scriptFromReady(parsed.data);
+      const videoTopic = topic?.trim() || script.title_options[0];
+      const styled = styledScript(script, resolved);
+      const scriptJson = ranking ? asRankingShort(styled, parsed.data.hook_banner) : styled;
+      const { data: newVideo, error: insertError } = await supabase
+        .from('videos')
+        .insert({
+          topic: videoTopic,
+          style,
+          target_minutes: scriptMinutes(script.beats, style, resolved.composed?.pack),
+          status: 'script_review',
+          script_json: scriptJson,
+          title: script.title_options[0],
+        })
+        .select()
+        .single();
+      if (insertError || !newVideo) {
+        return NextResponse.json({ error: `Failed to create video record: ${insertError?.message}` }, { status: 500 });
+      }
+      return NextResponse.json(newVideo, { status: 201 });
+    }
 
     // -------------------------------------------------------------
     // MODE 1: SRT SUBTITLES
@@ -142,6 +181,7 @@ export async function POST(req: Request) {
         title_options: [videoTopic, `${videoTopic} (Manual)`, `Guide: ${videoTopic}`],
         beats,
       };
+      const styled = styledScript(await withDrawingBrief(supabase, scriptJson, videoTopic, resolved), resolved);
 
       const { data: newVideo, error: insertError } = await supabase
         .from('videos')
@@ -150,7 +190,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: styledScript(await withDrawingBrief(supabase, scriptJson, videoTopic, resolved), resolved),
+          script_json: ranking ? asRankingShort(styled) : styled,
           title: videoTopic,
         })
         .select()
@@ -176,7 +216,7 @@ export async function POST(req: Request) {
       const video = await createQueuedVideo(
         supabase,
         // The length comes from the text itself once it's split, not from a form default
-        { mode: 'raw_ai', topic: topic?.trim() || 'My Video Script', targetMinutes: 3, rawText },
+        { mode: 'raw_ai', topic: topic?.trim() || 'My Video Script', targetMinutes: 3, rawText, ...(ranking ? { shortFormat: 'ranking' as const } : {}) },
         resolved,
       );
       return NextResponse.json(video, { status: 202 });
@@ -192,7 +232,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const parsedTargetMinutes = parseFloat(String(targetMinutes));
+    const parsedTargetMinutes = ranking ? rankingMinutes(rankingItems) : parseFloat(String(targetMinutes));
     if (isNaN(parsedTargetMinutes) || parsedTargetMinutes <= 0 || parsedTargetMinutes > 60) {
       return NextResponse.json(
         { error: 'targetMinutes must be between 0.5 and 60' },
@@ -202,7 +242,7 @@ export async function POST(req: Request) {
 
     const video = await createQueuedVideo(
       supabase,
-      { mode: 'ai', topic: topic.trim(), targetMinutes: parsedTargetMinutes, brief: trimBrief(rawBrief) || null },
+      { mode: 'ai', topic: topic.trim(), targetMinutes: parsedTargetMinutes, brief: trimBrief(rawBrief) || null, ...(ranking ? { shortFormat: 'ranking' as const, rankingItems } : {}) },
       resolved,
     );
     return NextResponse.json(video, { status: 202 });
