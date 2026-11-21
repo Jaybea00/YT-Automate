@@ -54,7 +54,7 @@ describe('Ranking Shorts', () => {
 
   it('shows the hook, then each badge from its start, then the end card', () => {
     const banners = shortBanners('5 HEISTS THAT WORKED', 50, {
-      ranks: [
+      labels: [
         { text: '#2 TWO', startMs: 30000 },
         { text: '#5 FIVE', startMs: 4000 },
         { text: '#1 ONE', startMs: 40000 },
@@ -90,7 +90,7 @@ describe('Ranking Shorts', () => {
   });
 
   it('shows the end card while its line is spoken', () => {
-    const banners = shortBanners('HOOK', 50, { ranks: [{ text: '#1 ONE', startMs: 30000 }], endCard: 'END?', endCardStartMs: 46200 });
+    const banners = shortBanners('HOOK', 50, { labels: [{ text: '#1 ONE', startMs: 30000 }], endCard: 'END?', endCardStartMs: 46200 });
     assert.deepEqual(banners.slice(-2).map((b) => [b.text, b.startMs, b.endMs]), [
       ['#1 ONE', 30000, 46200],
       ['END?', 46200, 50000],

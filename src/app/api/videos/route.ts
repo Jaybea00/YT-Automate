@@ -7,7 +7,7 @@ import { planShots } from '@/lib/script/shot-planner';
 import { trimBrief } from '@/lib/script/outline';
 import { createQueuedVideo, resolveNewVideoStyle, styledScript, type ResolvedStyle } from '@/lib/script/new-video';
 import { parseSrtToBeats, parseRawTextToParagraphBeats, planVisualsForUploadedBeats } from '@/lib/script/parser';
-import { asRankingShort, isRankingSize, rankingMinutes } from '@/lib/script/ranking';
+import { isShortFormat, shortFormatFrom, shortFormatMinutes, withShortFormat } from '@/lib/script/short-formats';
 import { ReadyScriptSchema, scriptFromReady } from '@/lib/script/ready-script';
 import { scriptMinutes } from '@/lib/script/create-video';
 
@@ -54,7 +54,6 @@ export async function POST(req: Request) {
       srtText,
       minBeatDurationSeconds,
       brief: rawBrief,
-      shortFormat,
     } = body as {
       mode?: 'ai' | 'raw_paragraphs' | 'raw_ai' | 'srt' | 'ready';
       topic?: string;
@@ -63,15 +62,13 @@ export async function POST(req: Request) {
       srtText?: string;
       minBeatDurationSeconds?: number;
       brief?: string;
-      /** 'ranking': a vertical countdown Short of its own. */
-      shortFormat?: string;
     };
 
     const supabase = getSupabaseServerClient();
     const resolved = await resolveNewVideoStyle(body);
     const { style } = resolved;
-    const ranking = shortFormat === 'ranking';
-    const rankingItems = isRankingSize(Number((body as { rankingItems?: unknown }).rankingItems)) ? (Number((body as { rankingItems?: unknown }).rankingItems) as 5 | 10) : 5;
+    // A Short of its own: a ranking (countdown) or a contrast (two sides); { shortFormat, rankingItems, contrast }
+    const shortFormat = shortFormatFrom(body);
 
     // -------------------------------------------------------------
     // MODE 0: A FINISHED SCRIPT (beats, visuals, titles; no AI call)
@@ -85,7 +82,7 @@ export async function POST(req: Request) {
       const script = scriptFromReady(parsed.data);
       const videoTopic = topic?.trim() || script.title_options[0];
       const styled = styledScript(script, resolved);
-      const scriptJson = ranking ? asRankingShort(styled, parsed.data.hook_banner) : styled;
+      const scriptJson = withShortFormat(styled, shortFormat, parsed.data.hook_banner);
       const { data: newVideo, error: insertError } = await supabase
         .from('videos')
         .insert({
@@ -190,7 +187,7 @@ export async function POST(req: Request) {
           style,
           target_minutes: computedMinutes,
           status: 'script_review',
-          script_json: ranking ? asRankingShort(styled) : styled,
+          script_json: withShortFormat(styled, shortFormat),
           title: videoTopic,
         })
         .select()
@@ -216,7 +213,7 @@ export async function POST(req: Request) {
       const video = await createQueuedVideo(
         supabase,
         // The length comes from the text itself once it's split, not from a form default
-        { mode: 'raw_ai', topic: topic?.trim() || 'My Video Script', targetMinutes: 3, rawText, ...(ranking ? { shortFormat: 'ranking' as const } : {}) },
+        { mode: 'raw_ai', topic: topic?.trim() || 'My Video Script', targetMinutes: 3, rawText, ...shortFormat },
         resolved,
       );
       return NextResponse.json(video, { status: 202 });
@@ -225,14 +222,14 @@ export async function POST(req: Request) {
     // -------------------------------------------------------------
     // MODE 4: RESEARCH AND WRITE FROM A TOPIC (in the background)
     // -------------------------------------------------------------
-    if (!topic?.trim() || targetMinutes === undefined || targetMinutes === null) {
+    if (!topic?.trim() || ((targetMinutes === undefined || targetMinutes === null) && !isShortFormat(shortFormat))) {
       return NextResponse.json(
         { error: 'Missing required fields for AI mode: topic, targetMinutes' },
         { status: 400 },
       );
     }
 
-    const parsedTargetMinutes = ranking ? rankingMinutes(rankingItems) : parseFloat(String(targetMinutes));
+    const parsedTargetMinutes = shortFormatMinutes(shortFormat) ?? parseFloat(String(targetMinutes));
     if (isNaN(parsedTargetMinutes) || parsedTargetMinutes <= 0 || parsedTargetMinutes > 60) {
       return NextResponse.json(
         { error: 'targetMinutes must be between 0.5 and 60' },
@@ -242,7 +239,7 @@ export async function POST(req: Request) {
 
     const video = await createQueuedVideo(
       supabase,
-      { mode: 'ai', topic: topic.trim(), targetMinutes: parsedTargetMinutes, brief: trimBrief(rawBrief) || null, ...(ranking ? { shortFormat: 'ranking' as const, rankingItems } : {}) },
+      { mode: 'ai', topic: topic.trim(), targetMinutes: parsedTargetMinutes, brief: trimBrief(rawBrief) || null, ...shortFormat },
       resolved,
     );
     return NextResponse.json(video, { status: 202 });

@@ -9,7 +9,7 @@ import { chosenPackage, generatePackagingOrNull } from './packaging';
 import { parseRawTextWithAi } from './parser';
 import { estimateSpeechSeconds } from './script-quality';
 import { planShots } from './shot-planner';
-import { asRankingShort, isRankingSize, rankingMinutes, type RankingSize } from './ranking';
+import { isShortFormat, shortFormatMinutes, shortFormatWriterInput, withShortFormat, type ShortFormatRequest } from './short-formats';
 import type { VideoStyle } from './style-templates';
 import type { CreationStep } from './creation-steps';
 
@@ -21,17 +21,17 @@ export { CREATION_STEP_LABELS, type CreationStep } from './creation-steps';
  * which shows the step under way; a failed or lost run can be retried from the same request.
  */
 
-export interface CreationRequest {
+/**
+ * shortFormat: a Short of its own (a ranking countdown or a contrast), written straight from the
+ * brief, with no outline step.
+ */
+export interface CreationRequest extends ShortFormatRequest {
   /** 'ai': research and write from a topic (and brief). 'raw_ai': segment the creator's own text. */
   mode: 'ai' | 'raw_ai';
   topic: string;
   targetMinutes: number;
   brief?: string | null;
   rawText?: string | null;
-  /** 'ranking': a vertical countdown Short of its own (about a minute), written straight from the brief. */
-  shortFormat?: 'ranking' | null;
-  /** A ranking's size: Top 5 (default) or Top 10. */
-  rankingItems?: RankingSize | null;
 }
 
 export interface CreationState {
@@ -106,7 +106,7 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
       await step('shots');
       const planned = await planShots(supabase, segmented, topic, { style, pack: composed });
       await save({
-        script_json: request.shortFormat === 'ranking' ? asRankingShort(finished(planned)) : finished(planned),
+        script_json: withShortFormat(finished(planned), request),
         status: 'script_review',
         title: planned.title_options[0] || topic,
         // The creator's own words set the length, not the form's default
@@ -117,9 +117,8 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
     }
 
     const brief = trimBrief(request.brief ?? undefined);
-    const ranking = request.shortFormat === 'ranking';
-    const rankingItems: RankingSize = isRankingSize(request.rankingItems) ? request.rankingItems : 5;
-    const targetMinutes = ranking ? rankingMinutes(rankingItems) : Number(request.targetMinutes);
+    const ownShort = isShortFormat(request);
+    const targetMinutes = shortFormatMinutes(request) ?? Number(request.targetMinutes);
     await step('research');
     const research = await researchTopic(supabase, topic, brief || null);
     await step('packaging');
@@ -127,8 +126,8 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
     const packaging = await generatePackagingOrNull(supabase, { topic, style, pack: composed, targetMinutes, research, brief: brief || null });
 
     // Brief mode: stop at an outline for the creator to approve; the script is written after.
-    // A ranking Short is too short for an outline: its brief goes straight into the script.
-    if (brief && !ranking) {
+    // A Short of its own is too short for an outline: its brief goes straight into the script.
+    if (brief && !ownShort) {
       await step('outline');
       try {
         const drafted = await generateOutline(supabase, { topic, style, pack: composed, targetMinutes, brief, research });
@@ -161,7 +160,7 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
       research,
       brief: brief || null,
       packaging: chosenPackage(packaging),
-      ...(ranking ? { format: 'short' as const, ranking: true, rankingItems } : {}),
+      ...shortFormatWriterInput(request),
     });
     await step('shots');
     const planned = await planShots(supabase, written, topic, { style, pack: composed });
@@ -169,7 +168,7 @@ export async function runCreation(supabase: SupabaseClient, videoId: string): Pr
     const checks = await afterWriteChecks(supabase, topic, planned, style, composed, videoId);
     const script = { ...planned, ...(brief ? { brief } : {}), ...(packaging ? { packaging } : {}), ...checks };
     await save({
-      script_json: ranking ? asRankingShort(finished(script)) : finished(script),
+      script_json: withShortFormat(finished(script), request),
       status: 'script_review',
       error_message: null,
     });

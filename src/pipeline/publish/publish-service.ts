@@ -17,6 +17,7 @@ import { chosenPackage, type Packaging } from '@/lib/script/packaging-types';
 import { createNativeShort, draftShortIdeas, type NativeShorts } from '@/lib/script/native-shorts';
 import type { VideoStyle } from '@/lib/script/style-templates';
 import { closingBeat, RANKING_END_CARD, rankBadge, rankMarkers } from '@/lib/script/ranking';
+import { contrastBannerLabels, contrastSegments, type ContrastSetup } from '@/lib/script/contrast';
 import type { ResearchDossier } from '@/lib/research/types';
 import { generateThumbnails, rendersDir } from './publish-assets';
 import { fallbackShortPlans, normalizeShortPlans, planShorts, renderShort, WHOLE_SHORT_MAX_SEC, type ShortClip } from './shorts';
@@ -54,7 +55,7 @@ interface VideoRow {
   style: string | null;
   status: string | null;
   script_json: (Record<string, unknown> & {
-    beats?: Array<{ text: string; fact_ids?: string[] }>;
+    beats?: Array<{ text: string; fact_ids?: string[]; contrast_side?: 'a' | 'b' }>;
     publish?: PublishState;
     formatted_chapters?: string;
     music_credits?: string[];
@@ -67,6 +68,8 @@ interface VideoRow {
     short?: { parent_video_id?: string | null; hook_banner: string };
     /** A ranking Short: items start with "Number N:" and get a "#N" badge. */
     ranking?: boolean;
+    /** A contrast Short: its two labels and length. */
+    contrast?: ContrastSetup;
   }) | null;
 }
 
@@ -313,9 +316,15 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
 
   const captionBeats = timeline.beats.map((b) => ({ index: b.index, text: beats[b.index]?.text ?? '', audioPath: b.audioPath, durationSec: (b.voiceMs ?? 0) / 1000 }));
   const words = applyCaptionEdits(captionBeats, await loadCaptionWords(captionBeats), (sj as { caption_edits?: CaptionEdits }).caption_edits);
-  // A ranking Short shows each item's "#3" badge; a Short of its own (no long video) points to the channel
-  const ranks = whole && sj.ranking ? rankMarkers(beats).map((m) => ({ text: rankBadge(m), beat: m.beat })) : undefined;
-  const endCard = whole && sj.ranking ? RANKING_END_CARD : whole && !sj.short?.parent_video_id ? 'MORE ON THE CHANNEL' : undefined;
+  // A ranking Short shows each item's "#3" badge; a contrast its two sides' labels (and keeps its
+  // payoff on screen to the end); a Short of its own (no long video) points to the channel
+  const contrast = whole && sj.contrast ? sj.contrast : null;
+  const labels = contrast
+    ? contrastBannerLabels(contrast.labels, contrastSegments(sj.beats ?? [], contrast.length))
+    : whole && sj.ranking
+      ? rankMarkers(beats).map((m) => ({ text: rankBadge(m), beat: m.beat }))
+      : undefined;
+  const endCard = contrast ? null : whole && sj.ranking ? RANKING_END_CARD : whole && !sj.short?.parent_video_id ? 'MORE ON THE CHANNEL' : undefined;
   const spokenEnd = whole && sj.ranking ? closingBeat(beats) : -1;
   const endCardBeat = spokenEnd >= 0 ? spokenEnd : undefined;
   const dir = path.join(rendersDir(video.id), 'shorts');
@@ -332,7 +341,7 @@ export async function createShorts(supabase: SupabaseClient, video: VideoRow, op
         highlightHex: themeForVideo(video).accent,
         outPath: path.join(dir, `short_${i + 1}.mp4`),
         reframe: options.reframe !== false,
-        ranks,
+        labels,
         endCard,
         endCardBeat,
       }),

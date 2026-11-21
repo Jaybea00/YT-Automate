@@ -26,6 +26,7 @@ import { leadWithPackageTitle, type PackageOption, type Packaging } from './pack
 import type { RhythmReport } from './visual-rhythm';
 import { formatDossierForPrompt } from '@/lib/research/format';
 import { rankingShortRules, type RankingSize } from './ranking';
+import { contrastShortRules, type ContrastSetup } from './contrast';
 
 export const SHOT_TYPES = [
   'stock',
@@ -195,6 +196,8 @@ export interface ScriptBeat {
   needs_check?: boolean;
   /** Director's shot plan. Absent on scripts planned before shots existed; visual_type/visual_query remain the fallback. */
   shots?: ShotPlan[];
+  /** Contrast Shorts: the side this beat belongs to ("a": the first label, "b": the second). */
+  contrast_side?: 'a' | 'b';
 }
 
 export interface GeneratedScript {
@@ -232,6 +235,8 @@ export interface GeneratedScript {
   short?: { parent_video_id?: string | null; hook_banner: string };
   /** A ranking Short: a countdown whose items start "Number N:" (see ranking.ts). */
   ranking?: boolean;
+  /** A contrast Short: its two on-screen labels and length (see contrast.ts). */
+  contrast?: ContrastSetup;
 }
 
 export const ScriptBeatSchema = z.object({
@@ -241,6 +246,8 @@ export const ScriptBeatSchema = z.object({
   visual_query: z.string(),
   duration_estimate_seconds: z.number(),
   fact_ids: z.array(z.string()).optional(),
+  /** Contrast Shorts: which side the beat belongs to. */
+  contrast_side: z.enum(['a', 'b']).optional(),
 });
 
 export const GeneratedScriptSchema = z.object({
@@ -269,6 +276,8 @@ export interface GenerateScriptInput {
   /** With format 'short': a ranking countdown (rankingShortRules), of `rankingItems` (default 5). */
   ranking?: boolean;
   rankingItems?: RankingSize;
+  /** With format 'short': a contrast Short (contrastShortRules). */
+  contrast?: ContrastSetup | null;
 }
 
 export interface GenerateScriptOptions {
@@ -332,7 +341,9 @@ export const SHORT_FORMAT_RULES = `THIS IS A YOUTUBE SHORT (vertical, under 60 s
 function briefSection(input: GenerateScriptInput): string {
   const parts: string[] = [];
   // A ranking has its own Short rules (several items, possibly two minutes), not the one-idea ones
-  if (input.format === 'short') parts.push(input.ranking ? rankingShortRules(input.rankingItems) : SHORT_FORMAT_RULES);
+  if (input.format === 'short') {
+    parts.push(input.contrast ? contrastShortRules(input.contrast) : input.ranking ? rankingShortRules(input.rankingItems) : SHORT_FORMAT_RULES);
+  }
   if (input.brief?.trim()) {
     parts.push(`CREATOR'S BRIEF (follow its structure, angle, tone and chapter order; use any opening or closing lines it gives, word for word; it overrides the style's defaults where they conflict, but never the research rules and never the word budget; ignore its title, thumbnail and source notes, which are used elsewhere):
 """
