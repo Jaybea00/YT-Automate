@@ -19,6 +19,8 @@ export const ReadyScriptSchema = z.object({
         visual_type: z.enum(VISUAL_TYPES).default('stock'),
         /** What the visual should show; defaults to the beat's own words. */
         visual_query: z.string().trim().max(200).optional(),
+        /** Contrast Shorts: which side the beat is on ("a": the first label, "b": the second). */
+        contrast_side: z.enum(['a', 'b']).optional(),
       }),
     )
     .min(1)
@@ -36,6 +38,7 @@ export function scriptFromReady(ready: ReadyScript): GeneratedScript {
     visual_type: b.visual_type,
     visual_query: b.visual_query || b.text.split(/\s+/).slice(0, 8).join(' '),
     duration_estimate_seconds: Math.max(2, Math.round(estimateSpeechSeconds(b.text) * 10) / 10),
+    ...(b.contrast_side ? { contrast_side: b.contrast_side } : {}),
   }));
   return { title_options: ready.title_options, beats };
 }

@@ -173,22 +173,24 @@ export interface ShortBanner {
 }
 
 /**
- * The lines on top of a Short: the hook, then (in a ranking) each item's "#3 NAME" badge from the
- * moment it starts, then the end card. `ranks` start times are ms into the Short.
+ * The lines on top of a Short: the hook, then labels that each hold until the next one (a
+ * ranking's "#3 NAME" badges, a contrast's "THE MYTH" / "VS…" / "THE TRUTH"), then the end card.
+ * Label start times are ms into the Short; a label at 0 replaces the hook. `endCard: null` leaves
+ * the last label on screen to the end.
  */
 export function shortBanners(
   hook: string,
   durationSec: number,
-  opts: { ranks?: Array<{ text: string; startMs: number }>; endCard?: string; endCardStartMs?: number } = {},
+  opts: { labels?: Array<{ text: string; startMs: number }>; endCard?: string | null; endCardStartMs?: number } = {},
 ): ShortBanner[] {
   const total = Math.round(durationSec * 1000);
   // The end card shows while its line is spoken (when it is), else for the last 2.5 seconds
   const spoken = opts.endCardStartMs != null && opts.endCardStartMs > 0 && opts.endCardStartMs < total - 500;
-  const endStart = spoken ? Math.round(opts.endCardStartMs!) : Math.round((durationSec - END_CARD_SEC) * 1000);
-  const ranks = (opts.ranks ?? []).filter((r) => r.startMs > 0 && r.startMs < endStart - 500).sort((a, b) => a.startMs - b.startMs);
-  const out: ShortBanner[] = [{ text: hook, startMs: 0, endMs: ranks[0]?.startMs ?? endStart, position: 'top' }];
-  ranks.forEach((r, i) => out.push({ text: r.text, startMs: r.startMs, endMs: ranks[i + 1]?.startMs ?? endStart, position: 'top' }));
-  out.push({ text: opts.endCard ?? 'FULL STORY ON THE CHANNEL', startMs: endStart, endMs: total, position: 'top' });
+  const endStart = opts.endCard === null ? total : spoken ? Math.round(opts.endCardStartMs!) : Math.round((durationSec - END_CARD_SEC) * 1000);
+  const labels = (opts.labels ?? []).filter((r) => r.startMs >= 0 && r.startMs < endStart - 500).sort((a, b) => a.startMs - b.startMs);
+  const out: ShortBanner[] = [{ text: hook, startMs: 0, endMs: labels[0]?.startMs ?? endStart, position: 'top' }];
+  labels.forEach((r, i) => out.push({ text: r.text, startMs: r.startMs, endMs: labels[i + 1]?.startMs ?? endStart, position: 'top' }));
+  if (opts.endCard !== null) out.push({ text: opts.endCard ?? 'FULL STORY ON THE CHANNEL', startMs: endStart, endMs: total, position: 'top' });
   return out.filter((b) => b.endMs > b.startMs);
 }
 
@@ -211,10 +213,10 @@ export async function renderShort(options: {
   reframe?: boolean;
   /** Tests: where the subject is in a frame (default: the depth model). */
   findSubject?: SubjectFinder;
-  /** A ranking: each item's badge and the beat (timeline index) it starts on. */
-  ranks?: Array<{ text: string; beat: number }>;
+  /** Labels on top (a ranking's badges, a contrast's sides), each from a beat's start (timeline index) plus an offset. */
+  labels?: Array<{ text: string; beat: number; offsetMs?: number }>;
   /** The closing line (default: a pointer to the full video). */
-  endCard?: string;
+  endCard?: string | null;
   /** The beat (timeline index) that says the closing line: the end card shows from its start. */
   endCardBeat?: number;
 }): Promise<ShortClip> {
@@ -239,8 +241,10 @@ export async function renderShort(options: {
       fontSize: 84,
       marginV: 420,
       banners: shortBanners(plan.hook, duration, {
-        ranks: options.ranks
-          ?.map((r) => ({ text: r.text, startMs: Math.round((timeline.beats.find((b) => b.index === r.beat)?.voiceStartMs ?? -1) - span.startSec * 1000) })),
+        labels: options.labels?.map((r) => {
+          const beat = timeline.beats.find((b) => b.index === r.beat);
+          return { text: r.text, startMs: beat ? Math.round(beat.voiceStartMs - span.startSec * 1000 + (r.offsetMs ?? 0)) : -1 };
+        }),
         endCard: options.endCard,
         endCardStartMs: options.endCardBeat != null ? (timeline.beats.find((b) => b.index === options.endCardBeat)?.voiceStartMs ?? -1) - span.startSec * 1000 : undefined,
       }),

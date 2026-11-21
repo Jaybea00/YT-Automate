@@ -20,6 +20,7 @@ import {
 import { narrationPaceFactor } from '@/lib/styles/packs';
 import { briefForAngle, type VideoAngle } from '@/lib/script/angle-brief';
 import { RANKING_SIZES, type RankingSize } from '@/lib/script/ranking';
+import { CONTRAST_LENGTHS, CONTRAST_PRESETS, type ContrastLength } from '@/lib/script/contrast';
 import { describeEstimate, estimateCreation, presetFor, RUNTIME_PRESETS, runtimeNote } from '@/lib/script/creation-estimate';
 
 type Tab = 'ai' | 'raw' | 'srt';
@@ -67,45 +68,107 @@ const card = (selected: boolean) =>
     selected ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-950/50 hover:border-zinc-700'
   }`;
 
-/** Makes the video a vertical ranking Short of its own: a countdown of about a minute. */
-function RankingShortToggle({
-  checked,
-  onChange,
-  pasted = false,
-  items = 5,
-  onItems,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  pasted?: boolean;
-  items?: RankingSize;
-  onItems?: (n: RankingSize) => void;
-}) {
+type ShortKind = 'none' | 'ranking' | 'contrast';
+
+interface ShortChoice {
+  kind: ShortKind;
+  rankingItems: RankingSize;
+  labels: [string, string];
+  length: ContrastLength;
+}
+
+const chip = (on: boolean) =>
+  `px-3 py-1.5 rounded-lg border text-xs font-medium transition ${on ? 'border-indigo-500 bg-indigo-500/15 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700'}`;
+
+/** The request fields for the chosen kind of Short (none for a normal video). */
+function shortPayload(c: ShortChoice, pasted: boolean): Record<string, unknown> {
+  if (c.kind === 'ranking') return pasted ? { shortFormat: 'ranking' } : { shortFormat: 'ranking', rankingItems: c.rankingItems };
+  if (c.kind === 'contrast') return { shortFormat: 'contrast', contrast: { labels: c.labels, length: c.length } };
+  return {};
+}
+
+/**
+ * Makes the video a vertical Short of its own: a ranking (countdown with #3 badges) or a contrast
+ * (two labelled sides, "The myth" vs "The truth"). Made into the Short on its Publish page.
+ */
+function ShortFormatPicker({ value, onChange, pasted = false }: { value: ShortChoice; onChange: (c: ShortChoice) => void; pasted?: boolean }) {
+  const set = (patch: Partial<ShortChoice>) => onChange({ ...value, ...patch });
   return (
-    <div className={`p-4 rounded-xl border transition ${checked ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700'}`}>
-      <label className="flex items-start gap-3 cursor-pointer">
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-1" />
-        <div>
-          <span className="text-sm font-semibold text-zinc-200 block">Ranking Short</span>
-          <span className="text-xs text-zinc-400">
+    <div className={`p-4 rounded-xl border transition space-y-3 ${value.kind !== 'none' ? 'border-indigo-500 bg-indigo-500/10' : 'border-zinc-800 bg-zinc-950/60'}`}>
+      <div>
+        <span className="text-sm font-semibold text-zinc-200 block">Make it a Short</span>
+        <span className="text-xs text-zinc-400">A vertical video of its own (Shorts can run to 3 minutes). Make the Short on its Publish page once it’s rendered.</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={chip(value.kind === 'none')} onClick={() => set({ kind: 'none' })}>
+          No, a normal video
+        </button>
+        <button type="button" className={chip(value.kind === 'ranking')} onClick={() => set({ kind: 'ranking' })}>
+          Ranking Short
+        </button>
+        <button type="button" className={chip(value.kind === 'contrast')} onClick={() => set({ kind: 'contrast' })}>
+          Contrast Short
+        </button>
+      </div>
+
+      {value.kind === 'ranking' && (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">
             {pasted
-              ? 'A vertical countdown (Shorts can run to 3 minutes). Start each item’s paragraph with “Number 3: Its Name.” to get its #3 badge on screen.'
-              : 'A vertical countdown (“Top 5 heists that actually worked”): a teaser of #1, then each item with a #3 badge, ending on #1. Make the Short on its Publish page once it’s rendered.'}
-          </span>
+              ? 'Start each item’s paragraph with “Number 3: Its Name.” to get its #3 badge on screen.'
+              : 'A countdown (“Top 5 heists that actually worked”): a teaser of #1, each item with its #3 badge, then the voiced “What would your number one be?”'}
+          </p>
+          {!pasted && (
+            <div className="flex gap-2">
+              {RANKING_SIZES.map((n) => (
+                <button key={n} type="button" onClick={() => set({ rankingItems: n })} className={chip(value.rankingItems === n)}>
+                  Top {n} · {n === 5 ? '~1 min' : '~2 min'}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      </label>
-      {checked && onItems && (
-        <div className="flex gap-2 mt-3 ml-7">
-          {RANKING_SIZES.map((n) => (
-            <button
-              key={n}
-              type="button"
-              onClick={() => onItems(n)}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition ${items === n ? 'border-indigo-500 bg-indigo-500/15 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-300 hover:border-zinc-700'}`}
-            >
-              Top {n} · {n === 5 ? '~1 min' : '~2 min'}
-            </button>
-          ))}
+      )}
+
+      {value.kind === 'contrast' && (
+        <div className="space-y-3">
+          <p className="text-xs text-zinc-400">
+            Two sides on screen, with a quick “VS…” as it flips.{' '}
+            {pasted ? 'The switch comes about 40% of the way through your text.' : 'Any niche: history, true crime, DIY, cooking, money…'}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {CONTRAST_PRESETS.map(([a, b]) => (
+              <button key={a} type="button" onClick={() => set({ labels: [a, b] })} className={chip(value.labels[0] === a && value.labels[1] === b)}>
+                {a} / {b}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              aria-label="First side’s label"
+              value={value.labels[0]}
+              maxLength={30}
+              onChange={(e) => set({ labels: [e.target.value, value.labels[1]] })}
+              className="w-40 px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 text-xs"
+            />
+            <span className="text-xs text-zinc-500">vs</span>
+            <input
+              aria-label="Second side’s label"
+              value={value.labels[1]}
+              maxLength={30}
+              onChange={(e) => set({ labels: [value.labels[0], e.target.value] })}
+              className="w-40 px-3 py-1.5 bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-100 text-xs"
+            />
+          </div>
+          {!pasted && (
+            <div className="flex flex-wrap gap-2">
+              {CONTRAST_LENGTHS.map((l) => (
+                <button key={l.id} type="button" title={l.note} onClick={() => set({ length: l.id })} className={chip(value.length === l.id)}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -143,8 +206,8 @@ export default function NewVideoPage() {
   const [rawMode, setRawMode] = useState<'raw_paragraphs' | 'raw_ai'>('raw_paragraphs');
   const [srtText, setSrtText] = useState('');
   const [smartMerge, setSmartMerge] = useState(true);
-  const [rankingShort, setRankingShort] = useState(false);
-  const [rankingItems, setRankingItems] = useState<RankingSize>(5);
+  const [shortChoice, setShortChoice] = useState<ShortChoice>({ kind: 'none', rankingItems: 5, labels: ['The problem', 'The solution'], length: 'story' });
+  const ownShort = shortChoice.kind !== 'none';
 
   const [recent, setRecent] = useState<RecentVideo[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -331,10 +394,11 @@ export default function NewVideoPage() {
       }
       payload.targetMinutes = minutes;
       if (brief.trim()) payload.brief = brief.trim();
-      if (rankingShort && !batchMode) {
-        payload.shortFormat = 'ranking';
-        payload.rankingItems = rankingItems;
+      if (shortChoice.kind === 'contrast' && !(shortChoice.labels[0].trim() && shortChoice.labels[1].trim())) {
+        setErrorMessage('Give both sides of the contrast a label.');
+        return;
       }
+      if (!batchMode) Object.assign(payload, shortPayload(shortChoice, false));
     } else if (tab === 'raw') {
       if (!rawText.trim()) {
         setErrorMessage('Please paste or upload your script text.');
@@ -343,7 +407,11 @@ export default function NewVideoPage() {
       payload.mode = rawMode;
       payload.rawText = rawText.trim();
       payload.topic = topic.trim() || undefined;
-      if (rankingShort) payload.shortFormat = 'ranking';
+      if (shortChoice.kind === 'contrast' && !(shortChoice.labels[0].trim() && shortChoice.labels[1].trim())) {
+        setErrorMessage('Give both sides of the contrast a label.');
+        return;
+      }
+      Object.assign(payload, shortPayload(shortChoice, true));
     } else {
       if (!srtText.trim()) {
         setErrorMessage('Please paste or upload your SRT subtitle text.');
@@ -505,9 +573,9 @@ export default function NewVideoPage() {
                   )}
                 </div>
 
-                {!batchMode && <RankingShortToggle checked={rankingShort} onChange={setRankingShort} items={rankingItems} onItems={setRankingItems} />}
+                {!batchMode && <ShortFormatPicker value={shortChoice} onChange={setShortChoice} />}
 
-                <div className={rankingShort && !batchMode ? 'hidden' : ''}>
+                <div className={ownShort && !batchMode ? 'hidden' : ''}>
                   <span className="block text-sm font-medium text-zinc-200 mb-2">Length</span>
                   <div className="flex flex-wrap gap-2">
                     {RUNTIME_PRESETS.map((p) => (
@@ -604,7 +672,7 @@ export default function NewVideoPage() {
                   />
                   <p className="text-xs text-zinc-500 mt-1.5">The video’s length comes from your text.</p>
                 </div>
-                <RankingShortToggle checked={rankingShort} onChange={setRankingShort} pasted />
+                <ShortFormatPicker value={shortChoice} onChange={setShortChoice} pasted />
                 <div className="p-4 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-3">
                   <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Splitting into beats</span>
                   <label className="flex items-start gap-3 cursor-pointer">
