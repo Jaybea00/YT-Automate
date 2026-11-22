@@ -6,6 +6,7 @@ import { shortBranding, type ChannelProfile } from '@/lib/channel/profile';
 import { generateAssCaptions } from '../assembly/captions';
 import { ensureSoundLibrary, soundPath } from '../assembly/sfx';
 import { getFfmpegPath } from '../utils/ffmpeg';
+import { levelAudioInPlace } from '../assembly/level-audio';
 import type { ClipAnalysis, ClipLayout, ClipPlan, ClipWord } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -222,6 +223,8 @@ export async function renderShort(dir: string, sourceFile: string, plan: ClipPla
   } finally {
     await fs.unlink(path.join(dir, assName)).catch(() => {});
   }
+  // As loud as the rest of the feed, however quietly the clip was recorded
+  await levelAudioInPlace(tmp);
   await fs.rename(tmp, out);
 
   // Thumbnail: the big moment, or the middle
