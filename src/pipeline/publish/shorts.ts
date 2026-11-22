@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { writeAssCaptionsFile } from '../assembly/captions';
+import { levelAudioInPlace } from '../assembly/level-audio';
 import type { LLMProvider, ProviderCallContext } from '../providers/types';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import type { VideoTimeline } from '../utils/timeline';
@@ -292,5 +293,7 @@ export async function renderShort(options: {
     if (reframe) await fs.unlink(path.join(path.dirname(path.resolve(assPath)), reframe.commandsFile)).catch(() => {});
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
+  // A quiet stretch of the video makes a quiet Short: set it to the feed's loudness
+  await levelAudioInPlace(path.resolve(outPath));
   return { ...plan, path: outPath, startSec: span.startSec, endSec: span.endSec };
 }

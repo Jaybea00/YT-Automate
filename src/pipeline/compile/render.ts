@@ -7,6 +7,7 @@ import { formatAssTime, generateAssCaptions } from '../assembly/captions';
 import { ensureSoundLibrary, soundPath } from '../assembly/sfx';
 import { maskSwear, stripEmoji } from '../clipping/render';
 import { getFfmpegPath } from '../utils/ffmpeg';
+import { levelAudioInPlace } from '../assembly/level-audio';
 import type { Compilation, CompilationItem, ItemAnalysis } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -290,6 +291,8 @@ export async function renderCompilation(
   const tmp = path.join(dir, 'export', 'compilation.rendering.mp4');
   const final = path.join(dir, 'export', 'compilation.mp4');
   await ffmpeg(['-f', 'concat', '-safe', '0', '-i', 'pieces.txt', '-c', 'copy', '-movflags', '+faststart', tmp], workDir);
+  // The whole compilation set to the feed's loudness (each clip's own level stays relative)
+  await levelAudioInPlace(tmp);
   await fs.rename(tmp, final);
 
   // Thumbnail: the best clip (shown last) at its loudest moment
