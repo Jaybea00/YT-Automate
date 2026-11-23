@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { loadChannelProfile } from '@/pipeline/channel/store';
 import { composeUploadDescription, writeUploadInfo } from '@/pipeline/clipping/package';
+import { fitEffects, fitHeader } from '@/pipeline/clipping/reaction';
+import type { ClipPlan } from '@/pipeline/clipping/types';
 import { isClipBusy } from '@/pipeline/clipping/run';
 import { clipDir, deleteClip, loadClip, updateClip } from '@/pipeline/clipping/store';
 
@@ -26,8 +28,61 @@ const VoiceLineEdit = z.object({
   words: z.array(z.object({ word: z.string(), start: z.number(), end: z.number() })).optional(),
 });
 
+const MemeFileEdit = z.object({
+  // Only files the meme finder wrote into the clip folder
+  file: z.string().regex(/^memes\/[\w.-]+\.mp4$/),
+  source: z.enum(['library', 'klipy', 'giphy', 'tenor']),
+  title: z.string().max(200),
+  origin: z.string().max(500),
+  hasAudio: z.boolean(),
+  durationSec: z.number().min(0),
+  key: z.string().max(200),
+});
+
+const SoundFileEdit = z.object({
+  // Only files the sound finder wrote into the clip folder
+  file: z.string().regex(/^sounds\/[\w.-]+\.wav$/),
+  source: z.enum(['library', 'builtin']),
+  title: z.string().max(200),
+  origin: z.string().max(500),
+  durationSec: z.number().min(0),
+  key: z.string().max(200),
+});
+
+const Point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+
+const CutInEdit = z.object({
+  kind: z.enum(['meme', 'freeze', 'replay', 'ramp', 'skull']),
+  at: z.number().min(0),
+  durationSec: z.number().min(0).max(6),
+  query: z.string().max(80).optional(),
+  pick: z.number().int().min(0).max(50).optional(),
+  meme: MemeFileEdit.optional(),
+  replaySec: z.number().min(0.3).max(4).optional(),
+  focus: Point.optional(),
+  emoji: z.string().max(40).optional(),
+});
+
+const EffectEdit = z.object({
+  at: z.number().min(0),
+  kind: z.enum(['flash', 'shake', 'emoji', 'sound', 'comic']),
+  emoji: z.string().max(16).optional(),
+  query: z.string().max(80).optional(),
+  sound: SoundFileEdit.optional(),
+});
+
 const PlanEdit = z
   .object({
+    editStyle: z.enum(['classic', 'reaction']),
+    header: z.object({ text: z.string().max(120), highlight: z.array(z.string().max(40)).max(5) }),
+    cutIns: z.array(CutInEdit).max(8),
+    effects: z.array(EffectEdit).max(12),
+    zoomFocus: Point.nullable(),
+    ending: z.object({ style: z.enum(['none', 'tbc', 'credits', 'stamp', 'skull', 'recap']), text: z.string().max(80), emoji: z.string().max(40).optional(), query: z.string().max(80).optional(), sound: SoundFileEdit.optional(), durationSec: z.number().min(0.5).max(6) }).nullable(),
+    loop: z.boolean(),
+    whipBlur: z.boolean(),
+    grade: z.boolean(),
+    glowCaptions: z.boolean(),
     hook: z.string().max(120),
     hookSec: z.number().min(0.5).max(10),
     overlays: z.array(z.object({ at: z.number().min(0), until: z.number().min(0), text: z.string().max(80) })).max(8),
@@ -68,7 +123,11 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (creator !== undefined) p.creator = creator.trim();
     if (note !== undefined) p.note = note.trim();
     if (plan && p.plan) {
-      const next = { ...p.plan, ...plan };
+      // null clears the zoom aim (back to the centre) and the ending
+      const { zoomFocus, ending, ...rest } = plan;
+      const next: ClipPlan = { ...p.plan, ...rest };
+      if (zoomFocus !== undefined) next.zoomFocus = zoomFocus ?? undefined;
+      if (ending !== undefined) next.ending = ending && ending.style !== 'none' ? ending : undefined;
       const duration = p.analysis?.durationSec ?? next.trimEnd;
       next.trimStart = Math.min(Math.max(0, next.trimStart), Math.max(0, duration - 1));
       next.trimEnd = Math.min(duration, Math.max(next.trimStart + 1, next.trimEnd));
@@ -76,6 +135,12 @@ export async function PATCH(req: Request, context: RouteContext) {
       next.overlays = next.overlays.filter((o) => o.text.trim()).map((o) => ({ ...o, until: Math.max(o.until, o.at + 0.5) }));
       next.titles = next.titles.map((t) => t.trim()).filter(Boolean);
       next.tags = next.tags.map((t) => t.replace(/^#/, '').trim().toLowerCase()).filter(Boolean);
+      if (next.editStyle === 'reaction') {
+        // Switching an older clip over: start from its hook and a hit on the big moment
+        next.header = next.header ?? fitHeader(undefined, next.hook);
+        next.effects = next.effects ?? fitEffects([], next.trimStart, next.trimEnd, next.peakSec);
+        next.cutIns = (next.cutIns ?? []).filter((c) => c.kind !== 'meme' || c.query?.trim()).sort((a, b) => a.at - b.at);
+      }
       p.plan = next;
     }
   });

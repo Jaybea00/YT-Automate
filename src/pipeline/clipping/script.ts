@@ -5,6 +5,7 @@ import { channelPromptBlock, type ChannelProfile } from '@/lib/channel/profile';
 import { geminiLlm } from '../providers/llm/gemini';
 import { anthropicLlm } from '../providers/llm/anthropic';
 import type { LLMProvider, LlmImage, ProviderCallContext } from '../providers/types';
+import { fitCutIns, fitEffects, fitEnding, fitHeader, fitPoint } from './reaction';
 import {
   DEFAULT_MAX_SHORT_SEC,
   WORDS_PER_SEC,
@@ -13,6 +14,7 @@ import {
   type ClipPlan,
   type ClipProject,
   type ClipWord,
+  type EditStyle,
   type TextOverlay,
   type VoiceLine,
   type VoiceStyle,
@@ -146,6 +148,24 @@ const ScriptSchema = z.object({
   titles: z.array(z.string()).describe('3-5 Shorts title options'),
   description: z.string().describe('1-2 sentence description, no hashtags, no credit line'),
   tags: z.array(z.string()).describe('8-15 tags, no # signs'),
+  header: z.object({ text: z.string(), highlight: z.array(z.string()) }).optional().describe('Reaction edit: the white box above the clip'),
+  memes: z.array(z.object({ at: z.number(), query: z.string() })).optional().describe('Reaction edit: 0-2 meme cut-ins'),
+  freezeAt: z.number().nullable().optional().describe('Reaction edit: freeze-frame point, or null'),
+  replay: z.boolean().optional().describe('Reaction edit: slow-motion replay of the big moment'),
+  effects: z
+    .array(z.object({ at: z.number(), kind: z.enum(['flash', 'shake', 'emoji', 'sound', 'comic']), emoji: z.string().optional(), query: z.string().optional() }))
+    .optional()
+    .describe('Reaction edit: extra hits, emoji pop-ups and meme sounds'),
+  freezeFocus: z.object({ x: z.number(), y: z.number() }).nullable().optional().describe('Reaction edit: what the freeze circles, as fractions of the picture'),
+  ramp: z.boolean().optional().describe('Reaction edit: slow down into the big moment'),
+  zoomFocus: z.object({ x: z.number(), y: z.number() }).nullable().optional().describe('Reaction edit: where the zoom on the big moment aims'),
+  ending: z
+    .object({ style: z.enum(['none', 'tbc', 'credits', 'stamp', 'skull', 'recap']), text: z.string().optional(), sound: z.string().optional(), emoji: z.string().optional() })
+    .optional()
+    .describe('Reaction edit: how it ends'),
+  skullAt: z.number().nullable().optional().describe('Reaction edit: a skull hit just after the payoff, or null'),
+  skullEmoji: z.string().optional().describe('Reaction edit: the skull hit picture'),
+  loop: z.boolean().optional().describe('Reaction edit: blend the end into the start'),
 });
 export type ScriptDraft = z.infer<typeof ScriptSchema>;
 
@@ -155,7 +175,25 @@ const STYLE_GUIDE: Record<VoiceStyle, string> = {
   info: 'Informative: points out what most players miss, a tip, or how the mechanic works. Calm and clear.',
 };
 
-export function buildScriptPrompt(project: ClipProject, analysis: ClipAnalysis, style: VoiceStyle, gaps: Array<{ start: number; end: number }>, channel?: ChannelProfile): string {
+/** New clips get the reaction edit; clips made before it keep the classic one. */
+export const editStyleFor = (previous?: ClipPlan): EditStyle => (previous ? (previous.editStyle ?? 'classic') : 'reaction');
+
+const REACTION_RULES = `
+REACTION EDIT (this Short uses it: fill these too)
+- header: the white box above the clip, on screen the whole time, so the first frame already tells the story. A reaction or claim in viewer slang, 4-12 words, ending in 1-2 emoji (😭 ✌️ 💀 🥀 🫩). E.g. "NPCs in GTA 6 have ZERO chill 😭✌️", "bro really thought he had it 💀". highlight: 1-2 words from it shown in red.
+- memes: 0-2 meme cut-ins of about 1.4 s, played between moments of the clip (nothing is hidden). Put them right AFTER a payoff or a fail, never during the build-up. query: the meme as people search it on GIPHY ("its working", "shocked guy", "bro got me", "this is peak", "awkward look", "mission failed").
+- freezeAt: optional freeze-frame just BEFORE the big moment, with a voiceLine at exactly that time ("wait… look at the guy on the left"); the game pauses while it's spoken, so it needs no quiet gap (max 12 words). null for none.
+- replay: true to replay the big moment in slow motion right after it (only when the moment is fast and worth a second look).
+- freezeFocus: the spot the freeze circles (with an arrow), as x/y fractions of the picture (0,0 top-left; 1,1 bottom-right), read from the stills. Null when nothing needs pointing at.
+- ramp: true to slow down into the big moment (the last 0.8 s before it plays at half speed, deep sound): for impacts, crashes, jump scares.
+- zoomFocus: x/y fractions of where the zoom on the big moment should aim (a face, the impact); null for the centre.
+- effects: 0-6, seconds into the clip. kind "flash" or "shake" on other impacts (the big moment gets both automatically); kind "emoji" with emoji (one of 💀 😭 🤣 😳 🔥 🫡 🤡) on a reaction moment; kind "sound" with query, a meme sound as people name it ("vine boom", "bruh", "metal pipe", "huh", "spongebob fail", "wrong answer", "bonk", "rizz") on a fail, a stare or a punchline; kind "comic" for a black-and-white comic-dot flash on a hard hit. Never more than one thing every 1.5 s. An emoji can be typed (💀) or named from the emoji library ("skull exploding", "blue guy holding laugh", "side eye", "sigma").
+- skullAt: the trollface-style skull hit (the frame freezes grey and dark, a big skull lands on a bass hit) right after a fail or a "gotcha" payoff; null for none. skullEmoji: optional picture name ("skull dead", "skull exploding").
+- ending: style "tbc" (freeze in sepia with a "TO BE CONTINUED" arrow banner: for cliffhangers, someone about to get wrecked), "credits" (cut to black with credit lines, text like "Directed by\nJASON": for an awkward fail), "stamp" (black-and-white freeze with a red stamp, text 1-3 words like "SKILL ISSUE", "NOT CANON", "L": for a fail), "skull" (grey, dark freeze with a big skull on a bass hit: for a fail or a trap; pair with skullAt for the double skull), "recap" (the best moments flash past in quick cuts, landing on the big one: for action and chaos), or "none". sound: what to play (defaults fit each style). emoji: the skull ending's picture.
+- loop: true (with ending "none") when the last moment flows back into the first, so the replay feels seamless.
+- Aim for a 15-35 s Short with the payoff before 60% of the way in; cut the slow start.`;
+
+export function buildScriptPrompt(project: ClipProject, analysis: ClipAnalysis, style: VoiceStyle, gaps: Array<{ start: number; end: number }>, channel?: ChannelProfile, editStyle: EditStyle = 'classic'): string {
   const s = project.source;
   const dialogue = analysis.words.length
     ? groupLines(analysis.words).map((l) => `[${l.start.toFixed(1)}s] ${l.text}`).join('\n')
@@ -188,7 +226,7 @@ RULES
 - overlays: 0-3 tiny texts like "wait for it…" before the peak or a reaction right after. Each 1-3 seconds, under 40 characters. Never during the first 2.5 seconds (the hook is there).
 - voiceLines: 0-3 lines, usually just 1 or 2. Each MUST start inside a quiet gap and fit that gap's word limit. Never over the big moment itself: let it play with its own sound. A "hook" line goes at the start, "build" just before the peak, "after" right after it.
 - titles: 3-5 options, under 70 characters, curiosity without lying; mention GTA 6 only if the clip is clearly GTA 6.
-- tags: lowercase search phrases (e.g. "gta 6", "gta 6 funny moments").`;
+- tags: lowercase search phrases (e.g. "gta 6", "gta 6 funny moments").${editStyle === 'reaction' ? REACTION_RULES : ''}`;
 }
 
 /** Dialogue words grouped into lines at pauses, for the prompt. */
@@ -224,12 +262,40 @@ export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, a
   const hookSec = 2.5;
   const gaps = voiceGaps(analysis.words, trimStart, trimEnd, peakSec);
   const layout: ClipLayout = vertical ? 'original' : draft?.layout === 'crop' ? 'crop' : 'fit';
+  const editStyle = editStyleFor(previous);
+  const reaction = editStyle === 'reaction';
+  const hook = (draft?.hook || project.note || 'Wait for it…').trim().slice(0, 70);
+  // A voice line on the freeze is spoken while the game is paused, so it skips the quiet-gap rules
+  const freezeAt = reaction ? (draft?.freezeAt ?? null) : null;
+  const cutIns = reaction
+    ? fitCutIns({ memes: draft?.memes, freezeAt, freezeFocus: draft?.freezeFocus, replay: draft?.replay, ramp: draft?.ramp, skullAt: draft?.skullAt, skullEmoji: draft?.skullEmoji }, trimStart, trimEnd, peakSec)
+    : [];
+  const ending = reaction ? fitEnding(draft?.ending ? { style: draft.ending.style, text: draft.ending.text, query: draft.ending.sound, emoji: draft.ending.emoji } : null) : undefined;
+  const zoomFocus = reaction ? fitPoint(draft?.zoomFocus) : undefined;
+  const freeze = cutIns.find((c) => c.kind === 'freeze');
+  const freezeLine = freeze && freezeAt != null ? draft?.voiceLines.find((l) => Math.abs(l.at - freezeAt) <= 0.3 && wordCount(l.text) <= 14) : undefined;
+  const gapLines = fitVoiceLines((draft?.voiceLines ?? []).filter((l) => l !== freezeLine), gaps, freezeLine ? 2 : 3);
+  const voiceLines = freezeLine ? [...gapLines, { at: freeze!.at, text: freezeLine.text.replace(/s+/g, ' ').trim(), slot: 'build' as const }].sort((a, b) => a.at - b.at) : gapLines;
   const fallbackTitle = (project.note || project.source?.title || 'This GTA moment').slice(0, 70);
   return {
-    hook: (draft?.hook || project.note || 'Wait for it…').trim().slice(0, 70),
+    editStyle,
+    ...(reaction
+      ? {
+          header: fitHeader(draft?.header, hook),
+          cutIns,
+          effects: fitEffects(draft?.effects ?? [], trimStart, trimEnd, peakSec),
+          ...(zoomFocus ? { zoomFocus } : {}),
+          ...(ending ? { ending } : {}),
+          loop: !ending && !!draft?.loop,
+          whipBlur: previous?.whipBlur ?? true,
+          grade: previous?.grade ?? true,
+          glowCaptions: previous?.glowCaptions ?? true,
+        }
+      : {}),
+    hook,
     hookSec,
     overlays: fitOverlays(draft?.overlays ?? [], trimStart, trimEnd, hookSec),
-    voiceLines: fitVoiceLines(draft?.voiceLines ?? [], gaps),
+    voiceLines,
     titles: (draft?.titles?.length ? draft.titles : [fallbackTitle]).map((t) => t.trim().slice(0, 100)).filter(Boolean).slice(0, 5),
     description: (draft?.description || project.note || '').trim(),
     tags: [...new Set((draft?.tags?.length ? draft.tags : defaultTags).map((t) => t.replace(/^#/, '').trim().toLowerCase()).filter(Boolean))].slice(0, 15),
@@ -243,7 +309,7 @@ export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, a
     voiceover: previous?.voiceover ?? true,
     muteMusic: previous?.muteMusic ?? false,
     zoomOnPeak: previous?.zoomOnPeak ?? peakSec != null,
-    sfxOnPeak: previous?.sfxOnPeak ?? false,
+    sfxOnPeak: previous?.sfxOnPeak ?? reaction,
     voiceStyle: style,
     voice: previous?.voice ?? channel?.voice ?? '',
   };
@@ -265,7 +331,7 @@ export async function writeScript(dir: string, project: ClipProject, analysis: C
   try {
     const { provider, ctx, name } = clipLlm();
     const images = provider.supportsVision ? await loadImages(dir, analysis.frames) : [];
-    const { data } = await provider.generateJson({ prompt: buildScriptPrompt(project, analysis, style, gaps, channel), schema: ScriptSchema, images, maxTokens: 12000 }, ctx);
+    const { data } = await provider.generateJson({ prompt: buildScriptPrompt(project, analysis, style, gaps, channel, editStyleFor(previous)), schema: ScriptSchema, images, maxTokens: 12000 }, ctx);
     const plan = planFromDraft(data, project, analysis, previous, channel);
     const warnings = images.length ? [] : [`${name} could not look at the stills, so the script is based on the dialogue and post text only.`];
     return { plan, warnings };

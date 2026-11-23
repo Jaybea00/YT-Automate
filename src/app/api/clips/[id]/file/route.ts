@@ -1,5 +1,9 @@
 import type * as fs from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
+import * as path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { getFfmpegPath } from '@/pipeline/utils/ffmpeg';
 import { NextResponse } from 'next/server';
 import yazl from 'yazl';
 import { fileResponse } from '@/lib/file-response';
@@ -7,6 +11,8 @@ import { createSafeWebStream } from '@/lib/streaming';
 import { loadChannelProfile } from '@/pipeline/channel/store';
 import { uploadInfoText } from '@/pipeline/clipping/package';
 import { clipFile, loadClip } from '@/pipeline/clipping/store';
+
+const execFileAsync = promisify(execFile);
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -36,6 +42,19 @@ export async function GET(req: Request, context: RouteContext) {
     return new Response(createSafeWebStream(zip.outputStream as unknown as fs.ReadStream, { signal: req.signal }), {
       headers: { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${slug}.zip"`, 'Cache-Control': 'no-cache' },
     });
+  }
+
+  if (name === 'frame') {
+    // A still of the clip at ?t= seconds, for pointing at things (the freeze circle, the zoom aim)
+    const t = Number.parseFloat(url.searchParams.get('t') ?? '');
+    if (!clip.source || !Number.isFinite(t) || t < 0) return new NextResponse('Not found', { status: 404 });
+    const rel = `preview/frame_${Math.round(t * 10)}.jpg`;
+    const file = clipFile(id, rel);
+    if (!(await stat(file).then((s) => s.size > 0).catch(() => false))) {
+      await mkdir(path.dirname(file), { recursive: true });
+      await execFileAsync(getFfmpegPath(), ['-y', '-v', 'error', '-ss', (Math.round(t * 10) / 10).toFixed(1), '-i', clipFile(id, clip.source.file), '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', file]).catch(() => {});
+    }
+    return fileResponse(req, file);
   }
 
   const relative =

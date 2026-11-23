@@ -36,6 +36,8 @@ export interface VoiceLine {
   durationSec?: number;
   /** Word timings inside the line's audio (seconds from the line's start). */
   words?: ClipWord[];
+  /** Set by the reaction timeline: seconds the line waits after its moment (a freeze's record scratch plays first). */
+  offsetSec?: number;
 }
 
 /** Short on-screen text ("wait for it…"), seconds from the start of the source clip. */
@@ -45,7 +47,126 @@ export interface TextOverlay {
   text: string;
 }
 
+/** classic: hook banner and captions over the clip; reaction: header box, memes, freezes, replays and hits. */
+export type EditStyle = 'classic' | 'reaction';
+
+/** The white box above the clip that tells the story from the first frame ("NPCs have ZERO chill 😭"). */
+export interface HeaderBox {
+  /** May end in emoji: the box is drawn by a browser, so they show in colour. */
+  text: string;
+  /** Words shown in red. */
+  highlight: string[];
+}
+
+/** A meme clip found for a cut-in, normalised into the clip folder. */
+export interface MemeFile {
+  /** File name inside the clip folder. */
+  file: string;
+  source: 'library' | 'klipy' | 'giphy' | 'tenor';
+  title: string;
+  /** Where it came from (a GIPHY/Tenor page or the library file name). */
+  origin: string;
+  hasAudio: boolean;
+  durationSec: number;
+  /** The query and pick it was found for: a different one fetches again. */
+  key: string;
+}
+
+/** A sound effect found for a moment (vine boom, bruh, sad violin…), normalised into the clip folder. */
+export interface SoundFile {
+  /** File name inside the clip folder. */
+  file: string;
+  source: 'library' | 'builtin';
+  title: string;
+  origin: string;
+  durationSec: number;
+  /** The query it was found for: a different one fetches again. */
+  key: string;
+}
+
+/** A point on the source picture, as fractions of its width and height (0-1). */
+export interface FramePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * meme, freeze and replay play between two moments of the clip; a ramp slows the stretch of clip
+ * just before `at` (replaySec long) to half speed, building up to the hit.
+ */
+export type CutInKind = 'meme' | 'freeze' | 'replay' | 'ramp' | 'skull';
+
+/**
+ * Something that plays *between* two moments of the clip: the clip stops at `at`, the cut-in plays,
+ * then the clip carries on. Nothing of the clip is hidden.
+ */
+export interface CutIn {
+  kind: CutInKind;
+  /** Seconds into the source clip. */
+  at: number;
+  /** Seconds the cut-in lasts (a freeze stretches to fit a voice line at the same point). */
+  durationSec: number;
+  /** meme: what to search for ("it's working", "shocked guy"). */
+  query?: string;
+  /** meme: which search result to use; "Try another" moves it on. */
+  pick?: number;
+  meme?: MemeFile;
+  /** replay: seconds of clip before `at` shown again in slow motion; ramp: seconds before `at` slowed down. */
+  replaySec?: number;
+  /** freeze: a red circle and arrow on this spot ("look at the guy on the left"). */
+  focus?: FramePoint;
+  /** skull: the picture (a typed emoji or an emoji-library name); 💀 when missing. */
+  emoji?: string;
+}
+
+/** A hit on a moment of the clip (seconds into the source clip). */
+export interface ClipEffect {
+  at: number;
+  /** flash: red pulse; shake: camera jolt + thud; emoji: pops up and floats away; sound: a meme sound; comic: black-and-white comic-dot flash. */
+  kind: 'flash' | 'shake' | 'emoji' | 'sound' | 'comic';
+  /** emoji: which one (💀, 😭…). */
+  emoji?: string;
+  /** sound: what to look for ("vine boom", "bruh", "sad violin"). */
+  query?: string;
+  sound?: SoundFile;
+}
+
+export type EndingStyle = 'none' | 'tbc' | 'credits' | 'stamp' | 'skull' | 'recap';
+
+/**
+ * How the Short ends. tbc: the last frame freezes in sepia and an arrow banner slides in; credits:
+ * cut to black with credit lines; stamp: black-and-white freeze with a red rubber stamp; skull: grey,
+ * dark freeze with a big skull on a bass hit; recap: a burst of quick cuts of the best moments,
+ * landing on the big one. Each with its sound (from the sound library, or a built-in one).
+ */
+export interface Ending {
+  style: EndingStyle;
+  /** The banner, stamp or credit text ("TO BE CONTINUED", "SKILL ISSUE", "Directed by\nJASON"). */
+  text: string;
+  /** skull: the picture (a typed emoji or an emoji-library name). */
+  emoji?: string;
+  query?: string;
+  sound?: SoundFile;
+  durationSec: number;
+}
+
 export interface ClipPlan {
+  /** Missing on clips made before reaction edits: classic. */
+  editStyle?: EditStyle;
+  header?: HeaderBox;
+  cutIns?: CutIn[];
+  effects?: ClipEffect[];
+  /** Where the zoom punch on the big moment aims (the centre when missing). */
+  zoomFocus?: FramePoint;
+  ending?: Ending;
+  /** Ends by blending into the first frame (no fade to black), so a replay feels seamless. Ignored under an ending. */
+  loop?: boolean;
+  /** A quick motion blur into and out of every cut-in and the ending (on unless false). */
+  whipBlur?: boolean;
+  /** Punchier colour for the whole Short: contrast, saturation, sharpening, dark edges. */
+  grade?: boolean;
+  /** The spoken word in the captions glows, in a colour that changes each line. */
+  glowCaptions?: boolean;
   hook: string;
   /** Seconds the hook stays on screen (from the start of the Short). */
   hookSec: number;

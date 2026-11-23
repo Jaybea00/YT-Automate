@@ -2,7 +2,10 @@ import { analyzeClip } from './analyze';
 import { downloadClip } from './ingest';
 import { loadChannelProfile } from '../channel/store';
 import { writeUploadInfo } from './package';
+import { prepareMemes } from './memes';
+import { renderReactionShort } from './reaction-render';
 import { renderShort } from './render';
+import { prepareReactionSounds } from './sounds';
 import { writeScript } from './script';
 import { clipDir, loadClip, newClipId, saveClip, updateClip } from './store';
 import type { ClipProject, ClipStatus } from './types';
@@ -66,7 +69,7 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
     let project = await loadClip(id);
     if (!project) return;
     const channel = await loadChannelProfile();
-    const warnings = from === 'all' ? [] : project.warnings.filter((w) => !/voiced|voiceover|script writer|stills/i.test(w));
+    const warnings = from === 'all' ? [] : project.warnings.filter((w) => !/voiced|voiceover|script writer|stills|meme/i.test(w));
 
     if ((from === 'all' && !project.localSource) || !project.source) {
       await setStatus(id, 'downloading', 'Downloading the clip');
@@ -105,8 +108,28 @@ export async function processClip(id: string, from: ClipRunFrom): Promise<void> 
       });
     }
 
+    const reaction = plan.editStyle === 'reaction';
+    if (reaction && plan.cutIns?.some((c) => c.kind === 'meme')) {
+      await setStatus(id, 'rendering', 'Finding the memes');
+      const found = await prepareMemes(dir, plan.cutIns);
+      warnings.push(...found.warnings);
+      plan = { ...plan, cutIns: found.cutIns };
+      project = await updateClip(id, (p) => {
+        p.plan = plan;
+      });
+    }
+    if (reaction && (plan.effects?.some((e) => e.kind === 'sound' || e.kind === 'emoji') || (plan.ending && plan.ending.style !== 'none'))) {
+      await setStatus(id, 'rendering', 'Finding the sounds and emoji');
+      const found = await prepareReactionSounds(dir, plan);
+      warnings.push(...found.warnings);
+      plan = found.plan;
+      project = await updateClip(id, (p) => {
+        p.plan = plan;
+      });
+    }
+
     await setStatus(id, 'rendering', 'Rendering the Short');
-    const output = await renderShort(dir, project.source!.file, plan, project.analysis!, channel);
+    const output = reaction ? await renderReactionShort(dir, project.source!.file, plan, project.analysis!, channel) : await renderShort(dir, project.source!.file, plan, project.analysis!, channel);
     project = await updateClip(id, (p) => {
       p.output = { ...output, renderedAt: new Date().toISOString() };
       p.status = 'ready';
