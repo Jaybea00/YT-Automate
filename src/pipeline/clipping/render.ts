@@ -35,16 +35,20 @@ export function zoomExpression(peakSec: number, amount = ZOOM, timeVar = 'in/30'
   return `1+${amount}*min(clip((${timeVar}-${fx(a)})/${fx(b - a)},0,1),clip((${fx(e)}-${timeVar})/${fx(e - c)},0,1))`;
 }
 
-export function videoFilter(options: { layout: ClipLayout; durationSec: number; peakSec: number | null; zoom: boolean; assFile: string }): string {
-  const { layout, durationSec, peakSec, zoom, assFile } = options;
-  const base =
-    layout === 'crop'
+/** The clip laid out at 1080x1920 as [base]. */
+export function layoutBase(layout: ClipLayout): string {
+  return layout === 'crop'
       ? `[0:v]fps=${FPS},scale=${SHORT_W}:${SHORT_H}:force_original_aspect_ratio=increase,crop=${SHORT_W}:${SHORT_H},setsar=1[base]`
       : // fit and original: the whole picture over a blurred, darkened copy of itself
         `[0:v]fps=${FPS},split=2[bg][fg];` +
         `[bg]scale=${SHORT_W}:${SHORT_H}:force_original_aspect_ratio=increase,crop=${SHORT_W}:${SHORT_H},gblur=sigma=30,eq=brightness=-0.12[bgb];` +
         `[fg]scale=${SHORT_W}:${SHORT_H}:force_original_aspect_ratio=decrease,setsar=1[fgs];` +
         `[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1[base]`;
+}
+
+export function videoFilter(options: { layout: ClipLayout; durationSec: number; peakSec: number | null; zoom: boolean; assFile: string }): string {
+  const { layout, durationSec, peakSec, zoom, assFile } = options;
+  const base = layoutBase(layout);
   const zoomed = zoom && peakSec != null && peakSec < durationSec
     ? `[base]zoompan=z='${zoomExpression(peakSec)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${SHORT_W}x${SHORT_H}:fps=${FPS}[zb]`
     : `[base]null[zb]`;
@@ -111,27 +115,44 @@ export function maskSwear(word: string): string {
   return `${m[1]}${m[2][0]}${'*'.repeat(Math.min(4, m[2].length - 1))}${m[3]}`;
 }
 
+/**
+ * The Short's own clock, when cut-ins (memes, freezes, replays) play between moments of the clip:
+ * map takes seconds into the source to seconds into the Short.
+ */
+export interface ShortClock {
+  map: (sourceSec: number) => number;
+  durationSec: number;
+  /** The header box tells the story, so the hook banner stays off. */
+  hideHook?: boolean;
+}
+
 /** Caption words (dialogue and voiceover) and banners (hook, on-screen texts), timed from the Short's start. */
-export function captionTrack(plan: ClipPlan, analysis: ClipAnalysis): { words: ClipWord[]; banners: Array<{ text: string; startMs: number; endMs: number; position: 'top' }> } {
+export function captionTrack(plan: ClipPlan, analysis: ClipAnalysis, clock?: ShortClock): { words: ClipWord[]; banners: Array<{ text: string; startMs: number; endMs: number; position: 'top' }> } {
   const t0 = plan.trimStart;
-  const dur = plan.trimEnd - plan.trimStart;
+  const map = clock?.map ?? ((sec: number) => sec - t0);
+  const dur = clock?.durationSec ?? plan.trimEnd - plan.trimStart;
   const words: ClipWord[] = [];
   if (plan.captions) {
-    for (const w of analysis.words) if (w.start >= t0 && w.end <= plan.trimEnd + 0.2) words.push({ word: w.word, start: w.start - t0, end: w.end - t0 });
+    for (const w of analysis.words) {
+      if (w.start < t0 || w.end > plan.trimEnd + 0.2) continue;
+      const start = map(w.start);
+      words.push({ word: w.word, start, end: start + (w.end - w.start) });
+    }
     if (plan.voiceover) {
       for (const line of plan.voiceLines) {
         if (!line.audioFile || !line.words) continue;
-        for (const w of line.words) words.push({ word: w.word, start: line.at - t0 + w.start, end: line.at - t0 + w.end });
+        const at = map(line.at) + (line.offsetSec ?? 0);
+        for (const w of line.words) words.push({ word: w.word, start: at + w.start, end: at + w.end });
       }
     }
   }
   words.sort((a, b) => a.start - b.start);
   if (plan.cleanCaptions !== false) for (const w of words) w.word = maskSwear(w.word);
   const banners: Array<{ text: string; startMs: number; endMs: number; position: 'top' }> = [];
-  if (plan.showHook && stripEmoji(plan.hook)) banners.push({ text: stripEmoji(plan.hook), startMs: 0, endMs: Math.round(Math.min(plan.hookSec, dur) * 1000), position: 'top' });
+  if (plan.showHook && !clock?.hideHook && stripEmoji(plan.hook)) banners.push({ text: stripEmoji(plan.hook), startMs: 0, endMs: Math.round(Math.min(plan.hookSec, dur) * 1000), position: 'top' });
   for (const o of plan.overlays) {
     const text = stripEmoji(o.text);
-    if (text && o.until > t0 && o.at < plan.trimEnd) banners.push({ text, startMs: Math.round(Math.max(0, o.at - t0) * 1000), endMs: Math.round(Math.min(dur, o.until - t0) * 1000), position: 'top' });
+    if (text && o.until > t0 && o.at < plan.trimEnd) banners.push({ text, startMs: Math.round(Math.max(0, map(Math.max(t0, o.at))) * 1000), endMs: Math.round(Math.min(dur, map(Math.min(plan.trimEnd, o.until))) * 1000), position: 'top' });
   }
   return { words: words.filter((w) => w.start >= 0 && w.end <= dur + 0.2), banners };
 }

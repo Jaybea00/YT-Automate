@@ -56,6 +56,10 @@ export interface GenerateCaptionsOptions {
   bannerHex?: string;
   /** A small, steady mark for the whole video (a channel's @handle) in a top corner. */
   mark?: { text: string; corner: 'top-left' | 'top-right'; endMs: number };
+  /** Stretches with no spoken-word captions (a meme cut-in): a phrase still up is cut off when one starts. */
+  quiet?: Array<{ startMs: number; endMs: number }>;
+  /** The spoken word glows, in a colour that changes each line (cyan, green, yellow, pink). */
+  glow?: boolean;
 }
 
 export interface CaptionWord {
@@ -131,6 +135,8 @@ const DEFAULT_HIGHLIGHT = '&H00D4FF&';
 const RAISED_MARGIN_V = 330;
 /** A phrase stays up this long after its last word unless the next one starts sooner. */
 const PHRASE_HOLD_MS = 500;
+/** Glow colours (ASS &HBBGGRR&): cyan, green, yellow, pink. */
+const GLOW_COLOURS = ['&HFFF200&', '&H5CFF39&', '&H00E6FF&', '&HD24BFF&'];
 /** A silence this long between words starts a new phrase. */
 const PHRASE_GAP_MS = 350;
 
@@ -272,12 +278,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     phrase.forEach((w, i) => {
       // Each word is lit from when it's spoken until the next word starts
       const startMs = i === 0 ? phraseStart : w.startMs;
-      const endMs = i + 1 < phrase.length ? phrase[i + 1].startMs : phraseEnd;
+      let endMs = i + 1 < phrase.length ? phrase[i + 1].startMs : phraseEnd;
+      for (const q of options.quiet ?? []) {
+        if (startMs >= q.startMs && startMs < q.endMs) return;
+        if (startMs < q.startMs && endMs > q.startMs) endMs = q.startMs;
+      }
       if (endMs <= startMs) return;
       const text = shown
         .map((word, k) => {
           if (k !== i || !look.highlight) return phrase[k].emphasis ? `{\\c${highlightColour}}${word}{\\r}` : word;
           const pop = look.popScale !== 100 ? `\\fscx${look.popScale}\\fscy${look.popScale}` : '';
+          if (options.glow) {
+            // A soft halo of the line's colour around the spoken word; the colour changes each line
+            const c = GLOW_COLOURS[p % GLOW_COLOURS.length];
+            return `{\\c${c}\\3c${c}\\3a&H50&\\bord9\\blur8${pop}}${word}{\\r}`;
+          }
           return `{\\c${highlightColour}${pop}}${word}{\\r}`;
         })
         .join(' ');
