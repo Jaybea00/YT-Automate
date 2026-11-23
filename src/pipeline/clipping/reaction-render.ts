@@ -35,6 +35,7 @@ import {
   framePoint,
   headerDocument,
   headerY,
+  insideSkip,
   joinGraph,
   mixGraph,
   outputTime,
@@ -113,13 +114,16 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
   const durationSec = mainSec + endingSec;
   const loop = !!plan.loop && !ending;
   const map = (sec: number) => outputTime(sec, plan.trimStart, cutIns);
-  const inClip = (sec: number | null | undefined): sec is number => sec != null && sec >= plan.trimStart && sec < plan.trimEnd;
+  // A moment counts when it's inside the trim and not in a stretch that's cut out
+  const inClip = (sec: number | null | undefined): sec is number => sec != null && sec >= plan.trimStart && sec < plan.trimEnd && !insideSkip(sec, plan.cutIns ?? []);
+  // Each cut-in's edges on the Short's clock (a cut-out is one edge: the jump)
+  const cutEdges = cutIns.filter((c) => c.kind !== 'ramp').flatMap((c) => (c.kind === 'skip' ? [c.outAt] : [c.outAt, c.outAt + c.durationSec]));
   const recap = recapOn
     ? recapShots({
         cutIns,
         emojiAt: (plan.effects ?? []).filter((e) => e.kind === 'emoji' && inClip(e.at)).map((e) => map(e.at)),
         peakOut: inClip(plan.peakSec) ? map(plan.peakSec) : null,
-        avoid: plan.whipBlur === false ? [] : cutIns.filter((c) => c.kind !== 'ramp').flatMap((c) => [c.outAt, c.outAt + c.durationSec]),
+        avoid: plan.whipBlur === false ? [] : cutEdges,
         mainSec,
       })
     : null;
@@ -130,7 +134,12 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
 
   // Captions and banners on the Short's clock
   const header = plan.header?.text?.trim() ? plan.header : null;
-  const track = captionTrack({ ...plan, voiceLines }, analysis, { map, durationSec: mainSec, hideHook: !!header });
+  // Words and voice lines inside a cut-out are left out with it
+  const track = captionTrack(
+    { ...plan, voiceLines: voiceLines.filter((l) => !insideSkip(l.at, plan.cutIns ?? [])) },
+    { ...analysis, words: analysis.words.filter((w) => !insideSkip(w.start, plan.cutIns ?? [])) },
+    { map, durationSec: mainSec, hideHook: !!header },
+  );
   // The closing line belongs to the very end: with a recap, the second pass draws it
   const brand = channel ? shortBranding(channel, Math.round(totalSec * 1000)) : null;
   const banners = withClosing(track.banners, brand?.closing ?? null);
@@ -319,7 +328,7 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
   const whips =
     plan.whipBlur === false
       ? []
-      : [...cutIns.filter((c) => c.kind !== 'ramp').flatMap((c) => [c.outAt, c.outAt + c.durationSec]), ...(ending && !recapOn ? [mainSec] : [])].filter((t) => t > 0.1 && t < durationSec - 0.1);
+      : [...cutEdges, ...(ending && !recapOn ? [mainSec] : [])].filter((t) => t > 0.1 && t < durationSec - 0.1);
   const focus = plan.zoomFocus ? framePoint(plan.layout, analysis.width, analysis.height, plan.zoomFocus) : null;
   const win = zoomWindow(focus);
   const chains: string[] = [join];

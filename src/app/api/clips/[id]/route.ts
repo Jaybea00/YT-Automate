@@ -52,7 +52,7 @@ const SoundFileEdit = z.object({
 const Point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 
 const CutInEdit = z.object({
-  kind: z.enum(['meme', 'freeze', 'replay', 'ramp', 'skull']),
+  kind: z.enum(['meme', 'freeze', 'replay', 'ramp', 'skull', 'skip']),
   at: z.number().min(0),
   durationSec: z.number().min(0).max(6),
   query: z.string().max(80).optional(),
@@ -61,6 +61,7 @@ const CutInEdit = z.object({
   replaySec: z.number().min(0.3).max(4).optional(),
   focus: Point.optional(),
   emoji: z.string().max(40).optional(),
+  skipSec: z.number().min(0.5).max(60).optional(),
 });
 
 const EffectEdit = z.object({

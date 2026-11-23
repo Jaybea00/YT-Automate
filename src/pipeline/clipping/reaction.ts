@@ -70,6 +70,8 @@ export interface CutInRequest {
   /** A skull hit (grey freeze, big skull, bass hit) just after the payoff, or at this time. */
   skullAt?: number | null;
   skullEmoji?: string | null;
+  /** Slow stretches to cut out (seconds into the source). */
+  skips?: Array<{ from: number; to: number }>;
 }
 
 /** The stretch of clip a cut-in takes up: a point, or for a ramp the moments it slows. */
@@ -117,9 +119,23 @@ export function fitCutIns(req: CutInRequest, trimStart: number, trimEnd: number,
     out.push({ kind: 'meme', at: round(at), durationSec: MEME_SEC, query, pick: 0 });
   }
 
-  const kept: CutIn[] = [];
+  // Cut-outs: inside the trim, at least half a second, never over the big moment or its build-up,
+  // and not overlapping each other
+  const skips: CutIn[] = [];
+  for (const s of [...(req.skips ?? [])].sort((a, b) => a.from - b.from)) {
+    const from = Math.max(s.from, trimStart + 0.5);
+    let to = Math.min(s.to, trimEnd - 0.5);
+    if (peakSec != null && from < peakSec + 0.5 && to > peakSec - 1.5) to = Math.min(to, peakSec - 1.5);
+    const last = skips[skips.length - 1];
+    if (to - from < 0.5 || (last && from < last.at + (last.skipSec ?? 0))) continue;
+    skips.push({ kind: 'skip', at: round(from), durationSec: 0, skipSec: round(to - from) });
+  }
+  const skipped = (t: number) => insideSkip(t, skips);
+
+  const kept: CutIn[] = [...skips];
   let added = 0;
   const clash = (a: CutIn, b: CutIn) => {
+    if (a.kind === 'skip' || b.kind === 'skip') return false;
     if (a.kind === 'replay' && b.kind === 'meme' && a.at === b.at) return false;
     const za = zone(a);
     const zb = zone(b);
@@ -131,16 +147,17 @@ export function fitCutIns(req: CutInRequest, trimStart: number, trimEnd: number,
     return Math.abs(za.to - zb.to) < 1;
   };
   for (const c of sortCutIns(out)) {
+    if (skipped(c.at)) continue;
     if (kept.some((k) => clash(k, c))) continue;
     if (c.kind === 'meme' && kept.filter((k) => k.kind === 'meme').length >= MAX_MEMES) continue;
     if (added + c.durationSec > MAX_ADDED_SEC) continue;
     kept.push(c);
     added += c.durationSec;
   }
-  return kept;
+  return sortCutIns(kept);
 }
 
-const KIND_ORDER: Record<CutIn['kind'], number> = { ramp: 0, freeze: 1, skull: 2, replay: 3, meme: 4 };
+const KIND_ORDER: Record<CutIn['kind'], number> = { skip: 0, ramp: 1, freeze: 2, skull: 3, replay: 4, meme: 5 };
 /** In playing order: by time, and at the same time a ramp, then a freeze, a replay, a meme. */
 export const sortCutIns = <T extends CutIn>(cutIns: T[]): T[] => [...cutIns].sort((a, b) => a.at - b.at || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 
@@ -355,8 +372,17 @@ export function timeline(plan: Pick<ClipPlan, 'cutIns' | 'trimStart' | 'trimEnd'
   const cutIns: Array<Omit<TimedCutIn, 'outAt'>> = [];
   for (const c of sortCutIns(plan.cutIns ?? [])) {
     if (c.at <= plan.trimStart + 0.05 || c.at > plan.trimEnd) continue;
+    // Anything inside a stretch that's cut out isn't in the Short
+    if (c.kind !== 'skip' && insideSkip(c.at, plan.cutIns ?? [])) continue;
     if (c.kind === 'meme' && !c.meme) continue;
     const relAt = round(c.at - plan.trimStart);
+    if (c.kind === 'skip') {
+      // A cut-out takes time away: its length counts as negative, and it can't run past the end
+      const skipSec = round(Math.min(c.skipSec ?? 0, plan.trimEnd - c.at - 0.5));
+      if (skipSec < 0.5) continue;
+      cutIns.push({ ...c, skipSec, durationSec: -skipSec, relAt });
+      continue;
+    }
     if (c.kind === 'ramp') {
       const replaySec = Math.min(c.replaySec ?? RAMP_SEC, relAt);
       if (replaySec < 0.3) continue;
@@ -404,10 +430,19 @@ export function outputTime(sourceSec: number, trimStart: number, cutIns: Array<P
       const len = c.replaySec ?? RAMP_SEC;
       if (rel >= c.relAt - 1e-6) out += c.durationSec;
       else if (rel > c.relAt - len) out += (rel - (c.relAt - len)) * (1 / REPLAY_SPEED - 1);
+    } else if (c.kind === 'skip') {
+      // Moments after a cut-out come sooner; moments inside it land on the cut
+      const len = -c.durationSec;
+      if (rel >= c.relAt + len) out -= len;
+      else if (rel > c.relAt) out -= rel - c.relAt;
     } else if (c.relAt < rel - 1e-6) out += c.durationSec;
   }
   return out;
 }
+
+/** Whether a moment of the source falls inside a cut-out (so it isn't in the Short at all). */
+export const insideSkip = (sourceSec: number, cutIns: Array<Pick<CutIn, 'kind' | 'at' | 'skipSec'>>) =>
+  cutIns.some((c) => c.kind === 'skip' && sourceSec > c.at + 0.02 && sourceSec < c.at + (c.skipSec ?? 0) - 0.02);
 
 export const shortDuration = (clipSec: number, cutIns: Array<Pick<TimedCutIn, 'durationSec'>>, endingSec = 0) => clipSec + cutIns.reduce((s, c) => s + c.durationSec, 0) + endingSec;
 
@@ -443,6 +478,10 @@ export function parts(clipSec: number, cutIns: TimedCutIn[], memeInputs: Map<Tim
     }
     if (at - cursor > 0.04) out.push({ kind: 'clip', from: cursor, to: at, holdSec: 0 });
     cursor = Math.max(cursor, at);
+    if (c.kind === 'skip') {
+      cursor = Math.min(clipSec, at + (c.skipSec ?? 0));
+      continue;
+    }
     if (c.kind === 'freeze' || c.kind === 'skull') {
       const last = out[out.length - 1];
       if (last?.kind === 'clip') last.holdSec += c.durationSec;

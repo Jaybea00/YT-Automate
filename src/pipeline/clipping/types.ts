@@ -94,7 +94,7 @@ export interface FramePoint {
  * meme, freeze and replay play between two moments of the clip; a ramp slows the stretch of clip
  * just before `at` (replaySec long) to half speed, building up to the hit.
  */
-export type CutInKind = 'meme' | 'freeze' | 'replay' | 'ramp' | 'skull';
+export type CutInKind = 'meme' | 'freeze' | 'replay' | 'ramp' | 'skull' | 'skip';
 
 /**
  * Something that plays *between* two moments of the clip: the clip stops at `at`, the cut-in plays,
@@ -117,6 +117,8 @@ export interface CutIn {
   focus?: FramePoint;
   /** skull: the picture (a typed emoji or an emoji-library name); 💀 when missing. */
   emoji?: string;
+  /** skip: seconds of clip cut out from `at` (a slow stretch), jumped over with a whip. */
+  skipSec?: number;
 }
 
 /** A hit on a moment of the clip (seconds into the source clip). */
