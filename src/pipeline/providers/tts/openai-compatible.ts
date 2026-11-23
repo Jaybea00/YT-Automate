@@ -73,12 +73,15 @@ export class OpenAiCompatibleTtsProvider implements TTSProvider {
       headers.Authorization = `Bearer ${ctx.apiKey}`;
     }
 
+    // The voice asked for wins over the binding's saved voice (options.voice / voiceId), which is only
+    // a fallback: spread after it, the saved one silently replaced every clip's and narrator's voice.
+    const { voice: savedVoice, voiceId: savedVoiceId, ...options } = serverOptions(ctx.options);
     const body: Record<string, unknown> = {
       model: ctx.model || 'tts-1',
       input: req.text,
-      voice: req.voiceId,
       response_format: req.format,
-      ...serverOptions(ctx.options),
+      ...options,
+      voice: req.voiceId || savedVoiceId || savedVoice,
     };
 
     if (req.speed !== undefined) {

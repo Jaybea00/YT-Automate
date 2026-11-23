@@ -53,6 +53,19 @@ describe('Kokoro captioned speech', () => {
     ]);
   });
 
+  it('speaks in the voice asked for, not the binding’s saved default', async () => {
+    const voices: unknown[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      voices.push(JSON.parse(String(init?.body)).voice);
+      return new Response(JSON.stringify({ audio: '', timestamps: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const provider = new OpenAiCompatibleTtsProvider();
+    const ctx = { apiKey: '', baseUrl: 'http://localhost:8880/v1', model: 'kokoro', options: { voice: 'af_heart', voiceId: 'af_heart' } };
+    await provider.synthesize({ text: 'Hi', voiceId: 'am_michael+am_fenrir', format: 'wav' }, ctx);
+    await provider.synthesize({ text: 'Hi', voiceId: '', format: 'wav' }, ctx);
+    assert.deepEqual(voices, ['am_michael+am_fenrir', 'af_heart'], 'the saved voice is only the fallback');
+  });
+
   it('never tries captioned speech against OpenAI itself', async () => {
     const urls: string[] = [];
     globalThis.fetch = (async (url: string) => {
