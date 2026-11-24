@@ -41,7 +41,7 @@ const card = 'rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3';
 const input = 'w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm';
 const small = 'text-xs px-2 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700';
 
-const CUT_IN_LABEL: Record<CutIn['kind'], string> = { meme: '😂 Meme', freeze: '⏸ Freeze', replay: '🔁 Slow-mo replay', ramp: '🐢 Speed ramp', skull: '💀 Skull hit', skip: '✂️ Cut out' };
+const CUT_IN_LABEL: Record<CutIn['kind'], string> = { meme: '😂 Meme', freeze: '⏸ Freeze', replay: '🔁 Slow-mo replay', ramp: '🐢 Speed ramp', skull: '💀 Skull hit', skip: '✂️ Cut out', teaser: '⏪ Cold open' };
 const EFFECT_LABEL: Record<ClipEffect['kind'], string> = { flash: 'Red flash', shake: 'Camera shake + thud', emoji: 'Emoji pop-up', sound: 'Meme sound', comic: 'Comic-dot flash' };
 const ENDING_TEXT: Record<Ending['style'], string> = { none: '', tbc: 'TO BE CONTINUED', credits: 'Directed by\nJASON', stamp: 'SKILL ISSUE', skull: '', recap: '' };
 const ENDING_SOUND: Record<Ending['style'], string> = { none: '', tbc: 'to be continued', credits: 'directed by', stamp: 'vine boom', skull: 'kai cenat boom', recap: 'dark impact' };
@@ -112,6 +112,7 @@ function ReactionEditor({ id, draft, edit }: { id: string; draft: ClipPlan; edit
             <button onClick={() => add({ kind: 'ramp', at: peak, durationSec: 0.8, replaySec: 0.8 })} className={small}>+ Speed ramp</button>
             <button onClick={() => add({ kind: 'replay', at: Math.min(draft.trimEnd, peak + 1), durationSec: 2.4, replaySec: 1.2 })} className={small}>+ Replay</button>
             <button onClick={() => add({ kind: 'skull', at: Math.min(draft.trimEnd, peak + 0.3), durationSec: 0.9 })} className={small}>+ Skull hit</button>
+            <button onClick={() => add({ kind: 'teaser', at: Math.min(draft.trimEnd, peak + 0.5), durationSec: 2.25, replaySec: 1.8 })} className={small} title="Show the big moment first, then rewind to the start">+ Cold open</button>
             <button onClick={() => add({ kind: 'skip', at: draft.trimStart + 5, durationSec: 0, skipSec: 5 })} className={small} title="Cut a slow stretch out of the middle">+ Cut out</button>
           </div>
         </div>
@@ -137,6 +138,13 @@ function ReactionEditor({ id, draft, edit }: { id: string; draft: ClipPlan; edit
                   <span className="text-xs text-zinc-500">for</span>
                   <Num value={c.durationSec} onChange={(v) => setCut(i, { durationSec: v })} className="w-16" />
                   <span className="text-xs text-zinc-500">s{c.kind === 'freeze' ? ' (longer if a voice line is on it)' : ''}</span>
+                </>
+              )}
+              {c.kind === 'teaser' && (
+                <>
+                  <span className="text-xs text-zinc-500">opens on the</span>
+                  <Num value={c.replaySec ?? 1.8} onChange={(v) => setCut(i, { replaySec: v, durationSec: v * 1.25 })} className="w-16" />
+                  <span className="text-xs text-zinc-500">s up to here, then rewinds</span>
                 </>
               )}
               {(c.kind === 'replay' || c.kind === 'ramp') && (

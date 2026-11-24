@@ -34,6 +34,15 @@ export const RECAP_LANDING_SEC = 1.7;
 const RECAP_MAX = 4;
 /** Sounds a skull hit tries, in order (the user's library first, then the built-in boom). */
 export const SKULL_SOUNDS = ['kai cenat boom', 'dark impact', 'vine boom', 'boom'];
+/** The cold open: this much of the big moment plays first, then winds back REWIND_SPEED times as fast. */
+export const TEASER_SEC = 1.8;
+const REWIND_SPEED = 4;
+/** Sounds the rewind tries from the user's library (a whoosh when none is there). */
+export const REWIND_SOUNDS = ['rewind', 'vhs rewind', 'tape rewind'];
+/** The rewind's look: washed out, grainy, a little bright, like a tape winding back. */
+const REWIND_LOOK = 'hue=s=0.25,eq=contrast=1.15:brightness=0.04,noise=alls=18:allf=t';
+/** A teaser's length in the Short: the moment, then its rewind. */
+export const teaserLength = (teaseSec: number) => round(teaseSec + teaseSec / REWIND_SPEED);
 /** Cut-ins add at most this much to the Short. */
 export const MAX_ADDED_SEC = 10;
 const MAX_MEMES = 2;
@@ -72,6 +81,8 @@ export interface CutInRequest {
   skullEmoji?: string | null;
   /** Slow stretches to cut out (seconds into the source). */
   skips?: Array<{ from: number; to: number }>;
+  /** A cold open: the big moment (true), or the moments up to this time, played first, then rewound. */
+  teaser?: boolean | number | null;
 }
 
 /** The stretch of clip a cut-in takes up: a point, or for a ramp the moments it slows. */
@@ -154,10 +165,17 @@ export function fitCutIns(req: CutInRequest, trimStart: number, trimEnd: number,
     kept.push(c);
     added += c.durationSec;
   }
+  // The teaser doesn't take a moment of the clip: it plays before everything, so nothing clashes with it
+  const teaseTo = typeof req.teaser === 'number' ? req.teaser : req.teaser && peakSec != null ? peakSec + 0.5 : null;
+  if (teaseTo != null && Number.isFinite(teaseTo)) {
+    const to = Math.min(teaseTo, trimEnd);
+    const teaseSec = round(Math.min(TEASER_SEC, to - trimStart));
+    if (teaseSec >= 0.8 && !skipped(to - 0.05)) kept.push({ kind: 'teaser', at: round(to), replaySec: teaseSec, durationSec: teaserLength(teaseSec) });
+  }
   return sortCutIns(kept);
 }
 
-const KIND_ORDER: Record<CutIn['kind'], number> = { skip: 0, ramp: 1, freeze: 2, skull: 3, replay: 4, meme: 5 };
+const KIND_ORDER: Record<CutIn['kind'], number> = { skip: 0, ramp: 1, freeze: 2, skull: 3, replay: 4, meme: 5, teaser: 6 };
 /** In playing order: by time, and at the same time a ramp, then a freeze, a replay, a meme. */
 export const sortCutIns = <T extends CutIn>(cutIns: T[]): T[] => [...cutIns].sort((a, b) => a.at - b.at || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 
@@ -361,6 +379,8 @@ export interface TimedCutIn extends CutIn {
   relAt: number;
   /** When it starts in the Short (a ramp: when the slowed stretch starts). */
   outAt: number;
+  /** teaser: where the teased stretch ends, seconds into the trimmed clip (it plays at the very start). */
+  teaseTo?: number;
 }
 
 /**
@@ -371,6 +391,15 @@ export function timeline(plan: Pick<ClipPlan, 'cutIns' | 'trimStart' | 'trimEnd'
   const voiceLines = plan.voiceLines.map((l) => ({ ...l }));
   const cutIns: Array<Omit<TimedCutIn, 'outAt'>> = [];
   for (const c of sortCutIns(plan.cutIns ?? [])) {
+    if (c.kind === 'teaser') {
+      // The cold open plays before the clip starts: only the first one, and only a stretch that's in the Short
+      if (cutIns.some((k) => k.kind === 'teaser') || c.at <= plan.trimStart + 0.3 || c.at > plan.trimEnd + 0.01 || insideSkip(c.at - 0.05, plan.cutIns ?? [])) continue;
+      const teaseTo = round(c.at - plan.trimStart);
+      const replaySec = round(Math.min(c.replaySec ?? TEASER_SEC, teaseTo));
+      if (replaySec < 0.5) continue;
+      cutIns.push({ ...c, relAt: 0, teaseTo, replaySec, durationSec: teaserLength(replaySec) });
+      continue;
+    }
     if (c.at <= plan.trimStart + 0.05 || c.at > plan.trimEnd) continue;
     // Anything inside a stretch that's cut out isn't in the Short
     if (c.kind !== 'skip' && insideSkip(c.at, plan.cutIns ?? [])) continue;
@@ -410,7 +439,8 @@ export function timeline(plan: Pick<ClipPlan, 'cutIns' | 'trimStart' | 'trimEnd'
     cutIns.push({ ...c, durationSec: round(durationSec), relAt });
   }
   const timed: TimedCutIn[] = [];
-  for (const c of cutIns) {
+  // The teaser goes first, so everything else lands after it
+  for (const c of [...cutIns.filter((k) => k.kind === 'teaser'), ...cutIns.filter((k) => k.kind !== 'teaser')]) {
     const start = c.kind === 'ramp' ? c.relAt - (c.replaySec ?? RAMP_SEC) : c.relAt;
     timed.push({ ...c, outAt: round(outputTime(start + plan.trimStart, plan.trimStart, timed)) });
   }
@@ -426,7 +456,8 @@ export function outputTime(sourceSec: number, trimStart: number, cutIns: Array<P
   const rel = sourceSec - trimStart;
   let out = rel;
   for (const c of cutIns) {
-    if (c.kind === 'ramp') {
+    if (c.kind === 'teaser') out += c.durationSec;
+    else if (c.kind === 'ramp') {
       const len = c.replaySec ?? RAMP_SEC;
       if (rel >= c.relAt - 1e-6) out += c.durationSec;
       else if (rel > c.relAt - len) out += (rel - (c.relAt - len)) * (1 / REPLAY_SPEED - 1);
@@ -458,6 +489,7 @@ export type Part =
   | { kind: 'clip'; from: number; to: number; holdSec: number; gain?: number; zoom?: number }
   | { kind: 'replay'; from: number; to: number }
   | { kind: 'ramp'; from: number; to: number }
+  | { kind: 'teaser'; from: number; to: number }
   | { kind: 'meme'; input: number; durationSec: number; hasAudio: boolean };
 
 /**
@@ -468,6 +500,11 @@ export function parts(clipSec: number, cutIns: TimedCutIn[], memeInputs: Map<Tim
   const out: Part[] = [];
   let cursor = 0;
   for (const c of cutIns) {
+    if (c.kind === 'teaser') {
+      const to = Math.min(c.teaseTo ?? 0, clipSec);
+      out.push({ kind: 'teaser', from: Math.max(0, to - (c.replaySec ?? TEASER_SEC)), to });
+      continue;
+    }
     const at = Math.min(c.relAt, clipSec);
     if (c.kind === 'ramp') {
       const from = Math.max(cursor, at - (c.replaySec ?? RAMP_SEC));
@@ -532,6 +569,15 @@ export function joinGraph(options: { base: string; parts: Part[]; hasAudio: bool
     } else if (p.kind === 'replay') {
       chains.push(`[b${k}]trim=start=${fx(p.from)}:end=${fx(p.to)},${slow}[pv${i}]`);
       chains.push(`[g${k}]atrim=start=${fx(p.from)}:end=${fx(p.to)},asetpts=PTS-STARTPTS,atempo=${REPLAY_SPEED},volume=0.8[pa${i}]`);
+      k++;
+    } else if (p.kind === 'teaser') {
+      // The big moment first, then wound back fast to where the story starts (picture and sound reversed)
+      chains.push(`[b${k}]trim=start=${fx(p.from)}:end=${fx(p.to)},setpts=PTS-STARTPTS,split=2[tf${i}][tb${i}]`);
+      chains.push(`[tb${i}]reverse,setpts=(PTS-STARTPTS)/${REWIND_SPEED},fps=${fps},${REWIND_LOOK}[tr${i}]`);
+      chains.push(`[tf${i}][tr${i}]concat=n=2:v=1:a=0[pv${i}]`);
+      chains.push(`[g${k}]atrim=start=${fx(p.from)}:end=${fx(p.to)},asetpts=PTS-STARTPTS,asplit=2[uf${i}][ub${i}]`);
+      chains.push(`[ub${i}]areverse,asetrate=${48000 * REWIND_SPEED},aresample=48000,volume=0.35[ur${i}]`);
+      chains.push(`[uf${i}][ur${i}]concat=n=2:v=0:a=1[pa${i}]`);
       k++;
     } else if (p.kind === 'ramp') {
       // Slowed sound drops in pitch too: the deep "slow-mo" sound

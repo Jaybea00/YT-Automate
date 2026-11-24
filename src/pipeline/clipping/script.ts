@@ -166,6 +166,7 @@ const ScriptSchema = z.object({
   skullAt: z.number().nullable().optional().describe('Reaction edit: a skull hit just after the payoff, or null'),
   skullEmoji: z.string().optional().describe('Reaction edit: the skull hit picture'),
   skips: z.array(z.object({ from: z.number(), to: z.number() })).optional().describe('Reaction edit: slow stretches to cut out'),
+  teaser: z.boolean().optional().describe('Reaction edit: open on the big moment, then rewind to the start'),
   loop: z.boolean().optional().describe('Reaction edit: blend the end into the start'),
 });
 export type ScriptDraft = z.infer<typeof ScriptSchema>;
@@ -193,6 +194,7 @@ REACTION EDIT (this Short uses it: fill these too)
 - ending: style "tbc" (freeze in sepia with a "TO BE CONTINUED" arrow banner: for cliffhangers, someone about to get wrecked), "credits" (cut to black with credit lines, text like "Directed by\nJASON": for an awkward fail), "stamp" (black-and-white freeze with a red stamp, text 1-3 words like "SKILL ISSUE", "NOT CANON", "L": for a fail), "skull" (grey, dark freeze with a big skull on a bass hit: for a fail or a trap; pair with skullAt for the double skull), "recap" (the best moments flash past in quick cuts, landing on the big one: for action and chaos), or "none". sound: what to play (defaults fit each style). emoji: the skull ending's picture.
 - loop: true (with ending "none") when the last moment flows back into the first, so the replay feels seamless.
 - skips: 0-2 slow stretches to cut out of the middle (seconds into the clip: from, to): plain driving, walking, waiting, where nothing happens and nobody speaks. Never the big moment or the 1.5 s before it.
+- teaser: true when the start is slow (walking up, driving, setting up) and the big moment is a strong picture: the Short opens on it for under 2 s, then rewinds to the start.
 - Aim for a 15-35 s Short with the payoff before 60% of the way in; cut the slow start.`;
 
 export function buildScriptPrompt(project: ClipProject, analysis: ClipAnalysis, style: VoiceStyle, gaps: Array<{ start: number; end: number }>, channel?: ChannelProfile, editStyle: EditStyle = 'classic'): string {
@@ -270,7 +272,7 @@ export function planFromDraft(draft: ScriptDraft | null, project: ClipProject, a
   // A voice line on the freeze is spoken while the game is paused, so it skips the quiet-gap rules
   const freezeAt = reaction ? (draft?.freezeAt ?? null) : null;
   const cutIns = reaction
-    ? fitCutIns({ memes: draft?.memes, freezeAt, freezeFocus: draft?.freezeFocus, replay: draft?.replay, ramp: draft?.ramp, skullAt: draft?.skullAt, skullEmoji: draft?.skullEmoji, skips: draft?.skips }, trimStart, trimEnd, peakSec)
+    ? fitCutIns({ memes: draft?.memes, freezeAt, freezeFocus: draft?.freezeFocus, replay: draft?.replay, ramp: draft?.ramp, skullAt: draft?.skullAt, skullEmoji: draft?.skullEmoji, skips: draft?.skips, teaser: draft?.teaser }, trimStart, trimEnd, peakSec)
     : [];
   const ending = reaction ? fitEnding(draft?.ending ? { style: draft.ending.style, text: draft.ending.text, query: draft.ending.sound, emoji: draft.ending.emoji } : null) : undefined;
   const zoomFocus = reaction ? fitPoint(draft?.zoomFocus) : undefined;

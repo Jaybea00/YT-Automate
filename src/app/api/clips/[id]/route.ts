@@ -52,7 +52,7 @@ const SoundFileEdit = z.object({
 const Point = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
 
 const CutInEdit = z.object({
-  kind: z.enum(['meme', 'freeze', 'replay', 'ramp', 'skull', 'skip']),
+  kind: z.enum(['meme', 'freeze', 'replay', 'ramp', 'skull', 'skip', 'teaser']),
   at: z.number().min(0),
   durationSec: z.number().min(0).max(6),
   query: z.string().max(80).optional(),

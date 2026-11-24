@@ -23,6 +23,7 @@ import {
   recapLength,
   recapShots,
   recapTimes,
+  REWIND_SOUNDS,
   SKULL_SOUNDS,
   skullLookFilter,
   whipFilter,
@@ -46,7 +47,7 @@ import {
   zoomWindow,
   type TimedCutIn,
 } from './reaction';
-import { captionTrack, gameVolumeExpression, layoutBase, SHORT_H, SHORT_W, withClosing, zoomExpression } from './render';
+import { captionTrack, gameVolumeExpression, layoutBase, maskSwear, SHORT_H, SHORT_W, withClosing, zoomExpression } from './render';
 import { emojiImageDataUrl, findEmojiImage, isEmojiChar } from './emojis';
 import { findSound } from './sounds';
 import type { ClipAnalysis, ClipPlan, Ending } from './types';
@@ -117,7 +118,11 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
   // A moment counts when it's inside the trim and not in a stretch that's cut out
   const inClip = (sec: number | null | undefined): sec is number => sec != null && sec >= plan.trimStart && sec < plan.trimEnd && !insideSkip(sec, plan.cutIns ?? []);
   // Each cut-in's edges on the Short's clock (a cut-out is one edge: the jump)
-  const cutEdges = cutIns.filter((c) => c.kind !== 'ramp').flatMap((c) => (c.kind === 'skip' ? [c.outAt] : [c.outAt, c.outAt + c.durationSec]));
+  // (a teaser: into its rewind, and out of it into the story)
+  const teaser = cutIns.find((c) => c.kind === 'teaser') ?? null;
+  const cutEdges = cutIns
+    .filter((c) => c.kind !== 'ramp')
+    .flatMap((c) => (c.kind === 'skip' ? [c.outAt] : c.kind === 'teaser' ? [c.replaySec ?? 0, c.durationSec] : [c.outAt, c.outAt + c.durationSec]));
   const recap = recapOn
     ? recapShots({
         cutIns,
@@ -140,6 +145,16 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
     { ...analysis, words: analysis.words.filter((w) => !insideSkip(w.start, plan.cutIns ?? [])) },
     { map, durationSec: mainSec, hideHook: !!header },
   );
+  if (teaser && plan.captions) {
+    // The teased words are captioned at the start too (the rewind runs without captions)
+    const from = (teaser.teaseTo ?? 0) - (teaser.replaySec ?? 0);
+    for (const w of analysis.words) {
+      const rel = w.start - plan.trimStart - from;
+      if (rel < 0 || rel >= (teaser.replaySec ?? 0) - 0.1) continue;
+      track.words.push({ word: plan.cleanCaptions !== false ? maskSwear(w.word) : w.word, start: rel, end: Math.min(rel + (w.end - w.start), teaser.replaySec ?? 0) });
+    }
+    track.words.sort((a, b) => a.start - b.start);
+  }
   // The closing line belongs to the very end: with a recap, the second pass draws it
   const brand = channel ? shortBranding(channel, Math.round(totalSec * 1000)) : null;
   const banners = withClosing(track.banners, brand?.closing ?? null);
@@ -147,6 +162,7 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
   if (ending && !recapOn) quiet.push({ startMs: Math.round(mainSec * 1000), endMs: Math.round(durationSec * 1000) + 1000 });
   // No spoken-word captions once the crossfade into the recap starts
   if (recapOn) quiet.push({ startMs: Math.round((mainSec - 0.3) * 1000), endMs: Math.round(totalSec * 1000) + 1000 });
+  if (teaser) quiet.push({ startMs: Math.round((teaser.replaySec ?? 0) * 1000), endMs: Math.round(teaser.durationSec * 1000) });
   for (const c of cutIns) if (c.kind === 'skull') quiet.push({ startMs: Math.round(c.outAt * 1000), endMs: Math.round((c.outAt + c.durationSec) * 1000) });
   const { assContent } = generateAssCaptions({
     beats: [{ index: 0, text: '' }],
@@ -212,6 +228,12 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
     for (const q of SKULL_SOUNDS) if (!boom) boom = await findSound(dir, q).catch(() => null);
     if (boom) for (const c of skulls) addSound(path.join(dir, boom.file), c.outAt, 1);
   }
+  if (teaser) {
+    // A tape-rewind sound under the wind-back (from the user's library), else a whoosh
+    let rewind = null;
+    for (const q of REWIND_SOUNDS) if (!rewind) rewind = await findSound(dir, q).catch(() => null);
+    addSound(rewind ? path.join(dir, rewind.file) : soundPath('whoosh'), (teaser.replaySec ?? 0) - 0.1, 0.8);
+  }
   const comics = effects.filter((e) => e.kind === 'comic').map((e) => map(e.at));
   for (const t of comics) addSound(soundPath('impact'), t - 0.03, 0.45);
   if (ending?.sound && !recapOn) addSound(path.join(dir, ending.sound.file), mainSec - ENDING_DEFAULTS[ending.style as keyof typeof ENDING_DEFAULTS].leadSec, 1);
@@ -261,6 +283,17 @@ export async function renderReactionShort(dir: string, sourceFile: string, plan:
       overlay: (l, i) =>
         `[${i}:v]format=rgba,fade=t=in:st=${fx(t)}:d=0.1:alpha=1,fade=t=out:st=${fx(t + EMOJI_SEC - 0.25)}:d=0.25:alpha=1[em${k}];` +
         `${l}[em${k}]overlay=x=${x}:y='${y0}-90*(t-${fx(t)})':${enable(t, t + EMOJI_SEC)}`,
+    });
+  }
+  if (teaser) {
+    // ⏪ in the middle of the picture while it winds back
+    const from = teaser.replaySec ?? 0;
+    pictures.push({
+      file: path.join(work, 'rewind.png'),
+      html: emojiDocument('⏪', 260),
+      crop: 'element',
+      selector: '#e',
+      overlay: (l, i, sz) => `${l}[${i}:v]overlay=x=(W-w)/2:y=${Math.round((band.top + band.bottom) / 2 - sz.height / 2)}:${enable(from, teaser.durationSec)}`,
     });
   }
   const skullHtml = async (emoji?: string) => {
