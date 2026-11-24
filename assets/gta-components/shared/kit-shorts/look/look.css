@@ -1,0 +1,56 @@
+/* Look: craft-v2 finishing layer + type and material tokens for the GTA 6 component library.
+   Pair with look.js. See gta6/DESIGN.md (craft v2). */
+
+/* ---------- finishing stack (Look.install) ---------- */
+.lk-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lk-vignette { position: absolute; inset: 0;
+  background: radial-gradient(ellipse 118% 86% at 50% 46%, rgba(0,0,0,0) 50%, rgba(0,0,0,.42) 82%, rgba(0,0,0,.62) 100%); }
+.lk-grain { position: absolute; inset: 0; background-image: url('grain.png'); background-repeat: repeat;
+  mix-blend-mode: overlay; opacity: .24; }
+.lk-flash { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen; opacity: 0; }
+.lk-leak { position: absolute; left: 0; top: 0; pointer-events: none; mix-blend-mode: screen; opacity: 0; }
+/* ---------- legibility scrims (prefer these to cards) ---------- */
+.lk-scrim-top { background: linear-gradient(180deg, rgba(5,5,9,.78) 0%, rgba(5,5,9,.46) 38%, rgba(5,5,9,.14) 72%, rgba(5,5,9,0) 100%); }
+.lk-scrim-bottom { background: linear-gradient(0deg, rgba(5,5,9,.82) 0%, rgba(5,5,9,.5) 36%, rgba(5,5,9,.16) 70%, rgba(5,5,9,0) 100%); }
+.lk-scrim-spot { background: radial-gradient(ellipse 60% 48% at 50% 50%, rgba(5,5,9,.62) 0%, rgba(5,5,9,.28) 55%, rgba(5,5,9,0) 100%); }
+
+/* ---------- type ---------- */
+/* Display: Inter at large optical size, tight. Hero words, numerals, titles. */
+.t-display { font-family: 'Inter', sans-serif; font-weight: 800; letter-spacing: -0.045em; line-height: .9;
+  font-optical-sizing: auto; font-feature-settings: "tnum" 0, "ss01" 1, "cv11" 1; }
+/* Wide: Archivo Expanded. The cinematic edit face (single words, chapter titles, locations, impact words). */
+.t-wide { font-family: 'Archivo', 'Inter', sans-serif; font-stretch: 125%; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .015em; line-height: .92; }
+/* Label: the tiny tracked caps that sit above/below a hero (eyebrows, kickers, units). */
+.t-label { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 26px; letter-spacing: .34em; text-transform: uppercase; line-height: 1.2; }
+.t-label-wide { font-family: 'Archivo', 'Inter', sans-serif; font-stretch: 125%; font-weight: 600; font-size: 24px; letter-spacing: .3em;
+  text-transform: uppercase; line-height: 1.2; }
+.t-mono { font-family: 'JetBrains Mono', monospace; font-weight: 500; letter-spacing: .04em; font-feature-settings: "zero" 1; }
+.t-num { font-variant-numeric: tabular-nums lining-nums; font-feature-settings: "tnum" 1, "lnum" 1; }
+/* Official sunset fill on an UNSPLIT element whose text is a direct child (for split/revealed text use Look.fill). One element per frame. */
+.t-sunset { background-image: linear-gradient(100deg, #F84FA4 0%, #FE78A6 22%, #FE8E4E 60%, #FEB747 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
+.t-sunset-full { background-image: linear-gradient(100deg, #365ECE 0%, #A341C0 26%, #F84FA4 52%, #FE8E4E 78%, #FEB747 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
+/* Soft type shadow that reads on any footage without looking stroked. */
+.t-lift { text-shadow: 0 1px 1px rgba(0,0,0,.28), 0 4px 14px rgba(0,0,0,.34), 0 14px 48px rgba(0,0,0,.38); }
+
+/* ---------- masked reveals (Look.reveal / Look.split with mask) ---------- */
+.lk-mask { display: inline-block; overflow: hidden; vertical-align: top; padding: .02em .06em .16em; margin: -.02em -.06em -.16em; }
+.lk-mask > .lk-in { display: inline-block; will-change: transform; }
+.lk-w, .lk-c { display: inline-block; will-change: transform, opacity; }
+
+/* ---------- materials (only when the format really is an object) ---------- */
+/* Premium glass: real blur + saturation, a lit top edge, a soft body shadow and a tight contact shadow. */
+.lk-glass { background: linear-gradient(180deg, rgba(255,255,255,.16) 0%, rgba(255,255,255,.06) 40%, rgba(255,255,255,.035) 100%);
+  -webkit-backdrop-filter: blur(30px) saturate(1.7) brightness(.86); backdrop-filter: blur(30px) saturate(1.7) brightness(.86);
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(255,255,255,.05), 0 2px 4px rgba(0,0,0,.22), 0 40px 90px -30px rgba(0,0,0,.7); }
+/* Ink: the official dark tile (#1F202B) with a faint top light. */
+.lk-ink { background: linear-gradient(180deg, #262735 0%, #1F202B 55%, #191A23 100%); border: 1px solid rgba(255,255,255,.07);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 2px 4px rgba(0,0,0,.3), 0 40px 90px -30px rgba(0,0,0,.75); }
+/* Sunset gradient surface (official logo sweep). */
+.lk-sunset-bg { background-image: linear-gradient(120deg, #365ECE 0%, #A341C0 24%, #F84FA4 50%, #FE8E4E 76%, #FEB747 100%); }
+.lk-sunset-soft { background-image: linear-gradient(160deg, #9C7AA8 0%, #D689A1 30%, #FAA08D 58%, #FCB680 80%, #FFC88F 100%); }
+/* Hairline rule with light falloff at both ends. */
+.lk-rule { height: 2px; background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.85) 18%, rgba(255,255,255,.85) 82%, rgba(255,255,255,0)); }

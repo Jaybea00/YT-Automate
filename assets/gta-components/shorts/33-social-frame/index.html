@@ -1,0 +1,575 @@
+<!doctype html>
+<!-- 33 · Social video frame (craft v2), 1080x1920, 30 fps, 6.4 s. A clip becomes an in-world social post.
+     Reel: the full-bleed edit pulls back into the post and its hook settles into the caption; a double-tap sends a sunset heart
+     into the like button. Live: the feed scrolls into a live stream; the viewer count crosses 10K as a hero numeral and docks.
+     Both end by pushing back out to a full-bleed shot. All content in CONFIG. Text safe zone x 72–936, y 230–1480. -->
+<html lang="en" data-composition-variables='[
+  {"id":"variant","type":"enum","label":"Variant","default":"0","options":[{"value":"0","label":"Reel post"},{"value":"1","label":"Live stream"}]},
+  {"id":"bg","type":"enum","label":"Background","default":"plate","options":[{"value":"plate","label":"Sample footage"},{"value":"none","label":"Transparent"}]}
+]'>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <link rel="stylesheet" href="assets/fonts/fonts.css" />
+    <link rel="stylesheet" href="assets/kit/look/look.css" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/kit/look/look.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: transparent; }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; font-family: "Inter", sans-serif; color: #fff;
+        -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+      :root {
+        --gold: #FEB747; --red: #FF3B3B;
+        --shadow-type: 0 1px 2px rgba(0,0,0,.42), 0 3px 12px rgba(0,0,0,.34), 0 8px 30px rgba(0,0,0,.26);
+      }
+      #shake, #push { position: absolute; inset: 0; }
+
+      /* ---------- the world: the same shot, huge, defocused and deepened (drawn at 1/4 size, blurred, scaled x4) ---------- */
+      #world { position: absolute; inset: 0; overflow: hidden; background: #07070A; }
+      #worldFx, #worldDrift { position: absolute; inset: 0; transform-origin: 50% 46%; }
+      #worldSmall { position: absolute; left: 0; top: 0; width: 270px; height: 480px; transform-origin: 0 0; transform: scale(4); }
+      .wv { position: absolute; left: -14px; top: -20px; width: 298px; height: 520px; object-fit: cover; }
+      #worldShade { position: absolute; inset: 0;
+        background: radial-gradient(72% 48% at 47% 44%, rgba(6,5,10,0) 0%, rgba(6,5,10,.16) 64%, rgba(6,5,10,.50) 100%),
+                    linear-gradient(180deg, rgba(6,5,10,.22) 0%, rgba(6,5,10,0) 20%, rgba(6,5,10,0) 72%, rgba(6,5,10,.38) 100%); }
+
+      /* ---------- the post: one window that is the whole frame at e=0 and the in-world post at e=1 ---------- */
+      #post { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; overflow: hidden; isolation: isolate; background: #0A0A0D;
+        box-shadow: 0 2px 4px rgba(0,0,0,.30), 0 18px 40px -12px rgba(0,0,0,.45), 0 60px 120px -30px rgba(0,0,0,.70); }
+      #mediaFx { position: absolute; inset: 0; }
+      #mediaA { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; transform-origin: 0 0; }
+      #mediaA video { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; object-fit: cover; filter: contrast(1.1) saturate(1.12); }
+      #mediaB { position: absolute; left: 0; top: 0; width: 2204px; height: 1240px; transform-origin: 0 0; }
+      #mediaB video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; filter: url(#sharpen) contrast(1.05) saturate(1.08); }
+      #scrimTop { position: absolute; left: 0; right: 0; top: 0; height: 16%;
+        background: linear-gradient(180deg, rgba(5,5,9,.34) 0%, rgba(5,5,9,0) 100%); }
+      #scrimBot { position: absolute; left: 0; right: 0; bottom: 0; height: 52%;
+        background: linear-gradient(180deg, rgba(5,5,9,0) 0%, rgba(5,5,9,.26) 34%, rgba(5,5,9,.62) 72%, rgba(5,5,9,.80) 100%); }
+      #edge { position: absolute; inset: 0; pointer-events: none;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.13), inset 0 1.5px 0 rgba(255,255,255,.30); }
+
+      /* ---------- in-post UI (Rockstar's in-world app, built for a phone) ---------- */
+      #ui { position: absolute; left: 0; top: 0; }
+      .btns { position: absolute; top: 40px; right: 40px; display: flex; gap: 16px; }
+      .gbtn { position: relative; width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        background: rgba(16,16,24,.30); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), inset 0 1.5px 0 rgba(255,255,255,.26), 0 6px 18px rgba(0,0,0,.24); }
+      .gbtn svg { width: 40px; height: 40px; overflow: visible; }
+      .gbtn .stk { fill: none; stroke: #fff; stroke-width: 1.9; stroke-linejoin: round; stroke-linecap: round; }
+      #likeFill { opacity: 0; }
+
+      #bottom { position: absolute; left: 44px; right: 44px; bottom: 44px; display: flex; flex-direction: column; align-items: flex-start; }
+      .row { display: flex; align-items: center; gap: 18px; height: 72px; }
+      .avatar { position: relative; width: 72px; height: 72px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 3px 10px rgba(0,0,0,.30); }
+      .avatar svg { width: 46px; height: 46px; fill: #fff; filter: drop-shadow(0 1px 1.5px rgba(20,10,60,.30)); }
+      .avatar::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,.62); }
+      .handle { font-weight: 700; font-size: 46px; letter-spacing: -0.022em; line-height: 1.1; white-space: nowrap; text-shadow: var(--shadow-type); }
+      .caption { margin-top: 14px; max-width: 760px; font-weight: 500; font-size: 46px; line-height: 1.16; letter-spacing: -0.016em;
+        text-wrap: balance; text-shadow: var(--shadow-type); }
+      #capSlot { margin-top: 12px; flex: none; }
+      .meta { margin-top: 16px; display: flex; align-items: center; gap: 12px; height: 36px; font-weight: 500; font-size: 30px; letter-spacing: -0.01em;
+        color: rgba(255,255,255,.90); text-shadow: var(--shadow-type); white-space: nowrap; }
+      .meta .mi { display: flex; align-items: center; gap: 8px; } .meta .sep { color: rgba(255,255,255,.55); }
+      .meta b { font-weight: 600; color: #fff; }
+
+      /* Follow: Rockstar's gold-ringed pill, never a filled button */
+      .follow { position: relative; height: 60px; border-radius: 30px; flex: none; transform-origin: 50% 50%;
+        background: rgba(14,14,20,.22); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+      .follow .ring { position: absolute; inset: 0; border-radius: 30px; }
+      .follow .ring.a { box-shadow: inset 0 0 0 2.5px var(--gold), 0 0 16px rgba(254,183,71,.22); }
+      .follow .ring.b { box-shadow: inset 0 0 0 1.5px var(--gold); opacity: 0; }
+      .follow .lab { position: absolute; top: 0; left: 0; right: 0; height: 60px; display: flex; align-items: center; justify-content: center; gap: 8px;
+        font-weight: 600; font-size: 30px; letter-spacing: -0.01em; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+      .follow .lab.b { opacity: 0; }
+      .follow .lab.b svg { width: 26px; height: 26px; } .follow .lab.b path { fill: none; stroke: #fff; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+      /* masked rolling digits: each digit slides inside its own clipped window, so nothing ever ghosts over other type */
+      .num { display: inline-flex; height: 36px; font-weight: 600; color: #fff; text-shadow: none; font-variant-numeric: tabular-nums;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)) drop-shadow(0 3px 10px rgba(0,0,0,.32)); }
+      .num .rs { position: relative; display: block; height: 36px; overflow: hidden;
+        -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 7px, #000 29px, transparent 100%); mask-image: linear-gradient(180deg, transparent 0, #000 7px, #000 29px, transparent 100%); }
+      .num .rs .ghost { visibility: hidden; display: block; height: 36px; line-height: 36px; }
+      .num .rs .rv { position: absolute; left: 0; top: 0; display: block; height: 36px; line-height: 36px; opacity: 0; }
+      .num .rs .rv.on { opacity: 1; }
+      .num .rc { display: block; height: 36px; line-height: 36px; }
+
+      /* the reel's hook: big on the full-bleed open, then it IS the caption (one element, scaled down with the pull-back) */
+      #hookWrap { position: absolute; left: 72px; top: 0; transform-origin: 0 0; }
+      #hook { font-weight: 700; letter-spacing: -0.042em; line-height: 1.0; text-wrap: balance; transform-origin: 0 0; }
+      #hook.t-lift { text-shadow: 0 1px 2px rgba(0,0,0,.30), 0 6px 18px rgba(0,0,0,.34), 0 16px 56px rgba(0,0,0,.40); }
+
+      /* double-tap heart: the payoff (sunset gradient, specular, bloom) */
+      #heart { position: absolute; width: 400px; height: 400px; }
+      #heartIn { position: absolute; inset: 0; }
+      #heart svg { width: 100%; height: 100%; overflow: visible;
+        filter: drop-shadow(0 0 26px rgba(254,120,140,.55)) drop-shadow(0 18px 40px rgba(40,6,24,.45)); }
+
+      /* live */
+      #liveHdr { position: absolute; top: 56px; left: 40px; display: flex; align-items: center; gap: 12px; }
+      .liveTag { height: 52px; padding: 0 16px; border-radius: 10px; background: var(--red); display: flex; align-items: center;
+        font-weight: 800; font-size: 30px; letter-spacing: 0.06em; line-height: 1; box-shadow: 0 4px 16px rgba(255,59,59,.35); }
+      .vpill { position: relative; height: 52px; padding: 0 18px 0 14px; border-radius: 26px; display: flex; align-items: center; gap: 8px;
+        background: rgba(16,16,24,.34); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5);
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.18), inset 0 1.5px 0 rgba(255,255,255,.24); font-size: 30px; }
+      .vpill .cnt { display: grid; height: 36px; }
+      .vpill .cnt .num { grid-area: 1 / 1; }
+      .eye { width: 32px; height: 32px; flex: none; } .eye path, .eye circle { fill: none; stroke: #fff; stroke-width: 1.9; }
+      #spot { position: absolute; left: -10%; right: -10%; height: 760px; opacity: 0;
+        background: radial-gradient(closest-side, rgba(6,4,12,.62) 0%, rgba(6,4,12,.34) 52%, rgba(6,4,12,0) 100%); }
+      #big { position: absolute; left: 0; display: flex; justify-content: center; }
+      #bigIn { display: flex; justify-content: center; }
+      #bigLock { display: flex; align-items: center; gap: 30px; filter: drop-shadow(0 4px 14px rgba(0,0,0,.32)) drop-shadow(0 16px 50px rgba(0,0,0,.36)); }
+      #bigEye { width: 170px; height: 170px; } #bigEye path, #bigEye circle { fill: none; stroke: #fff; stroke-width: 1.7; }
+      #bigNum { font-weight: 800; font-size: 300px; letter-spacing: -0.055em; line-height: .9; padding-right: .04em; }
+      #chat { position: relative; height: 182px; margin: 0 -40px 0; width: calc(100% + 80px);
+        -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 24px); mask-image: linear-gradient(180deg, transparent 0, #000 24px); }
+      .msg { position: absolute; left: 40px; bottom: 20px; height: 54px; display: flex; align-items: center; gap: 14px; white-space: nowrap; opacity: 0;
+        font-size: 30px; letter-spacing: -0.01em; text-shadow: var(--shadow-type); }
+      .msg .mav { position: relative; width: 38px; height: 38px; border-radius: 50%; flex: none; overflow: hidden;
+        background: rgba(255,255,255,.22); box-shadow: inset 0 0 0 1px rgba(255,255,255,.30), 0 2px 6px rgba(0,0,0,.24); }
+      .msg .mav svg { position: absolute; left: 6px; top: 9px; width: 26px; height: 26px; fill: rgba(255,255,255,.75); }
+      .msg .mu { font-weight: 600; color: rgba(255,255,255,.80); } .msg .mt { font-weight: 500; color: #fff; }
+
+      .hide { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true"><defs>
+      <!-- gentle unsharp for the live layer (the 16:9 master is shown at ~1.15x) -->
+      <filter id="sharpen" color-interpolation-filters="sRGB"><feConvolveMatrix order="3" kernelMatrix="0 -0.28 0 -0.28 2.12 -0.28 0 -0.28 0" preserveAlpha="true"/></filter>
+    </defs></svg>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="6.2" data-width="1080" data-height="1920">
+      <div id="shake"><div id="push">
+
+        <!-- the world behind the post: a blurred copy of whatever the post is showing (cuts with it) -->
+        <div id="world"><div id="worldFx"><div id="worldDrift" data-layout-allow-overflow><div id="worldSmall" data-layout-allow-overflow>
+          <video id="w0a" class="clip wv" src="assets/shots/s012-muscle-beach-v.mp4" muted playsinline data-start="0" data-duration="2.25" data-media-start="0.3" data-track-index="1"></video>
+          <video id="w0b" class="clip wv" src="assets/shots/s064-jetski-v.mp4" muted playsinline data-start="2.25" data-duration="1.0" data-media-start="0.3" data-track-index="1"></video>
+          <video id="w0c" class="clip wv" src="assets/shots/s036-beach-bar-v.mp4" muted playsinline data-start="3.25" data-duration="1.4" data-media-start="0" data-track-index="1"></video>
+          <video id="w0d" class="clip wv" src="assets/shots/s026-sunset-pier-v.mp4" muted playsinline data-start="4.65" data-duration="1.55" data-media-start="0" data-track-index="1"></video>
+          <video id="w1a" class="clip wv" src="assets/shots/s004-palm-shirt-truck-h.mp4" muted playsinline data-start="0" data-duration="4.95" data-media-start="0" data-track-index="3"></video>
+          <video id="w1b" class="clip wv" src="assets/shots/s065-biker-plane-v.mp4" muted playsinline data-start="4.95" data-duration="1.25" data-media-start="0.15" data-track-index="3"></video>
+        </div></div></div><div id="worldShade"></div></div>
+
+        <!-- the post window -->
+        <div id="post">
+          <div id="mediaFx">
+            <!-- canvas-space layer: full-bleed at e=0, scaled 0.8 into the post at e=1 -->
+            <div id="mediaA" data-layout-allow-overflow>
+              <video id="p0a" class="clip" src="assets/shots/s012-muscle-beach-v.mp4" muted playsinline data-start="0" data-duration="2.25" data-media-start="0.3" data-track-index="0"></video>
+              <video id="p0b" class="clip" src="assets/shots/s064-jetski-v.mp4" muted playsinline data-start="2.25" data-duration="1.0" data-media-start="0.3" data-track-index="0"></video>
+              <video id="p0c" class="clip" src="assets/shots/s036-beach-bar-v.mp4" muted playsinline data-start="3.25" data-duration="1.4" data-media-start="0" data-track-index="0"></video>
+              <video id="p0d" class="clip" src="assets/shots/s026-sunset-pier-v.mp4" muted playsinline data-start="4.65" data-duration="1.55" data-media-start="0" data-track-index="0"></video>
+              <video id="p1b" class="clip" src="assets/shots/s065-biker-plane-v.mp4" muted playsinline data-start="4.95" data-duration="1.25" data-media-start="0.15" data-track-index="2"></video>
+            </div>
+            <!-- post-space layer (live): the 16:9 master, panned like a phone following him -->
+            <div id="mediaB" data-layout-allow-overflow>
+              <video id="p1a" class="clip" src="assets/shots/s004-palm-shirt-truck-h.mp4" muted playsinline data-start="0" data-duration="4.95" data-media-start="0" data-track-index="2"></video>
+            </div>
+          </div>
+          <div id="scrimTop"></div>
+          <div id="scrimBot"></div>
+
+          <div id="ui">
+            <div class="btns" id="btns">
+              <div class="gbtn" id="btnComment"><svg viewBox="0 0 24 24"><path class="stk" d="M12 4c-4.8 0-8.5 3.2-8.5 7.2 0 2 1 3.9 2.6 5.2L5.3 20l4-1.8c.9.2 1.8.3 2.7.3 4.8 0 8.5-3.2 8.5-7.3S16.8 4 12 4z"/></svg></div>
+              <div class="gbtn" id="btnHeart"><svg viewBox="0 0 24 24">
+                <defs><linearGradient id="likeGrad" x1="0.1" y1="0.1" x2="0.9" y2="1"><stop offset="0" stop-color="#F84FA4"/><stop offset=".55" stop-color="#FE8E4E"/><stop offset="1" stop-color="#FEB747"/></linearGradient></defs>
+                <path class="stk" id="likeStroke" d="M12 20.2s-7.4-4.5-9-9.1C2 8.1 3.8 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.3 3.5 4.3 6.5-1.6 4.6-9 9.1-9 9.1z"/>
+                <path id="likeFill" fill="url(#likeGrad)" d="M12 20.2s-7.4-4.5-9-9.1C2 8.1 3.8 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.3 3.5 4.3 6.5-1.6 4.6-9 9.1-9 9.1z"/>
+              </svg></div>
+            </div>
+
+            <!-- live header: LIVE + viewer pill (the 10K hero docks into the pill) -->
+            <div id="liveHdr">
+              <div class="liveTag" id="liveTag">LIVE</div>
+              <div class="vpill" id="vpill">
+                <svg class="eye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.2 9.5-6.2 9.5 6.2 9.5 6.2-3.5 6.2-9.5 6.2S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>
+                <div class="cnt" id="cnt"><b class="num" id="cntA"></b><b class="num" id="cntB"></b></div>
+              </div>
+            </div>
+
+            <div id="spot"></div>
+            <div id="big"><div id="bigIn"><div id="bigLock">
+              <svg id="bigEye" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.2 9.5-6.2 9.5 6.2 9.5 6.2-3.5 6.2-9.5 6.2S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>
+              <div id="bigNum"></div>
+            </div></div></div>
+
+            <div id="heart" data-layout-allow-overflow><div id="heartIn"><svg viewBox="0 0 24 24">
+              <defs>
+                <linearGradient id="heartGrad" x1="0.08" y1="0.05" x2="0.9" y2="1"><stop offset="0" stop-color="#F84FA4"/><stop offset=".32" stop-color="#FE78A6"/><stop offset=".7" stop-color="#FE8E4E"/><stop offset="1" stop-color="#FEB747"/></linearGradient>
+                <radialGradient id="heartSpec" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+                <clipPath id="heartClip"><path d="M12 20.2s-7.4-4.5-9-9.1C2 8.1 3.8 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.3 3.5 4.3 6.5-1.6 4.6-9 9.1-9 9.1z"/></clipPath>
+              </defs>
+              <path fill="url(#heartGrad)" d="M12 20.2s-7.4-4.5-9-9.1C2 8.1 3.8 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.5 0 5.3 3.5 4.3 6.5-1.6 4.6-9 9.1-9 9.1z"/>
+              <g clip-path="url(#heartClip)"><ellipse cx="7.6" cy="7.4" rx="4.2" ry="2.6" fill="url(#heartSpec)" transform="rotate(-28 7.6 7.4)"/></g>
+            </svg></div></div>
+
+            <div id="bottom">
+              <div id="chat"></div>
+              <div class="row" id="handleRow">
+                <div class="avatar" id="av"><svg id="avGlyph" viewBox="0 0 24 24"></svg></div>
+                <div class="handle" id="handle"></div>
+                <div class="follow" id="follow">
+                  <div class="ring a"></div><div class="ring b"></div>
+                  <div class="lab a">Follow</div>
+                  <div class="lab b"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg>Following</div>
+                </div>
+              </div>
+              <div id="capSlot"></div>
+              <div class="caption" id="caption"></div>
+              <div class="meta" id="meta"></div>
+            </div>
+          </div>
+          <div id="edge"></div>
+        </div>
+
+        <!-- reel hook (lives above the post so it can start full-bleed and settle into the caption slot) -->
+        <div id="hookWrap" data-layout-allow-overflow><div id="hook" class="t-lift"></div></div>
+      </div></div>
+    </div>
+
+    <script>
+      const CONFIG = {
+        duration: 6.2,
+        post: { left: 72, width: 864, radius: 22 },        // the post sits on the safe column x 72–936
+        mediaScale: 0.8,                                   // full-bleed footage scales to 864/1080 inside the post
+        world: { blur: 9, brightness: 0.64, saturate: 1.9, contrast: 1.16, zoom: [1.06, 1.12] },
+        variants: {
+          "0": {
+            style: "reel",
+            // post footage (track 0) and its blurred world copy (track 1), cut on the beats. Keep the <video> src in sync.
+            shots: ["s012-muscle-beach-v 0–2.25", "s064-jetski-v 2.25–3.25 (payoff cut)", "s036-beach-bar-v 3.25–4.65", "s026-sunset-pier-v 4.65–6.2"],
+            post: { top: 268, height: 1152 },
+            scrim: { height: 46, stops: [[0, 0], [38, 0.3], [74, 0.62], [100, 0.8]] },   // bottom fade, % of the post
+            push: [1.0, 1.045],                              // slow camera push on the footage inside the post
+            hook: { text: "Only in Vice City.", size: 156, width: 864, top: 1108 },   // hook = the caption (2 lines, x 72–936)
+            caption: { size: 46 },                           // the hook lands at this size in the caption slot
+            avatar: { emblem: "palm", from: "#365ECE", to: "#A341C0" },
+            handle: "LeonidaLarry",
+            likes: { from: 248213, steps: [1, 86, 93, 91], every: 0.6 },   // first step is the double-tap itself
+            comments: "3,914", age: "2h",
+            heart: { x: 404, y: 520 },                        // double-tap point in post px (keeps clear of the riders' faces)
+            t: { hook: 0.14, pull: 1.12, pullDur: 0.8, ui: 1.6, hit: 2.25, dock: 2.8, follow: 4.0, out: 5.18, push: 5.38, pushDur: 0.64 }
+          },
+          "1": {
+            style: "live",
+            shots: ["s004-palm-shirt-truck-h 0–4.95 (one take, panned)", "s065-biker-plane-v 4.95–6.2 (exit)"],
+            post: { top: 236, height: 1240 },
+            scrim: { height: 60, stops: [[0, 0], [30, 0.36], [62, 0.66], [100, 0.84]] },  // deeper: the chat sits on a white shirt
+            pan: { from: 760, to: 930, push: [1.0, 1.05] },  // x offset into the 2204 px wide master, follows the man
+            avatar: { emblem: "shades", from: "#365ECE", to: "#A341C0" },
+            handle: "GellhornGossip",
+            caption: "He's been arguing with this truck for an hour",
+            viewers: { from: 9412, steps: [137, 128, 149, 121], at: 0.9, every: 0.4 },     // ends at 9,947, then the 10K hit
+            after: { from: 10006, steps: [38, 41, 36], at: 3.95, every: 0.5 },             // the pill after the dock
+            hero: "10K",
+            chat: [
+              { u: "keyslocal", m: "who is he even talking to" },
+              { u: "vc.mami", m: "only in Leonida" },
+              { u: "gellhorn_dan", m: "the truck is winning" },
+              { u: "grassrivers.gil", m: "someone get this man a mic" },
+              { u: "ambrosia_kid", m: "day 3 of this" },
+              { u: "keyslocal", m: "he waved at it lmao" }
+            ],
+            chatStart: 1.0, chatEvery: 0.6,
+            t: { swipe: 0, ui: 0.36, hit: 2.45, dock: 3.55, follow: 4.05, out: 4.5, cut: 4.95, push: 4.95, pushDur: 0.66 }
+          }
+        },
+        chatOldest: 0.72
+      };
+
+      // avatar emblems: white glyphs in a 24x24 box
+      const EMBLEMS = {
+        palm: '<path d="M9.7 22.2C10.7 18.2 11.2 14.2 11 10.4h1.8c.4 4 .1 8-1.1 11.8z"/><path d="M11.9 9.6C9.4 5.4 4.2 5.4 1.6 11.8 5 8.6 8.6 8.1 11.9 9.6z"/><path d="M11.9 9.6C14.4 5.4 19.6 5.4 22.2 11.8 18.8 8.6 15.2 8.1 11.9 9.6z"/><path d="M11.9 9.6C11.3 4.4 7.6 1.8 3.4 2.6 7.3 4.2 9.8 6.5 11.9 9.6z"/><path d="M11.9 9.6C12.5 4.4 16.2 1.8 20.4 2.6 16.5 4.2 14 6.5 11.9 9.6z"/><circle cx="10.9" cy="10.7" r="1.1"/><circle cx="12.9" cy="10.8" r="1.1"/>',
+        shades: '<path fill-rule="evenodd" d="M2.2 8.6h19.6c.5 0 .8.4.7.9l-.2.9h-.9c0 3.3-1.4 5.4-4.1 5.4-2.6 0-3.9-2-4.1-4.6-.4-.3-1.5-.3-1.9 0-.2 2.6-1.5 4.6-4.1 4.6-2.7 0-4.1-2.1-4.1-5.4h-.9l-.2-.9c-.1-.5.2-.9.7-.9zM5.4 11.2h1.3l-1.6 2.3-.4-.6zM15.4 11.2h1.3l-1.6 2.3-.4-.6z"/>',
+        user: '<circle cx="12" cy="8.2" r="4.4"/><path d="M3.2 22.5c.6-5 4.3-8 8.8-8s8.2 3 8.8 8z"/>'
+      };
+
+      (function () {
+        const VARS = (window.__hyperframes && window.__hyperframes.getVariables) ? window.__hyperframes.getVariables() : {};
+        const vKey = CONFIG.variants[String(VARS.variant)] ? String(VARS.variant) : "0";
+        const plate = VARS.bg !== "none";
+        const V = CONFIG.variants[vKey], D = CONFIG.duration, PC = CONFIG.post, T = V.t;
+        const live = V.style === "live";
+        const $ = (s) => document.querySelector(s);
+        const PW = PC.width, PH = V.post.height, PT = V.post.top, PL = PC.left;
+
+        // keep only this variant's footage
+        const mine = live ? ["w1a", "w1b", "p1a", "p1b"] : ["w0a", "w0b", "w0c", "w0d", "p0a", "p0b", "p0c", "p0d"];
+        document.querySelectorAll("video.clip").forEach((v) => { if (!mine.includes(v.id)) v.style.display = "none"; });
+        if (!plate) $("#world").classList.add("hide");
+        $("#worldSmall").style.filter = `blur(${CONFIG.world.blur}px) brightness(${CONFIG.world.brightness}) saturate(${CONFIG.world.saturate}) contrast(${CONFIG.world.contrast})`;
+        if (!live) $("#mediaB").classList.add("hide");
+        Object.assign($("#scrimBot").style, { height: V.scrim.height + "%",
+          background: "linear-gradient(180deg, " + V.scrim.stops.map(([at, a]) => `rgba(5,5,9,${a}) ${at}%`).join(", ") + ")" });
+
+        // ---- UI content ----
+        Object.assign($("#ui").style, { width: PW + "px", height: PH + "px" });
+        $("#avGlyph").innerHTML = EMBLEMS[V.avatar.emblem] || EMBLEMS.user;
+        $("#av").style.background = `linear-gradient(135deg, ${V.avatar.from} 0%, ${V.avatar.to} 100%)`;
+        $("#handle").textContent = V.handle;
+        const fmt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+        // masked rolling counter: one stacked glyph per distinct value of each digit column
+        const RH = 36;
+        function buildCounter(el, from, steps) {
+          const values = [from]; steps.forEach((s) => values.push(values[values.length - 1] + s));
+          const strs = values.map(fmt), cols = [];
+          for (let i = 0; i < strs[0].length; i++) {
+            const c0 = strs[0][i];
+            if (!/\d/.test(c0)) { const s = document.createElement("span"); s.className = "rc"; s.textContent = c0; el.appendChild(s); continue; }
+            const slot = document.createElement("span"); slot.className = "rs"; slot.setAttribute("data-layout-allow-overflow", "");
+            const ghost = document.createElement("span"); ghost.className = "ghost"; ghost.textContent = "0"; slot.appendChild(ghost);
+            const seq = [c0], rows = [0];
+            for (let k = 1; k < strs.length; k++) { const d = strs[k][i]; if (d !== seq[seq.length - 1]) seq.push(d); rows.push(seq.length - 1); }
+            const els = seq.map((d, j) => { const r = document.createElement("span"); r.className = "rv" + (j === 0 ? " on" : ""); r.textContent = d; slot.appendChild(r); return r; });
+            el.appendChild(slot); cols.push({ els, rows });
+          }
+          return { cols, n: values.length };
+        }
+        // rolls are a pure function of time (one drive), so any seek order renders the same digits
+        const rollers = [];
+        const EIN = gsap.parseEase("power2.in"), EOUT = gsap.parseEase("power3.out");
+        function rollCounter(tl, c, times) {
+          const nd = c.cols.length;
+          c.cols.forEach((col, idx) => {
+            const tin = col.els.map(() => null), tout = col.els.map(() => null);
+            for (let k = 1; k < c.n; k++) {
+              if (col.rows[k] === col.rows[k - 1]) continue;
+              const at = times[k - 1] + (nd - 1 - idx) * 0.02;
+              tout[col.rows[k - 1]] = at; tin[col.rows[k]] = at + 0.06;
+            }
+            col.els.forEach((g) => { g.style.opacity = "1"; });
+            rollers.push((t) => col.els.forEach((g, j) => {
+              let y = j === 0 ? 0 : RH;
+              if (tin[j] !== null && t >= tin[j]) y = RH * (1 - EOUT(Math.min(1, (t - tin[j]) / 0.14)));
+              if (tout[j] !== null && t >= tout[j]) y = -RH * EIN(Math.min(1, (t - tout[j]) / 0.11));
+              g.style.transform = "translateY(" + y.toFixed(2) + "px)";
+            }));
+          });
+        }
+        let counter = null, counterB = null;
+        if (live) {
+          $("#capSlot").classList.add("hide"); $("#meta").classList.add("hide"); $("#heart").classList.add("hide"); $("#hookWrap").classList.add("hide");
+          $("#caption").textContent = V.caption;
+          $("#bigNum").textContent = V.hero;
+          counter = buildCounter($("#cntA"), V.viewers.from, V.viewers.steps);
+          counterB = buildCounter($("#cntB"), V.after.from, V.after.steps);
+          const chat = $("#chat");
+          V.chat.forEach((c, k) => {
+            const r = document.createElement("div"); r.className = "msg"; r.id = "msg" + k;
+            r.innerHTML = `<span class="mav"><svg viewBox="0 0 24 24">${EMBLEMS.user}</svg></span><span class="mu"></span><span class="mt"></span>`;
+            r.querySelector(".mu").textContent = c.u; r.querySelector(".mt").textContent = c.m;
+            chat.appendChild(r);
+          });
+        } else {
+          ["#liveHdr", "#spot", "#big", "#chat", "#caption"].forEach((s) => $(s).classList.add("hide"));
+          $("#hook").textContent = V.hook.text;
+          Object.assign($("#hook").style, { fontSize: V.hook.size + "px", width: V.hook.width + "px" });
+          $("#meta").innerHTML = '<span class="mi"><b class="num" id="likes"></b><span>likes</span></span><span class="sep">·</span><span>' +
+            V.comments + ' comments</span><span class="sep">·</span><span>' + V.age + '</span>';
+          counter = buildCounter($("#likes"), V.likes.from, V.likes.steps);
+        }
+
+        document.fonts.ready.then(() => {
+          const tl = gsap.timeline({ paused: true });
+          const E = gsap.parseEase("expo.inOut");
+          const hold = { k: 1 };   // hook FLIP target, measured below
+
+          // ---- geometry: e = 0 full-bleed, e = 1 the post ----
+          function frameE(t) {
+            if (!live) {
+              if (t < T.pull) return 0;
+              if (t < T.pull + T.pullDur) return E((t - T.pull) / T.pullDur);
+              if (t < T.push) return 1;
+              if (t < T.push + T.pushDur) return 1 - E((t - T.push) / T.pushDur);
+              return 0;
+            }
+            if (t < T.push) return 1;
+            if (t < T.push + T.pushDur) return 1 - E((t - T.push) / T.pushDur);
+            return 0;
+          }
+          const S1 = CONFIG.mediaScale, fy0 = 960 - (PH / S1) / 2, TX1 = PL, TY1 = PT - S1 * fy0;
+          const post = $("#post"), mA = $("#mediaA"), mB = $("#mediaB"), edge = $("#edge"), hw = $("#hookWrap");
+          const wd = $("#worldDrift"), ui = $("#ui");
+          const lerp = (a, b, k) => a + (b - a) * k;
+          let lastKey = "";
+          function apply(t) {
+            const e = frameE(t);
+            const L = PL * e, Tp = PT * e, W = 1080 - (1080 - PW) * e, H = 1920 - (1920 - PH) * e;
+            const key = e.toFixed(5);
+            if (key !== lastKey) {
+              lastKey = key;
+              post.style.left = L + "px"; post.style.top = Tp + "px"; post.style.width = W + "px"; post.style.height = H + "px";
+              post.style.borderRadius = edge.style.borderRadius = (PC.radius * e).toFixed(2) + "px";
+              edge.style.opacity = e.toFixed(3);
+              ui.style.visibility = e > 0.999 ? "visible" : "hidden";
+            }
+            // canvas-space footage: full-bleed -> 0.8 inside the post, plus a slow linear push around the window centre
+            const pk = live ? 1 + 0.04 * Math.max(0, t - T.cut) / (D - T.cut) : lerp(V.push[0], V.push[1], t / D);
+            const s = 1 + (S1 - 1) * e, tx = TX1 * e, ty = TY1 * e, cx = L + W / 2, cy = Tp + H / 2;
+            const a = cx * (1 - pk) + pk * tx - L, b = cy * (1 - pk) + pk * ty - Tp;
+            mA.style.transform = `translate(${a.toFixed(2)}px, ${b.toFixed(2)}px) scale(${(pk * s).toFixed(5)})`;
+            if (live) {
+              const u = Math.min(1, t / T.cut), su = 0.5 - 0.5 * Math.cos(Math.PI * u);
+              const pan = lerp(V.pan.from, V.pan.to, su), kb = lerp(V.pan.push[0], V.pan.push[1], u);
+              mB.style.transform = `translate(${(PW / 2 * (1 - kb) - kb * pan).toFixed(2)}px, ${(PH / 2 * (1 - kb)).toFixed(2)}px) scale(${kb.toFixed(5)})`;
+            } else {
+              hw.style.transform = `translate(${(hold.x * e).toFixed(2)}px, ${(hold.y * e).toFixed(2)}px) scale(${(1 + (hold.k - 1) * e).toFixed(5)})`;
+            }
+            wd.style.transform = `scale(${lerp(CONFIG.world.zoom[0], CONFIG.world.zoom[1], t / D).toFixed(5)})`;
+          }
+
+          // ---- reel: reveal the hook, measure its landing slot (the caption line under the handle) ----
+          if (!live) {
+            Look.reveal(tl, "#hook", T.hook, { by: "words", stagger: 0.07, dur: 0.62 });
+            const hk = $("#hook"), k = V.caption.size / V.hook.size;
+            const hwid = hk.offsetWidth, hht = hk.offsetHeight;
+            Object.assign($("#capSlot").style, { width: (hwid * k) + "px", height: (hht * k) + "px" });
+            hw.style.top = V.hook.top + "px";
+            const bot = $("#bottom"), slot = $("#capSlot");
+            hold.k = k;
+            hold.x = PL + bot.offsetLeft + slot.offsetLeft - 72;
+            hold.y = PT + bot.offsetTop + slot.offsetTop - V.hook.top;
+          } else { hold.x = hold.y = 0; }
+          
+          // ---- Follow pill width from the real label widths ----
+          const pill = $("#follow");
+          const measure = (el) => { const r = el.cloneNode(true); r.style.cssText = "position:absolute;visibility:hidden;opacity:1;left:0;right:auto;width:auto"; el.parentNode.appendChild(r); const w = r.getBoundingClientRect().width; r.remove(); return w; };
+          const wA = Math.ceil(measure(pill.querySelector(".lab.a")) + 60), wB = Math.ceil(measure(pill.querySelector(".lab.b")) + 54);
+          pill.style.width = wA + "px";
+          function followTap(fa) {
+            tl.to(pill, { scale: 0.92, duration: 0.08, ease: "power2.out" }, fa);
+            tl.to(pill, { scale: 1, duration: 0.26, ease: "power3.out" }, fa + 0.08);
+            tl.to(pill, { width: wB, duration: 0.3, ease: "power3.out" }, fa + 0.06);
+            tl.to(pill.querySelector(".ring.a"), { opacity: 0, duration: 0.22, ease: "power2.out" }, fa + 0.06);
+            tl.to(pill.querySelector(".ring.b"), { opacity: 1, duration: 0.22, ease: "power2.out" }, fa + 0.06);
+            tl.to(pill.querySelector(".lab.a"), { opacity: 0, y: -8, duration: 0.14, ease: "power2.in" }, fa + 0.04);
+            tl.fromTo(pill.querySelector(".lab.b"), { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.24, ease: "power3.out" }, fa + 0.20);
+          }
+
+          if (!live) {
+            // ---- UI builds once the post has landed ----
+            const u = T.ui;
+            Look.enter(tl, ["#btnComment", "#btnHeart"], u, { from: "scale", scale: 0.8, dur: 0.42, stagger: 0.06 });
+            Look.enter(tl, "#av", u + 0.04, { from: "blur", scale: 0.7, blur: 8, dur: 0.42 });
+            Look.reveal(tl, "#handle", u + 0.08, { by: "chars", stagger: 0.018, dur: 0.5 });
+            Look.enter(tl, "#follow", u + 0.22, { from: "blur", scale: 0.9, blur: 8, dur: 0.42 });
+            Look.enter(tl, "#meta", u + 0.26, { from: "up", dist: 18, blur: 6, dur: 0.42 });
+            tl.fromTo("#scrimTop", { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power2.out", immediateRender: false }, u - 0.1);
+            gsap.set("#scrimTop", { opacity: 0 });
+
+            // ---- payoff: double-tap on the cut to the jet ski ----
+            const H0 = T.hit, heart = $("#heart"), hin = $("#heartIn");
+            const hx = V.heart.x - 200, hy = V.heart.y - 200;
+            Object.assign(heart.style, { left: hx + "px", top: hy + "px" });
+            gsap.set(heart, { opacity: 0 });
+            gsap.set(hin, { scale: 0.3, filter: "blur(10px)" });
+            tl.set(heart, { opacity: 1 }, H0);
+            tl.fromTo(hin, { scale: 0.3, filter: "blur(10px)" }, { scale: 1.12, filter: "blur(0px)", duration: 0.16, ease: "power3.out", immediateRender: false }, H0);
+            tl.to(hin, { scale: 1, duration: 0.24, ease: "power2.out" }, H0 + 0.16);
+            tl.to(hin, { scale: 1.035, duration: 0.3, ease: "sine.inOut" }, H0 + 0.4);
+            Look.chroma(tl, "#heart svg", H0, 0.16, { px: 4 });
+            if (plate) {
+              Look.impact(tl, H0, { shake: "#shake", amp: 8, flash: 0, zoom: 1.03 });
+              Look.expose(tl, H0, { target: "#mediaFx, #worldFx", peak: 1.3, saturate: 1.2, hold: 3 / 30, dur: 0.42 });
+            }
+            // dock into the like button (top-right), the button fills, the count steps
+            const bh = $("#btnHeart"), bx = $("#btns").offsetLeft + bh.offsetLeft + 42, by = $("#btns").offsetTop + bh.offsetTop + 42;
+            const dx = bx - (hx + 200), dy = by - (hy + 200), Dk = T.dock;
+            // shrink first, then whip to the button, so the heart is small by the time it passes the riders
+            tl.to(heart, { x: dx, y: dy, duration: 0.3, ease: "expo.in" }, Dk);
+            tl.to(heart, { scale: 0.32, duration: 0.17, ease: "power3.in" }, Dk);
+            tl.to(heart, { scale: 0.11, duration: 0.13, ease: "power2.in" }, Dk + 0.17);
+            Look.mblur(tl, heart, Dk + 0.1, 0.2, { x: 8, y: 12 });
+            tl.to(heart, { opacity: 0, duration: 0.05, ease: "none" }, Dk + 0.27);
+            tl.fromTo("#likeFill", { opacity: 0 }, { opacity: 1, duration: 0.06, ease: "none", immediateRender: false }, Dk + 0.28);
+            tl.fromTo("#likeStroke", { opacity: 1 }, { opacity: 0, duration: 0.06, ease: "none", immediateRender: false }, Dk + 0.28);
+            tl.fromTo(bh, { scale: 1 }, { scale: 1.2, duration: 0.1, ease: "power2.out", immediateRender: false }, Dk + 0.28);
+            tl.to(bh, { scale: 1, duration: 0.34, ease: "back.out(1.6)" }, Dk + 0.38);
+            rollCounter(tl, counter, V.likes.steps.map((_, i) => Dk + 0.3 + i * V.likes.every));
+            followTap(T.follow);
+
+            // ---- exit: UI blurs out, then the post pushes back out to full-bleed ----
+            Look.exit(tl, ["#btns", "#meta", "#hook", "#handleRow"], T.out, { to: "blur", dur: 0.3, stagger: 0.035, blur: 10 });
+            tl.to("#scrimTop", { opacity: 0, duration: 0.3, ease: "power2.in" }, T.out);
+          } else {
+            // ---- live: the feed scrolls up into the stream ----
+            gsap.set(post, { y: 760 });
+            tl.fromTo(post, { y: 760 }, { y: 0, duration: 0.64, ease: "expo.out", immediateRender: false }, T.swipe);
+            Look.mblur(tl, post, T.swipe, 0.42, { y: 22 });
+            const u = T.ui;
+            Look.enter(tl, "#liveTag", u, { from: "scale", scale: 0.8, dur: 0.4 });
+            Look.enter(tl, "#vpill", u + 0.06, { from: "blur", scale: 0.92, blur: 8, dur: 0.42 });
+            Look.enter(tl, ["#btnComment", "#btnHeart"], u + 0.06, { from: "scale", scale: 0.8, dur: 0.42, stagger: 0.06 });
+            Look.enter(tl, "#av", u + 0.12, { from: "blur", scale: 0.7, blur: 8, dur: 0.42 });
+            Look.reveal(tl, "#handle", u + 0.16, { by: "chars", stagger: 0.016, dur: 0.5 });
+            Look.enter(tl, "#follow", u + 0.3, { from: "blur", scale: 0.9, blur: 8, dur: 0.42 });
+            Look.reveal(tl, "#caption", u + 0.3, { by: "words", stagger: 0.05, dur: 0.55 });
+            gsap.set("#cntB", { opacity: 0 });
+            rollCounter(tl, counter, V.viewers.steps.map((_, i) => V.viewers.at + i * V.viewers.every));
+
+            // chat: each new comment lifts the stack; 3 visible, the oldest dims, then leaves into the top feather
+            const ROW = 54, N = V.chat.length, tArr = (k) => V.chatStart + k * V.chatEvery;
+            for (let k = 0; k < N; k++) {
+              const el = "#msg" + k;
+              tl.fromTo(el, { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power3.out", immediateRender: false }, tArr(k));
+              for (let j = k + 1; j < N; j++) {
+                const sl = j - k;
+                tl.to(el, { y: -sl * ROW, opacity: sl >= 3 ? 0 : (sl === 2 ? CONFIG.chatOldest : 1), duration: 0.3, ease: "power3.out" }, tArr(j));
+              }
+            }
+
+            // ---- payoff: 10K watching slams in (sunset numeral), then docks into the viewer pill ----
+            const H0 = T.hit, big = $("#big"), bin = $("#bigIn");
+            const cyB = PH * 0.5;
+            const bh = $("#bigLock").offsetHeight;
+            Object.assign(big.style, { width: PW + "px", top: (cyB - bh / 2) + "px" });
+            Object.assign($("#spot").style, { top: (cyB - 380) + "px" });
+            Look.fill("#bigNum", "linear-gradient(100deg, #F84FA4 0%, #FE78A6 24%, #FE8E4E 62%, #FEB747 100%)", { sheen: true });
+            gsap.set(big, { opacity: 0 });
+            gsap.set(bin, { scale: 1.3, filter: "blur(16px)" });
+            tl.set(big, { opacity: 1 }, H0 - 0.06);
+            tl.fromTo(bin, { scale: 1.3, filter: "blur(16px)", opacity: 0 }, { scale: 1, filter: "blur(0px)", opacity: 1, duration: 0.3, ease: "expo.out", immediateRender: false }, H0 - 0.06);
+            tl.fromTo("#spot", { opacity: 0 }, { opacity: 1, duration: 0.26, ease: "power2.out", immediateRender: false }, H0 - 0.08);
+            Look.chroma(tl, "#bigNum", H0, 0.16, { px: 4 });
+            Look.sheen(tl, "#bigNum", H0 + 0.36, { dur: 0.8 });
+            if (plate) {
+              Look.impact(tl, H0, { shake: "#shake", amp: 7, flash: 0, zoom: 1.03 });
+              Look.expose(tl, H0, { target: "#mediaFx, #worldFx", peak: 1.34, saturate: 1.2, hold: 3 / 30, dur: 0.42 });
+            }
+            const Dk = T.dock, vp = $("#vpill"), lh = $("#liveHdr");
+            const tx = lh.offsetLeft + vp.offsetLeft + vp.offsetWidth / 2 - PW / 2, ty = lh.offsetTop + vp.offsetTop + vp.offsetHeight / 2 - cyB;
+            tl.to(big, { x: tx, y: ty, duration: 0.3, ease: "expo.in" }, Dk);
+            tl.to(big, { scale: 0.4, duration: 0.17, ease: "power3.in" }, Dk);
+            tl.to(big, { scale: 0.13, duration: 0.13, ease: "power2.in" }, Dk + 0.17);
+            Look.mblur(tl, big, Dk + 0.1, 0.2, { x: 10, y: 14 });
+            tl.to(big, { opacity: 0, duration: 0.06, ease: "none" }, Dk + 0.25);
+            tl.to("#spot", { opacity: 0, duration: 0.3, ease: "power2.inOut" }, Dk);
+            tl.to("#cntA", { opacity: 0, duration: 0.05, ease: "none" }, Dk + 0.27);
+            tl.fromTo("#cntB", { opacity: 0 }, { opacity: 1, duration: 0.05, ease: "none", immediateRender: false }, Dk + 0.27);
+            tl.fromTo(vp, { scale: 1 }, { scale: 1.14, duration: 0.1, ease: "power2.out", immediateRender: false }, Dk + 0.27);
+            tl.to(vp, { scale: 1, duration: 0.34, ease: "back.out(1.6)" }, Dk + 0.37);
+            rollCounter(tl, counterB, V.after.steps.map((_, i) => V.after.at + i * V.after.every));
+            followTap(T.follow);
+
+            // ---- exit: UI blurs out, the feed cuts to the next clip and it takes over the screen ----
+            Look.exit(tl, ["#liveHdr", "#btns", "#chat", "#caption", "#handleRow"], T.out, { to: "blur", dur: 0.3, stagger: 0.03, blur: 10 });
+          }
+          tl.to("#scrimBot", { opacity: 0, duration: 0.4, ease: "power2.in" }, T.push);
+          Look.drive(tl, 0, D, (p) => { const t = p * D; apply(t); rollers.forEach((f) => f(t)); });
+          if (live) tl.to("#scrimTop", { opacity: 0, duration: 0.4, ease: "power2.in" }, T.push);
+
+          Look.install(tl, { duration: D, grain: 0.11, vignette: 0.42, enabled: plate });
+          tl.set({}, {}, D);
+          window.__timelines = window.__timelines || {};
+          window.__timelines["main"] = tl;
+          tl.seek(0);
+        });
+      })();
+    </script>
+  </body>
+</html>
