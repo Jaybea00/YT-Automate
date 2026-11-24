@@ -92,9 +92,10 @@ export interface FramePoint {
 
 /**
  * meme, freeze and replay play between two moments of the clip; a ramp slows the stretch of clip
- * just before `at` (replaySec long) to half speed, building up to the hit.
+ * just before `at` (replaySec long) to half speed, building up to the hit; a teaser (the cold open)
+ * plays the stretch just before `at` (replaySec long) first of all, then rewinds into the start.
  */
-export type CutInKind = 'meme' | 'freeze' | 'replay' | 'ramp' | 'skull';
+export type CutInKind = 'meme' | 'freeze' | 'replay' | 'ramp' | 'skull' | 'skip' | 'teaser';
 
 /**
  * Something that plays *between* two moments of the clip: the clip stops at `at`, the cut-in plays,
@@ -111,12 +112,14 @@ export interface CutIn {
   /** meme: which search result to use; "Try another" moves it on. */
   pick?: number;
   meme?: MemeFile;
-  /** replay: seconds of clip before `at` shown again in slow motion; ramp: seconds before `at` slowed down. */
+  /** replay: seconds of clip before `at` shown again in slow motion; ramp: seconds before `at` slowed down; teaser: seconds before `at` shown first. */
   replaySec?: number;
   /** freeze: a red circle and arrow on this spot ("look at the guy on the left"). */
   focus?: FramePoint;
   /** skull: the picture (a typed emoji or an emoji-library name); 💀 when missing. */
   emoji?: string;
+  /** skip: seconds of clip cut out from `at` (a slow stretch), jumped over with a whip. */
+  skipSec?: number;
 }
 
 /** A hit on a moment of the clip (seconds into the source clip). */

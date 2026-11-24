@@ -429,3 +429,91 @@ describe('Ranking web memes', () => {
     assert.deepEqual(ranked.map((x) => x.title), ["It's mine now", 'Mine.', 'Peace', 'Not mine.', '♪ You are mine ♪']);
   });
 });
+
+describe('Cutting a slow stretch out', () => {
+  it('keeps cut-outs off the big moment and drops what falls inside them', async () => {
+    const r = await import('../../src/pipeline/clipping/reaction.ts');
+    const c = r.fitCutIns({ skips: [{ from: 6, to: 11 }, { from: 9, to: 10 }, { from: 14, to: 30 }], memes: [{ at: 8, query: 'inside the cut' }, { at: 20, query: 'after' }] }, 4, 24, 18);
+    // The second skip overlaps the first; the third would swallow the build-up to 18, so it stops at 16.5
+    assert.deepEqual(c.filter((x) => x.kind === 'skip').map((x) => [x.at, x.skipSec]), [[6, 5], [14, 2.5]]);
+    assert.deepEqual(c.filter((x) => x.kind === 'meme').map((x) => x.at), [20], 'the meme inside a cut-out is dropped');
+  });
+
+  it('moves later moments earlier and collapses moments inside a cut-out onto the cut', async () => {
+    const r = await import('../../src/pipeline/clipping/reaction.ts');
+    const meme = { file: 'memes/m.mp4', source: 'library' as const, title: 'm', origin: 'm', hasAudio: false, durationSec: 3, key: 'm|0' };
+    const { cutIns } = r.timeline({ cutIns: [{ kind: 'skip', at: 10, durationSec: 0, skipSec: 6 }, { kind: 'meme', at: 12, durationSec: 1.4, query: 'm', meme }, { kind: 'meme', at: 20, durationSec: 1.4, query: 'm', meme }], trimStart: 4, trimEnd: 30, voiceLines: [], voiceover: true });
+    assert.deepEqual(cutIns.map((c) => [c.kind, c.durationSec]), [['skip', -6], ['meme', 1.4]], 'the meme at 12 was inside the cut-out');
+    assert.equal(r.outputTime(9, 4, cutIns), 5);
+    assert.equal(r.outputTime(13, 4, cutIns), 6, 'inside the cut-out: on the cut');
+    assert.equal(r.outputTime(18, 4, cutIns), 8);
+    assert.equal(r.shortDuration(26, cutIns), 21.4);
+    assert.deepEqual(r.parts(26, cutIns, new Map([[cutIns[1], 1]])).map((p) => (p.kind === 'clip' ? [p.from, p.to] : p.kind)), [[0, 6], [12, 16], 'meme', [16, 26]]);
+    assert.equal(r.insideSkip(13, [{ kind: 'skip', at: 10, skipSec: 6 }]), true);
+    assert.equal(r.insideSkip(16.5, [{ kind: 'skip', at: 10, skipSec: 6 }]), false);
+  });
+
+  it('renders a Short shorter by the cut-out', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'reaction-skip-'));
+    try {
+      const dir = path.join(root, 'clip');
+      await fs.mkdir(dir, { recursive: true });
+      await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=10', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000:duration=10', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(dir, 'source.mp4')]);
+      const a = analysis({ durationSec: 10, width: 640, height: 360, peaks: [], words: [{ word: 'gone', start: 4, end: 4.3 }, { word: 'kept', start: 8, end: 8.3 }] });
+      const base = planFromDraft(draft({ peakSec: 8, trimStart: 0, trimEnd: 10, header: { text: 'Cut 💀', highlight: [] } }), project(), a);
+      const plan: ClipPlan = { ...base, cutIns: [{ kind: 'skip', at: 3, durationSec: 0, skipSec: 3 }], effects: [], ending: undefined };
+      const out = await renderReactionShort(dir, 'source.mp4', plan, a);
+      assert.ok(Math.abs(out.durationSec - 7) < 0.05, `Short is ${out.durationSec}s`);
+      const real = Number((await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path.join(dir, out.video)])).stdout);
+      assert.ok(Math.abs(real - 7) < 0.15, `file runs ${real}s`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Cold open', () => {
+  it('opens on the big moment and pushes the whole clip back by the teaser and its rewind', async () => {
+    const r = await import('../../src/pipeline/clipping/reaction.ts');
+    const c = r.fitCutIns({ teaser: true, ramp: true }, 2, 24, 18);
+    const teaser = c.find((x) => x.kind === 'teaser')!;
+    assert.deepEqual([teaser.at, teaser.replaySec, teaser.durationSec], [18.5, 1.8, 2.25]);
+    assert.ok(c.some((x) => x.kind === 'ramp'), 'the ramp into the same moment is kept');
+    const { cutIns } = r.timeline({ cutIns: c, trimStart: 2, trimEnd: 24, voiceLines: [], voiceover: true });
+    assert.equal(cutIns[0].kind, 'teaser', 'the teaser plays first');
+    assert.deepEqual([cutIns[0].outAt, cutIns[0].teaseTo], [0, 16.5]);
+    assert.equal(r.outputTime(2, 2, cutIns), 2.25, 'the story starts after the teaser');
+    assert.equal(r.outputTime(10, 2, cutIns), 10.25);
+    const ps = r.parts(22, cutIns, new Map());
+    assert.deepEqual(ps[0], { kind: 'teaser', from: 14.7, to: 16.5 });
+    assert.deepEqual(ps[1], { kind: 'clip', from: 0, to: 15.2, holdSec: 0 }, 'the story plays up to the ramp');
+    assert.match(r.joinGraph({ base: '[0:v]null[base]', parts: ps, hasAudio: true, clipSec: 22, muteExpr: '1', fps: 30 }), /reverse,setpts=\(PTS-STARTPTS\)\/4.*areverse/);
+  });
+
+  it('skips a teaser outside the Short or inside a cut-out, and keeps only one', async () => {
+    const r = await import('../../src/pipeline/clipping/reaction.ts');
+    const plan = (cutIns: CutIn[]) => r.timeline({ cutIns, trimStart: 2, trimEnd: 24, voiceLines: [], voiceover: true }).cutIns.filter((c) => c.kind === 'teaser');
+    assert.equal(plan([{ kind: 'teaser', at: 30, durationSec: 2.25, replaySec: 1.8 }]).length, 0);
+    assert.equal(plan([{ kind: 'skip', at: 8, durationSec: 0, skipSec: 4 }, { kind: 'teaser', at: 10, durationSec: 2.25, replaySec: 1.8 }]).length, 0);
+    assert.equal(plan([{ kind: 'teaser', at: 10, durationSec: 2.25, replaySec: 1.8 }, { kind: 'teaser', at: 20, durationSec: 2.25, replaySec: 1.8 }]).length, 1);
+    assert.equal(planFromDraft(draft({ peakSec: 12, teaser: true }), project(), analysis()).cutIns?.some((c) => c.kind === 'teaser'), true);
+  });
+
+  it('renders a Short longer by the teaser and its rewind', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'reaction-teaser-'));
+    try {
+      const dir = path.join(root, 'clip');
+      await fs.mkdir(dir, { recursive: true });
+      await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=8', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000:duration=8', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(dir, 'source.mp4')]);
+      const a = analysis({ durationSec: 8, width: 640, height: 360, peaks: [], words: [{ word: 'boom', start: 6, end: 6.3 }] });
+      const base = planFromDraft(draft({ peakSec: 6, trimStart: 0, trimEnd: 8, header: { text: 'Tease 💀', highlight: [] } }), project(), a);
+      const plan: ClipPlan = { ...base, cutIns: [{ kind: 'teaser', at: 6.5, durationSec: 2.25, replaySec: 1.8 }], effects: [], ending: undefined };
+      const out = await renderReactionShort(dir, 'source.mp4', plan, a);
+      assert.ok(Math.abs(out.durationSec - 10.25) < 0.05, `Short is ${out.durationSec}s`);
+      const real = Number((await run('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path.join(dir, out.video)])).stdout);
+      assert.ok(Math.abs(real - 10.25) < 0.15, `file runs ${real}s`);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
