@@ -1,0 +1,444 @@
+<!doctype html>
+<!-- GTA 6 component #9 — Wasted stamp (craft v2, round 7). 1080x1920 (9:16), 30 fps, 5.0 s.
+     The fail sting as a death-cam: a real-speed shot, then on THE hit the world drops into smooth slow motion,
+     drains to hard black-and-white and closes into a 1.6:1 cinematic letterbox band (Busted keeps only the police
+     lights in colour). A dark GTA band (flat core, soft feather) slides in across the middle of it and the word slams
+     onto it in wide Archivo (tracking slam as a
+     glyph spread + blur + a short RGB split + flash on the footage only), lit by its own bloom. The top bar carries one
+     line of meta: a time-of-death kicker (Wasted) or the wanted stars, which empty out (Busted). A second beat lands in
+     the hold (Wasted: a specular glint across the word; Busted: the stars clear). Then the type blurs out, the band
+     slides away and the letterbox shuts.
+     Variables: variant "0" Wasted / "1" Busted; bg "plate" (sample 4K shots, graded + slowed) / "none" (transparent
+     overlay: bars, ground band, word, kicker / stars only — no footage, grade, flash, grain or vignette).
+     Slow motion is PRE-BAKED (dense optical flow, see bake-slow.sh / slowflow.py) and played at rate 1; the Busted light
+     layer is baked by lights.py, the Wasted lead's aim reticle is painted out by paintout.py.
+     Safe zones: text stays inside x 72–936, y 230–1480. Our own type (Archivo), no Pricedown, no logos. -->
+<html lang="en" data-composition-variables='[
+  {"id":"variant","type":"enum","label":"Variant","default":"0","options":[{"value":"0","label":"Wasted"},{"value":"1","label":"Busted"}]},
+  {"id":"bg","type":"enum","label":"Background","default":"plate","options":[{"value":"plate","label":"Sample footage"},{"value":"none","label":"Transparent"}]}
+]'>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <link rel="stylesheet" href="assets/fonts/fonts.css" />
+    <link rel="stylesheet" href="assets/kit/look/look.css" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script src="assets/kit/look/look.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1920px; overflow: hidden; background: transparent; }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; font-family: "Inter", sans-serif; color: #fff;
+        -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision; }
+      #root.plate { background: #000; }
+
+      /* ---- footage: #shake (impact) > #pushA (real-speed lead-in) / #pushB (slow-motion death-cam) ---- */
+      #shake { position: absolute; inset: 0; z-index: 1; isolation: isolate; }
+      .push { position: absolute; inset: 0; }
+      .shot { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; object-fit: cover; }
+      #tint { position: absolute; inset: 0; mix-blend-mode: color; opacity: 0; pointer-events: none; }
+      /* selective colour (Busted): a baked multiply layer, white except on the police lights, over the mono slow clip */
+      .lights { mix-blend-mode: multiply; opacity: 0; }
+
+      /* the ground: the GTA band. A full-bleed flat dark ribbon (.82) with a short 10% feather: a band you can see, edge to edge */
+      #strip { position: absolute; left: 0; width: 1080px; z-index: 2; pointer-events: none;
+        background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.5) 4%, rgba(0,0,0,.82) 10%, rgba(0,0,0,.82) 90%, rgba(0,0,0,.5) 96%, rgba(0,0,0,0) 100%); }
+
+      /* letterbox: the world closes in on the hit, tightens through the hold, then shuts to black */
+      .bar { position: absolute; left: 0; right: 0; height: 0; background: #000; z-index: 3; }
+      #barT { top: 0; } #barB { bottom: 0; }
+
+      /* ---- type ---- */
+      #ov { position: absolute; inset: 0; z-index: 4; }
+      #stamp { position: absolute; left: 0; right: 0; height: 400px; display: flex; align-items: center; justify-content: center; }
+      #glow { display: flex; justify-content: center; }
+      #slam { display: flex; justify-content: center; opacity: 0; will-change: transform, filter; }
+      #word { font-family: "Archivo", "Inter", sans-serif; font-stretch: 125%; font-weight: 900; text-transform: uppercase;
+        font-size: 160px; line-height: 1.16; letter-spacing: .045em; padding-left: .045em; white-space: nowrap; }
+      #rule { position: absolute; left: 50%; height: 3px; transform-origin: 50% 50%; }
+      #label { position: absolute; left: 72px; right: 72px; text-align: center; color: rgba(255,255,255,.86);
+        font-size: 28px; line-height: 34px; letter-spacing: .34em; padding-left: .34em; white-space: nowrap; }
+      /* the top-bar kicker: one tracked wide label on the black, so the bars hold type, not dead grain */
+      #kicker { position: absolute; left: 72px; right: 72px; text-align: center; color: rgba(255,255,255,.70);
+        font-size: 26px; line-height: 32px; letter-spacing: .34em; padding-left: .34em; white-space: nowrap; }
+      #stars { position: absolute; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; }
+      .star { width: 40px; height: 40px; opacity: 0; }
+      .star svg { display: block; width: 100%; height: 100%; overflow: visible; }
+      .star .o { fill: none; stroke: rgba(255,255,255,.9); stroke-width: 2.4; stroke-linejoin: round; }
+      .star .f { fill: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="5" data-width="1080" data-height="1920">
+      <!-- Sample footage (4K-sourced shots). Each variant: one real-speed shot, then a pre-baked slow-motion file from
+           THE hit on. The script keeps every attribute in sync with CONFIG; the HTML mirrors it. -->
+      <div id="shake">
+        <div class="push" id="pushA">
+          <video id="w0a" class="clip shot" data-v="0" data-seg="lead" src="assets/clips/w0-s119-lead.mp4" muted playsinline
+            data-start="0" data-duration="1.2" data-media-start="0" data-track-index="0"></video>
+          <video id="b1a" class="clip shot" data-v="1" data-seg="lead" src="assets/shots/s014-driveby-police-v.mp4" muted playsinline
+            data-start="0" data-duration="1.2" data-media-start="0" data-track-index="0"></video>
+        </div>
+        <div class="push" id="pushB">
+          <video id="w0s" class="clip shot" data-v="0" data-seg="slow" src="assets/clips/w0-s119-slow.mp4" muted playsinline
+            data-start="1.2" data-duration="3.8" data-media-start="0" data-track-index="0"></video>
+          <video id="b1s" class="clip shot" data-v="1" data-seg="slow" src="assets/clips/b1-s014-slow.mp4" muted playsinline
+            data-start="1.2" data-duration="3.8" data-media-start="0" data-track-index="0"></video>
+          <div id="tint"></div>
+          <video id="b1l" class="clip shot lights" data-v="1" data-seg="lights" src="assets/clips/b1-s014-lights.mp4" muted playsinline
+            data-start="1.2" data-duration="3.8" data-media-start="0" data-track-index="2"></video>
+        </div>
+      </div>
+      <svg width="0" height="0" style="position:absolute;width:0;height:0" aria-hidden="true">
+        <filter id="curve" color-interpolation-filters="sRGB"><feComponentTransfer>
+          <feFuncR type="table" tableValues="0 1" /><feFuncG type="table" tableValues="0 1" /><feFuncB type="table" tableValues="0 1" />
+        </feComponentTransfer></filter>
+      </svg>
+      <div id="strip"></div>
+      <div class="bar" id="barT"></div>
+      <div class="bar" id="barB"></div>
+
+      <div id="ov" class="clip" data-start="0" data-duration="5" data-track-index="1">
+        <div id="stamp"><div id="glow"><div id="slam"><div id="word"></div></div></div></div>
+        <div id="rule"></div>
+        <div id="label" class="t-label-wide"></div>
+        <div id="kicker" class="t-label-wide"></div>
+        <div id="stars"></div>
+      </div>
+    </div>
+
+    <script>
+      const CONFIG = {
+        variants: {
+          // Wasted: the death-cam. Hard cut to a wide slow-motion band, hard black-and-white, red word on the dark band.
+          "0": {
+            word: "Wasted",
+            // lit-from-above red; the stops sit on the cap height (the word box is 1.16em tall) so the full ramp reads
+            fill: "linear-gradient(180deg, #FF8A73 24%, #FF3B2E 52%, #B8160E 79%)",
+            glow: "#FF3B2E",
+            bloom: 0.5,                          // strength of the word's own light (bloom); a number, or {base, swing, hz} to pulse
+            // one tracked line in the top bar that belongs to the moment (null hides it; stars take the slot if set)
+            kicker: "Time of death · 14:32",
+            stars: 0,                            // wanted stars in the top bar that empty out (0 = none)
+            rule: null,                          // optional short drawn rule under the word, e.g. { color: "#FF3B3B", width: 128 }
+            label: null,                         // optional tracked line under the word (replaces the rule)
+            // second beat: one narrow warm glint sweeping left to right across the word in the hold (width = fraction of the
+            // word width; peak opacity capped so the red ramp never washes out on a still). null = off.
+            sheen: { color: "#FFD2C2", peak: 0.45, width: 0.09 },
+            flash: { color: "#FFFFFF", amount: 0.5 },
+            // hard mono with a highlight roll-off: the shoulder curve stops at .94, so sunlit road paint and smoke keep their texture
+            // instead of clipping to flat white (r06: contrast 1.3 / brightness 1.06 tore them into white shapes)
+            grade: { curve: [0, .06, .16, .28, .40, .52, .63, .73, .82, .89, .94], contrast: 1.15, brightness: 1.0, tint: null, tintOpacity: 0 },
+            bars: "cut",                         // "cut": the letterbox arrives with the hard cut; "clamp": it cuts in wide and clamps down
+            // real-speed shot before the hit (track 0): the SUV charging the gunman, sparks off its bumper. The hit is a hard cut to
+            // the wide band. The file is s119 vertical from 0.5 s with the game's aim reticle painted out (paintout.py); the raw
+            // shot also works (in: 0.5).
+            lead: [
+              { id: "w0a", src: "assets/clips/w0-s119-lead.mp4", start: 0, dur: 1.2, in: 0, y: 0 }
+            ],
+            // slow: bake-slow.sh output (s119 16:9 master from 1.7 s, reticle painted out, 0.32x easing down to 0.20x: the death-cam
+            // keeps slowing). It covers the whole arc (sparks, swing, the flip onto its side) and stops at source 2.62 s, before
+            // the game's heavy motion blur on the tumbling SUV (a smeared frame stretched 3x is what read as a double image).
+            // box = where it sits on the canvas.
+            // 1560x878 (y 538-1416) fills the 820 / 760 px band with the flip and the shooter; x -305 keeps the game HUD (minimap bottom-left
+            // ends at source x 332, weapon/stars top-right start at x 1740) just outside the visible columns, even before
+            // the push. The game's aim reticle is painted out in the bake.
+            slow: { id: "w0s", src: "assets/clips/w0-s119-slow.mp4", rate: 0.26, box: { x: -305, y: 538, w: 1560, h: 878 } },
+            push: { lead: [1, 1.05], slow: [1, 1.07] }
+          },
+          // Busted: the arrest. Speed ramp on the same shot reframed into the band, cold steel mono, white-hot blue word, five stars.
+          "1": {
+            word: "Busted",
+            fill: "linear-gradient(180deg, #FFFFFF 30%, #CFE0FF 58%, #A9C4FF 82%)",   // white-hot steel: the blue lives in the light bar
+            glow: "#3B82FF",
+            bloom: { base: 0.35, swing: 0.06, hz: 1.6 },   // police-light pulse on the bloom only; the word stays steady
+            kicker: null,
+            stars: 5,                            // the wanted level sits in the top bar and clears on arrest
+            rule: null,
+            label: null,
+            sheen: null,
+            flash: { color: "#3B82FF", amount: 0.45 },
+            // dusk plate (median luma ~0.1): a crushed noir curve. Everything under about .07 (the dark wall, the street) goes to
+            // true black, the officers stay as dark-grey figures, the upper mids lift so the mural and the white cruiser pop, and
+            // the light bar and tail lights burn; contrast on top. (The r05 toe-lift [0,.2,.4,…] went milky grey.)
+            grade: { curve: [0, .14, .33, .52, .66, .77, .86, .92, .96, .99, 1], contrast: 1.22, brightness: 1.0, tint: "#5F7FB0", tintOpacity: 0.04 },
+            // selective colour: only the police lights keep their red / blue. A baked multiply layer (lights.py: the light bar and
+            // tail lights keyed and tracked, white elsewhere) fades in with the drain and pulses with the bloom (same 1.6 Hz)
+            lights: { id: "b1l", src: "assets/clips/b1-s014-lights.mp4", amount: 0.85, swing: 0.15 },
+            // lifts the dim windshield POV lead (median luma .16 → .19); the drain starts from it. Contrast stays low, because on a
+            // dark plate contrast pulls the median DOWN (1.15 / 1.15 measured darker than no grade at all)
+            leadGrade: { brightness: 1.25, contrast: 1.05 },
+            bandCenter: 880,                     // the band sits 80 px high: its bottom edge lands on the lit bumper and kerb
+            // the word sits in the band's lower third, on the dark bumper and street: the officers, the light bar, the cruiser's
+            // trunk and its red tail lights all play above the dark band, so it never dims the arrest (stars on top, word below)
+            lockupY: 1070,
+            bars: "clamp",
+            lead: [                              // the same shot at real speed: the hit is a speed ramp, not a new shot
+              { id: "b1a", src: "assets/shots/s014-driveby-police-v.mp4", start: 0, dur: 1.2, in: 0, y: 0 }
+            ],
+            // s014 vertical from 1.2 s at 0.30x (ends at source 2.34 s, before the A-pillar at ~2.45 s), framed exactly like the
+            // lead so the ramp is seamless: the mural, the officers, the light bar and the cruiser's trunk fill the band above the
+            // word, which sits on the bumper and the street; the POV car's roof and dashboard stay behind the bars, even at the clamp.
+            // Baked with the cadence fix (bake-slow.sh … 0.3:0.68): the capture advances unevenly (about 1.1, 0.7, 1.3, 0.5 …
+            // frames of motion per frame), so each source step is re-timed from its measured motion and the slow-mo moves evenly.
+            slow: { id: "b1s", src: "assets/clips/b1-s014-slow.mp4", rate: 0.3, box: { x: 0, y: 0, w: 1080, h: 1920 } },
+            push: { lead: [1, 1.08], slow: [1.08, 1.14] }
+          }
+        },
+        layout: {
+          bandCenter: 960,     // y of the band's centre (and of the word; a variant's bandCenter / lockupY override it)
+          bandOpen: 820,       // band height when it lands (1080x820, about 1.32:1)
+          bandHold: 680,       // band height it tightens to through the hold (1080x680, about 1.59:1: y 620–1300, bars 620 / 620)
+          bandClamp: 880,      // "clamp" bars: the band cuts in this tall on the hit, then clamps to bandOpen
+          wordSize: 160,       // starting size; auto-fit to wordWidth
+          wordWidth: 760,      // fitted width of the settled word (88% of the 864 px safe width)
+          capRatio: 0.70,      // Archivo 900 wide cap height / font size (for optical centring)
+          tracking: 0.045,     // settled tracking (em)
+          trackingIn: 0.22,    // tracking it slams in from (em)
+          trackingHold: 0.06,  // tracking it drifts to through the hold (em)
+          metaGap: 36,         // gap from the caps to an optional rule / label under the word
+          stripH: 210,         // height of the dark ground band behind the word (grows if a rule / label sits under the word)
+          stripPadMin: 40,     // minimum ground above and below the lockup
+          barMetaGap: 76       // the kicker / stars sit this far above the band's held top edge, centred (Wasted: y 544)
+        },
+        timing: {
+          hit: 1.2,        // THE hit: cut / speed ramp, flash, bars, word, chroma
+          stripLead: 0.08, // the ground band starts sliding in this long before the hit
+          drain: 0.45,     // colour → mono
+          meta: 1.5,       // kicker rises in / stars land
+          rule: 1.62,      // optional rule draws on
+          sheen: 3.2,      // second beat (Wasted): a glint sweeps across the word (crosses its centre at 3.7 s, gone by 4.1 s)
+          sheenDur: 1.0,
+          starsClear: 3.2, // stars empty right to left, 0.16 s apart (wanted level clears on arrest, done by 4.0 s)
+          out: 4.3,        // type blurs out, then the band slides away
+          close: 4.5,      // the letterbox shuts to black
+          closeDur: 0.5,
+          end: 5.0         // = close + closeDur: the comp ends as the band shuts (no dead black tail)
+        }
+      };
+
+      (function () {
+        const VARS = (window.__hyperframes && window.__hyperframes.getVariables) ? window.__hyperframes.getVariables() : {};
+        const vKey = CONFIG.variants[String(VARS.variant)] ? String(VARS.variant) : "0";
+        const plate = VARS.bg !== "none";
+        const V = CONFIG.variants[vKey], L = CONFIG.layout, T = CONFIG.timing, H = T.hit, D = T.end;
+        const $ = (s) => document.querySelector(s);
+        const $$ = (s) => Array.from(document.querySelectorAll(s));
+        const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return (n >> 16) + "," + ((n >> 8) & 255) + "," + (n & 255); };
+        const root = $("#root");
+        root.classList.add("v" + vKey);
+        if (plate) root.classList.add("plate");
+
+        // ---- footage: only this variant's shots, timed and placed from CONFIG ----
+        const slowEl = $("#" + V.slow.id);
+        const lightsEl = V.lights ? $("#" + V.lights.id) : null;
+        $$("video.shot").forEach((v) => {
+          if (!plate || v.dataset.v !== vKey || (v.dataset.seg === "lights" && !V.lights)) { v.style.display = "none"; return; }
+          if (v.dataset.seg === "lead") {
+            const s = V.lead.find((x) => x.id === v.id);
+            v.setAttribute("src", s.src);
+            v.setAttribute("data-start", String(s.start));
+            v.setAttribute("data-duration", String(s.dur));
+            v.setAttribute("data-media-start", String(s.in));
+            v.style.transform = "translateY(" + (s.y || 0) + "px)";
+            if (V.leadGrade) v.style.filter = "brightness(" + V.leadGrade.brightness + ") contrast(" + V.leadGrade.contrast + ")";
+          } else {
+            // the slow clip and its light layer share the box, the timing and the push, so they stay locked together
+            const b = V.slow.box;
+            v.setAttribute("src", v.dataset.seg === "lights" ? V.lights.src : V.slow.src);
+            v.setAttribute("data-start", String(H));
+            v.setAttribute("data-duration", String(+(D - H).toFixed(3)));
+            v.setAttribute("data-media-start", "0");
+            Object.assign(v.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px" });
+          }
+        });
+        if (!plate) $("#shake").style.display = "none";
+        if (V.grade.tint) $("#tint").style.background = V.grade.tint;
+
+        // ---- content: the top bar holds the stars or the kicker; under the word an optional label, else rule ----
+        const w = $("#word");
+        w.textContent = V.word;
+        const top = V.stars > 0 ? "stars" : V.kicker ? "kicker" : null;
+        const meta = V.label ? "label" : V.rule ? "rule" : null;
+        if (top === "kicker") $("#kicker").textContent = V.kicker; else $("#kicker").style.display = "none";
+        if (meta === "label") $("#label").textContent = V.label; else $("#label").style.display = "none";
+        const STAR = '<svg viewBox="0 0 24 24"><path class="f" d="M12 2.6l2.82 6.06 6.63.72-4.94 4.5 1.37 6.53L12 17.1l-5.88 3.31 1.37-6.53-4.94-4.5 6.63-.72z"/>' +
+                     '<path class="o" d="M12 2.6l2.82 6.06 6.63.72-4.94 4.5 1.37 6.53L12 17.1l-5.88 3.31 1.37-6.53-4.94-4.5 6.63-.72z"/></svg>';
+        if (top === "stars") $("#stars").innerHTML = Array.from({ length: V.stars }, () => '<div class="star">' + STAR + "</div>").join("");
+        else $("#stars").style.display = "none";
+        if (meta === "rule") {
+          Object.assign($("#rule").style, { width: V.rule.width + "px", marginLeft: (-V.rule.width / 2) + "px", background: V.rule.color,
+            boxShadow: "0 0 10px rgba(" + rgb(V.rule.color) + ",.55), 0 0 26px rgba(" + rgb(V.rule.color) + ",.3)" });
+        } else $("#rule").style.display = "none";
+
+        document.fonts.ready.then(() => {
+          // fit the settled word to wordWidth (measured at the settled tracking)
+          w.style.fontSize = L.wordSize + "px";
+          const ww = w.getBoundingClientRect().width;
+          const fs = +(L.wordSize * L.wordWidth / ww).toFixed(1);
+          w.style.fontSize = fs + "px";
+
+          // ---- layout: the word (+ optional meta) is optically centred on the band; the ground band centres on it ----
+          const C = V.lockupY || V.bandCenter || L.bandCenter, capH = fs * L.capRatio;
+          const metaH = meta === "label" ? 20 : meta === "rule" ? 3 : 0;
+          const groupH = capH + (meta ? L.metaGap + metaH : 0);
+          const groupTop = C - groupH / 2, wordCY = groupTop + capH / 2, metaTop = groupTop + capH + L.metaGap;
+          $("#stamp").style.top = (wordCY - 200) + "px";
+          $("#rule").style.top = metaTop + "px";
+          $("#label").style.top = (metaTop - 7) + "px";
+          const BC0 = V.bandCenter || L.bandCenter, metaY = BC0 - L.bandHold / 2 - L.barMetaGap;
+          $("#kicker").style.top = (metaY - 16) + "px";
+          $("#stars").style.top = (metaY - 20) + "px";
+          const stripH = Math.round(Math.max(L.stripH, groupH + 2 * L.stripPadMin));
+          Object.assign($("#strip").style, { top: Math.round(C - stripH / 2) + "px", height: stripH + "px" });
+
+          // split into glyphs: tracking is animated as each glyph's x spread (transforms stay sub-pixel smooth)
+          const chars = Look.split(w, { by: "chars" }).chars;
+          const mid = (chars.length - 1) / 2;
+          const spread = (em) => (i) => +((i - mid) * em * fs).toFixed(2);
+          // gradient fill (lint-safe): one continuous vertical sweep across every glyph, plus a sheen layer for the second beat
+          const leaves = Look.fill(w, V.fill);
+          // the sheen layer: one narrow warm glint (the layer is 3 word widths wide, so a glint of width w spans w/3 of it),
+          // with a capped peak: it reads as a specular kiss of light, and the red ramp never washes out under it
+          const SH = V.sheen, gw = SH ? (SH.width * 100 / 3) : 0, gc = SH ? rgb(SH.color) : "";
+          const GLINT = SH ? "linear-gradient(105deg, rgba(" + gc + ",0) " + (50 - gw / 2).toFixed(2) + "%, rgba(" + gc + "," + (SH.peak * 0.45).toFixed(3) + ") " +
+            (50 - gw / 4).toFixed(2) + "%, rgba(" + gc + "," + SH.peak + ") 50%, rgba(" + gc + "," + (SH.peak * 0.45).toFixed(3) + ") " + (50 + gw / 4).toFixed(2) +
+            "%, rgba(" + gc + ",0) " + (50 + gw / 2).toFixed(2) + "%)" : "";
+          const glintAt = (c) => leaves.forEach((n) => {           // c = glint centre across the word, in word widths
+            const k = n.__lk;
+            n.style.backgroundPosition = ((c - 1.5) * k.W + k.x).toFixed(1) + "px " + k.y + "px, " + k.x + "px " + k.y + "px";
+          });
+          if (SH) {
+            leaves.forEach((n) => {
+              const k = n.__lk;
+              n.style.backgroundImage = GLINT + ", " + V.fill;
+              n.style.backgroundSize = (k.W * 3) + "px " + k.H + "px, " + k.W + "px " + k.H + "px";
+              n.style.backgroundRepeat = "no-repeat";
+            });
+            glintAt(-0.6);
+          }
+          // the word's own light: a soft lift shadow, a hot 1 px core and a three-step bloom in the word's colour.
+          // Applied as drop-shadows on #glow so the light follows the slam (scale, glyph spread, blur) exactly.
+          const glowCss = (a) => "drop-shadow(0 6px 14px rgba(0,0,0,.36)) drop-shadow(0 0 1px rgba(255,255,255," + (a * 0.5).toFixed(3) + "))" +
+            " drop-shadow(0 0 14px rgba(" + rgb(V.glow) + "," + (a * 0.84).toFixed(3) + "))" +
+            " drop-shadow(0 0 42px rgba(" + rgb(V.glow) + "," + (a * 0.56).toFixed(3) + "))" +
+            " drop-shadow(0 0 110px rgba(" + rgb(V.glow) + "," + (a * 0.32).toFixed(3) + "))";
+          const B = typeof V.bloom === "number" ? { base: V.bloom, swing: 0, hz: 0 } : V.bloom;
+          $("#glow").style.filter = glowCss(B.base);
+
+          const tl = gsap.timeline({ paused: true });
+          const TH = Math.ceil(H * 30 - 1e-6) / 30;            // the hit, on a frame boundary
+
+          // 1) lead-in at real speed with a slow push; then the slow-motion death-cam from the hit
+          if (plate) {
+            Look.push(tl, "#pushA", 0, H, { from: V.push.lead[0], to: V.push.lead[1], origin: "50% 50%" });
+            Look.push(tl, "#pushB", H, D - H, { from: V.push.slow[0], to: V.push.slow[1], origin: "50% 50%" });
+            // the drain: saturation out, contrast up (hard black-and-white), optional cold tint. It starts from the lead's
+            // grade (if any), so the speed ramp has no exposure jump
+            const G = V.grade, cv = G.curve, funcs = $$("#curve feFuncR, #curve feFuncG, #curve feFuncB");
+            const G0 = V.leadGrade || { brightness: 1, contrast: 1 };
+            Look.drive(tl, TH, T.drain, (p) => {
+              const k = 1 - Math.pow(1 - p, 3);
+              if (cv) {   // the tone curve eases in from identity with the drain
+                const tv = cv.map((y, i) => (i / (cv.length - 1) + (y - i / (cv.length - 1)) * k).toFixed(4)).join(" ");
+                funcs.forEach((f) => f.setAttribute("tableValues", tv));
+              }
+              slowEl.style.filter = "saturate(" + (1 - k).toFixed(3) + ")" + (cv ? " url(#curve)" : "") +
+                " brightness(" + (G0.brightness + (G.brightness - G0.brightness) * k).toFixed(3) + ") contrast(" + (G0.contrast + (G.contrast - G0.contrast) * k).toFixed(3) + ")";
+              if (G.tint) $("#tint").style.opacity = (G.tintOpacity * k).toFixed(3);
+            });
+            // selective colour: the light layer fades in with the drain, then pulses with the bloom (same phase and rate)
+            if (lightsEl) {
+              const LT = V.lights, P0 = TH + 0.55, hz = (typeof V.bloom === "object" && V.bloom.hz) || 1.6;
+              Look.drive(tl, TH, D - TH, (p) => {
+                const t = TH + p * (D - TH), pd = Math.min(1, (t - TH) / T.drain), k = 1 - Math.pow(1 - pd, 3);
+                const pulse = t >= P0 ? LT.swing * Math.sin(2 * Math.PI * hz * (t - P0)) : 0;
+                lightsEl.style.opacity = (k * Math.min(1, LT.amount + pulse)).toFixed(3);
+              });
+            }
+          }
+
+          // 2) the letterbox, sized from the band centre:
+          //    "cut" — the bars arrive on the hit frame; "clamp" — they cut in wide on the hit frame, then clamp down;
+          //    overlay (bg:none) — they slam shut over 0.34 s. Then they tighten through the hold and shut.
+          const BC = V.bandCenter || L.bandCenter;
+          const bar = { "#barT": (b) => BC - b / 2, "#barB": (b) => 1920 - BC - b / 2 };
+          const shut = { "#barT": BC + 1, "#barB": 1920 - BC + 1 };
+          Object.keys(bar).forEach((id) => {
+            const hOpen = bar[id](L.bandOpen), hHold = bar[id](L.bandHold), hClamp = bar[id](L.bandClamp);
+            gsap.set(id, { height: 0 });
+            if (plate && V.bars === "cut") tl.set(id, { height: hOpen }, TH);
+            else if (plate && V.bars === "clamp") {
+              tl.set(id, { height: hClamp }, TH);
+              tl.fromTo(id, { height: hClamp }, { height: hOpen, duration: 0.3, ease: "expo.out", immediateRender: false }, TH + 1 / 30);
+            }
+            else tl.fromTo(id, { height: 0 }, { height: hOpen, duration: 0.34, ease: "expo.out", immediateRender: false }, TH);
+            tl.fromTo(id, { height: hOpen }, { height: hHold, duration: T.close - TH - 0.6, ease: "sine.inOut", immediateRender: false }, TH + 0.6);
+            tl.fromTo(id, { height: hHold }, { height: shut[id], duration: T.closeDur, ease: "power3.in", immediateRender: false }, T.close);
+          });
+
+          // 3) the ground: the dark band slides in from the left just ahead of the hit (motion-blurred on travel)
+          const S0 = TH - T.stripLead;
+          gsap.set("#strip", { x: -1080 });
+          tl.fromTo("#strip", { x: -1080 }, { x: 0, duration: 0.26, ease: "expo.out", immediateRender: false }, S0);
+          Look.mblur(tl, "#strip", S0, 0.2, { x: 40, ease: "power2.out" });
+
+          // 4) THE hit: flash + shake on the footage only (the bars, band and word stay clean), word slams in with tracking + blur
+          //    and a short, small RGB split (the flash, shake and tracking slam carry the hit; the split only roughens the edge)
+          if (plate) Look.impact(tl, TH, { shake: "#shake", host: "#shake", amp: 12, dur: 0.36, flash: V.flash.amount, flashColor: V.flash.color, zoom: 1.045 });
+          gsap.set("#slam", { opacity: 0, scale: 1.2, filter: "blur(16px)" });
+          tl.fromTo("#slam", { opacity: 0.55 }, { opacity: 1, duration: 0.1, ease: "power2.out", immediateRender: false }, TH);   // on the hit frame already
+          tl.fromTo("#slam", { scale: 1.2 }, { scale: 1, duration: 0.55, ease: "expo.out", immediateRender: false }, TH);
+          tl.fromTo("#slam", { filter: "blur(16px)" }, { filter: "blur(0px)", duration: 0.32, ease: "expo.out", immediateRender: false }, TH);
+          tl.set("#slam", { filter: "none" }, TH + 0.32);
+          gsap.set(chars, { x: spread(L.trackingIn - L.tracking) });
+          tl.fromTo(chars, { x: spread(L.trackingIn - L.tracking) }, { x: 0, duration: 0.6, ease: "expo.out", immediateRender: false }, TH);
+          Look.chroma(tl, w, TH, 0.25, { px: 8 });
+          // the hold stays alive: a slow drift in scale and tracking
+          tl.fromTo("#slam", { scale: 1 }, { scale: 1.035, duration: T.out - TH - 0.55, ease: "none", immediateRender: false }, TH + 0.55);
+          tl.fromTo(chars, { x: 0 }, { x: spread(L.trackingHold - L.tracking), duration: T.out - TH - 0.6, ease: "none", immediateRender: false }, TH + 0.6);
+          if (B.swing) {
+            // police-light pulse on the bloom only (blue), the word itself stays steady
+            const P0 = TH + 0.55, PD = T.out - P0;
+            Look.drive(tl, P0, PD, (p) => { $("#glow").style.filter = glowCss(B.base + B.swing * Math.sin(2 * Math.PI * B.hz * p * PD)); });
+          }
+
+          // 5) the top bar: the kicker rises in through a mask, char by char / the stars pop in and later empty
+          if (top === "kicker") Look.reveal(tl, "#kicker", T.meta, { by: "chars", dur: 0.5, stagger: 0.022 });
+          const stars = $$(".star");
+          if (top === "stars") {
+            Look.enter(tl, stars, T.meta, { from: "scale", dur: 0.45, stagger: 0.06, scale: 0.6 });
+            stars.slice().reverse().forEach((st, i) => {
+              const at = T.starsClear + i * 0.16;
+              tl.fromTo(st.querySelector(".f"), { opacity: 1 }, { opacity: 0, duration: 0.14, ease: "power2.out", immediateRender: false }, at);
+              tl.fromTo(st, { scale: 1.16 }, { scale: 1, duration: 0.26, ease: "power3.out", immediateRender: false }, at);
+            });
+          }
+          // optional meta under the word: rule draws on / label blurs in
+          if (meta === "rule") {
+            gsap.set("#rule", { scaleX: 0 });
+            tl.fromTo("#rule", { scaleX: 0 }, { scaleX: 1, duration: 0.4, ease: "expo.out", immediateRender: false }, T.rule);
+          }
+          if (meta === "label") Look.enter(tl, "#label", T.rule, { from: "blur", dur: 0.6, blur: 10, scale: 1.04 });
+
+          // 6) second beat (Wasted): one specular sweep across the word
+          if (SH) {
+            const E = gsap.parseEase("power1.inOut");
+            Look.drive(tl, T.sheen, T.sheenDur, (p) => glintAt(-0.6 + 2.2 * E(p)));
+          }
+
+          // 7) out: the type blurs away, the band slides off to the right, then the letterbox shuts like an eye
+          const sel = [{ stars: "#stars", kicker: "#kicker" }[top], { rule: "#rule", label: "#label" }[meta], "#stamp"].filter(Boolean);
+          Look.exit(tl, sel, T.out, { to: "blur", dur: 0.42, stagger: 0.05, scale: 1.05, blur: 14 });
+          tl.fromTo("#strip", { x: 0 }, { x: 1080, duration: 0.34, ease: "power3.in", immediateRender: false }, T.out + 0.08);
+          Look.mblur(tl, "#strip", T.out + 0.08, 0.34, { x: 0, to: [40, 0], ease: "power3.in" });
+
+          Look.install(tl, { duration: D, grain: 0.15, vignette: 0.45, enabled: plate });
+          tl.set({}, {}, D);
+          window.__timelines = window.__timelines || {};
+          window.__timelines["main"] = tl;
+          tl.seek(0);
+        });
+      })();
+    </script>
+  </body>
+</html>

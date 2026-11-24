@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:pipeline": "tsx --test tests/pipeline/*.test.ts",
-    "worker": "tsx src/pipeline/worker.ts"
+    "worker": "tsx src/pipeline/worker.ts",
+    "guide": "tsx --env-file=.env.local src/pipeline/guide/cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
@@ -16,6 +17,7 @@
     "@huggingface/transformers": "^4.3.1",
     "@supabase/supabase-js": "^2.117.2",
     "d3-geo": "^3.1.1",
+    "gsap": "3.14.2",
     "next": "16.3.6",
     "openai": "^7.23.0",
     "playwright": "^1.63.0",

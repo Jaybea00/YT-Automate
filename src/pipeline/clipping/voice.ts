@@ -13,13 +13,15 @@ export function evenWords(text: string, durationSec: number): ClipWord[] {
   return words.map((word, i) => ({ word, start: Number((i * each).toFixed(2)), end: Number(((i + 1) * each).toFixed(2)) }));
 }
 
-const lineKey = (text: string, voice: string, provider: string) => createHash('sha1').update(`${provider}|${voice}|${text}`).digest('hex').slice(0, 16);
+const lineKey = (text: string, voice: string, provider: string, speed?: number) =>
+  createHash('sha1').update(`${provider}|${voice}|${text}${speed && speed !== 1 ? `|x${speed}` : ''}`).digest('hex').slice(0, 16);
 
 /**
  * Voices each line with the narration stage's voice (Kokoro, normally). Lines already voiced with
- * the same text and voice are kept. Returns the lines with their audio, plus any warnings.
+ * the same text, voice and speed are kept. Returns the lines with their audio, plus any warnings.
+ * `speed` above 1 speaks faster (a guide is read faster than a reaction's asides).
  */
-export async function voiceLines(dir: string, lines: VoiceLine[], voiceOverride: string): Promise<{ lines: VoiceLine[]; warnings: string[]; voice: string }> {
+export async function voiceLines(dir: string, lines: VoiceLine[], voiceOverride: string, speed?: number): Promise<{ lines: VoiceLine[]; warnings: string[]; voice: string }> {
   if (!lines.length) return { lines, warnings: [], voice: voiceOverride };
   let resolved;
   try {
@@ -34,14 +36,14 @@ export async function voiceLines(dir: string, lines: VoiceLine[], voiceOverride:
   const out: VoiceLine[] = [];
   const warnings: string[] = [];
   for (const [i, line] of lines.entries()) {
-    const key = lineKey(line.text, voice, provider.id);
+    const key = lineKey(line.text, voice, provider.id, speed);
     if (line.audioKey === key && line.audioFile && (await fs.stat(path.join(dir, line.audioFile)).then((s) => s.size > 0).catch(() => false))) {
       out.push(line);
       continue;
     }
     const file = `voice/line_${i}_${key.slice(0, 6)}.wav`;
     try {
-      const result = await provider.synthesize({ text: line.text, voiceId: voice, format: 'wav' }, ctx);
+      const result = await provider.synthesize({ text: line.text, voiceId: voice, format: 'wav', ...(speed && speed !== 1 ? { speed } : {}) }, ctx);
       await fs.writeFile(path.join(dir, file), result.bytes);
       const durationSec = (result.durationMs ?? (await getAudioDurationMs(path.join(dir, file)))) / 1000;
       const words = result.words?.length ? result.words.map((w) => ({ word: w.word, start: w.start, end: w.end })) : evenWords(line.text, durationSec);
