@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { alignWords, cardWindows, cropFor, cutLengths, cutTimes, fillCuts, parseMarkup, planGuide, spokenParts, toFrames } from '../../src/pipeline/guide/timeline.ts';
+import { alignWords, cardWindows, cropFor, cutLengths, cutTimes, fillCuts, parseMarkup, planGuide, spokenParts, toFrames, voiceText, chapterList, clockTime } from '../../src/pipeline/guide/timeline.ts';
 import { captionAss, captionGroups, cardDocument, markedHtml, shout, titleDocument } from '../../src/pipeline/guide/look.ts';
 import { commonCrop, guideTemplate, guideFile, isGuideId } from '../../src/pipeline/guide/store.ts';
 import { guideMixGraph, guideWords, renderGuide } from '../../src/pipeline/guide/render.ts';
@@ -232,6 +232,87 @@ describe('Guide render', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('renders a wide video with a still picture, a side-by-side shot, a chapter card and a note', { timeout: 240_000 }, async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'guide-wide-'));
+    try {
+      await fs.mkdir(path.join(dir, 'footage'));
+      await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:r=30:d=10', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000:duration=10', '-c:a', 'aac', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-shortest', path.join(dir, 'footage', 'a.mp4')]);
+      await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=720x1280:r=30:d=6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(dir, 'footage', 'v.mp4')]);
+      await run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=640x480:d=1', '-frames:v', '1', path.join(dir, 'footage', 'pic.jpg')]);
+      const p = guide({
+        format: 'wide',
+        gapSec: 0.4,
+        whooshes: false,
+        titleCard: '',
+        loopLine: '',
+        opener: { file: 'footage/a.mp4', from: 1, to: 3 },
+        items: [
+          { heading: '2002 · VICE CITY', note: 'KEY LENTO', say: 'One two three four five six seven eight.', shots: [{ file: 'footage/pic.jpg', from: 0, to: 0.04, push: 0.1 }, { file: 'footage/a.mp4', from: 3, to: 6, beside: { file: 'footage/v.mp4', from: 0, to: 4 }, labels: ['2002', 'GTA 6'] }] },
+          { heading: '', say: 'And more words here.', shots: [{ file: 'footage/v.mp4', from: 1, to: 4, volume: 1 }] },
+        ],
+        outroShots: [{ file: 'footage/a.mp4', from: 7, to: 9 }],
+      });
+      const out = await renderGuide(dir, p);
+      assert.equal(out.video, 'export/video.mp4');
+      const { stdout } = await run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,width,height:format=duration', '-of', 'json', path.join(dir, out.video)]);
+      const info = JSON.parse(stdout);
+      const video = info.streams.find((s: { codec_type: string }) => s.codec_type === 'video');
+      assert.deepEqual([video.width, video.height], [1920, 1080]);
+      assert.ok(Math.abs(Number(info.format.duration) - out.durationSec) < 0.15, `${info.format.duration} vs ${out.durationSec}`);
+      assert.doesNotMatch(out.warnings.join(' '), /soft/);
+      // A second render reuses the footage it already made
+      const parts = (await fs.readdir(path.join(dir, 'render-base'))).filter((f) => f.startsWith('part-'));
+      await renderGuide(dir, p);
+      assert.deepEqual((await fs.readdir(path.join(dir, 'render-base'))).filter((f) => f.startsWith('part-')), parts);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('Guide voice tags', () => {
+  it('keeps [tags] out of captions, and gives them only to a voice that acts them out', () => {
+    const line = '[softly] Now we *know*. [whispers] He never ~did~. [dramatic pause] Right.';
+    assert.deepEqual(parseMarkup(line).words.map((w) => w.word), ['Now', 'we', 'know.', 'He', 'never', 'did.', 'Right.']);
+    assert.equal(parseMarkup(line).words[2].colour, 'green');
+    assert.equal(voiceText(line, false), 'Now we know. He never did. Right.');
+    assert.equal(voiceText(line, true), '[softly] Now we know. [whispers] He never did. [dramatic pause] Right.');
+  });
+});
+
+describe('Guide wide layout', () => {
+  it('crops to a wide window, carries a side-by-side partner onto each cut, and skips cards for items with no heading', () => {
+    assert.deepEqual(cropFor({ width: 720, height: 1280 }, 0.5, 1, 0.3, 16 / 9), { w: 720, h: 404, x: 0, y: 182 });
+    const cuts = fillCuts([{ file: 'a.mp4', from: 10, to: 16, beside: { file: 'b.mp4', from: 0, to: 20 }, labels: ['THEN', 'NOW'] }], 4, 2);
+    assert.ok(cuts.every((c) => c.beside?.file === 'b.mp4' && c.labels?.[1] === 'NOW'));
+    assert.ok(cuts.every((c) => Math.abs(c.beside!.from - (c.from - 10)) < 0.01 && c.beside!.srcSec === c.srcSec));
+    const p = guide({ items: [{ heading: 'A', say: 'One two.', shots: [] }, { heading: '', say: 'Three four.', shots: [] }] });
+    const plan = planGuide(p, () => 1);
+    assert.deepEqual(cardWindows(plan.segments, p.items).map((c) => c.itemIndex), [0]);
+    assert.equal(cardWindows(plan.segments).length, 2);
+  });
+
+  it('lists chapters YouTube accepts: from 0:00, ten seconds or more apart, only with three or more', () => {
+    const items = ['2002 · Vice City', '', 'Title | Card', '2004 · San Andreas', 'The Door'].map((heading, i) => ({ heading, say: 'x', shots: [], ...(i === 2 ? { chapter: false as const } : {}) }));
+    const segs = [0, 5, 30, 34, 50, 90].map((start, i) => (i === 0 ? { part: 'hook', kind: 'hook' as const, start, durationSec: 5, cuts: [] } : { part: `item-${i - 1}`, kind: 'item' as const, itemIndex: i - 1, start, durationSec: 4, cuts: [] }));
+    const ch = chapterList({ items, introChapter: 'The door' }, segs);
+    assert.deepEqual(ch.map((c) => [c.at, c.title]), [[0, 'The door'], [50, '2004 · San Andreas'], [90, 'The Door']]);
+    assert.deepEqual(chapterList({ items: items.slice(0, 1) }, segs.slice(0, 2)), []);
+    assert.deepEqual([clockTime(75.4), clockTime(3725)], ['1:15', '1:02:05']);
+  });
+
+  it('adds a tail with no voice after the last line (room for the end screen)', () => {
+    const a = planGuide(guide({}), () => 1).durationSec;
+    const b = planGuide(guide({ tailSec: 15 }), () => 1).durationSec;
+    assert.ok(Math.abs(b - a - 15) < 0.05);
+  });
+
+  it('leaves a longer gap between lines when asked', () => {
+    const a = planGuide(guide({}), () => 1).durationSec;
+    const b = planGuide(guide({ gapSec: 0.5 }), () => 1).durationSec;
+    assert.ok(b > a);
+  });
 });
 
 describe('Guide motion graphics', () => {
@@ -293,6 +374,10 @@ describe('Guide motion graphics', () => {
     const last = freeze[freeze.length - 1];
     assert.deepEqual([last.file, last.srcSec, last.outSec, last.push, last.sound], ['f', 0.04, 1.5, 0.15, 'dark impact']);
     assert.ok(!freeze.some((c) => c.file === 'x'));
+    // A muted shot (a streamer talking) keeps its mute on every cut
+    const muted = fillCuts([{ file: 's', from: 0, to: 9, mute: true }], 4, 1.5);
+    assert.ok(muted.length > 1 && muted.every((c) => c.mute === true));
+    assert.ok(fillCuts([{ file: 's', from: 0, to: 9 }], 4, 1.5).every((c) => c.mute === undefined));
 
     const p = guide({
       items: [

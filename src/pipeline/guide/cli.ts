@@ -44,6 +44,11 @@ async function render(id: string) {
   const { voiced, warnings: voiceWarnings } = await voiceGuide(dir, project, channel.voice);
   project.voiced = voiced;
   await saveGuide(project);
+  // A voice that failed on every line: stop, rather than render (and overwrite the last video with) a silent one
+  if (voiced.length && !voiced.some((v) => v.audioFile)) {
+    for (const w of voiceWarnings.slice(0, 3)) console.warn(`! ${w}`);
+    throw new Error('Nothing could be voiced, so nothing was rendered (the last video is untouched).');
+  }
   console.log('Rendering…');
   const out = await renderGuide(dir, project, channel);
   const warnings = [...voiceWarnings, ...out.warnings];

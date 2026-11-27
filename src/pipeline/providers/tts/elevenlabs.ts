@@ -2,6 +2,7 @@ import { ProviderError } from '../errors';
 import { mapHttpOrSdkError } from '../error-mapper';
 import type { ProviderCallContext, SyncedVoice, TTSProvider, TtsRequest, TtsResult, Usage } from '../types';
 import { serverOptions } from './options';
+import { pcmToWav } from './gemini-tts';
 
 interface ElevenLabsAlignment {
   characters: string[];
@@ -44,7 +45,8 @@ export class ElevenLabsTtsProvider implements TTSProvider {
 
   async synthesize(req: TtsRequest, ctx: ProviderCallContext): Promise<TtsResult> {
     const baseUrl = ctx.baseUrl || 'https://api.elevenlabs.io';
-    const outputFormat = req.format === 'wav' ? 'pcm_44100' : 'mp3_44100_128';
+    // pcm_44100 is Pro-only; 24 kHz is open to every plan and plenty for speech
+    const outputFormat = req.format === 'wav' ? 'pcm_24000' : 'mp3_44100_128';
     // The with-timestamps variant returns the same audio as base64 plus per-character timings
     const url = `${baseUrl.replace(/\/+$/, '')}/v1/text-to-speech/${encodeURIComponent(req.voiceId)}/with-timestamps?output_format=${outputFormat}`;
 
@@ -91,7 +93,9 @@ export class ElevenLabsTtsProvider implements TTSProvider {
       }
 
       const data = (await response.json()) as { audio_base64: string; alignment?: ElevenLabsAlignment | null };
-      const bytes = new Uint8Array(Buffer.from(data.audio_base64, 'base64'));
+      const raw = new Uint8Array(Buffer.from(data.audio_base64, 'base64'));
+      // PCM is bare 16-bit mono samples: wrapped in a WAV header so it plays and probes like a file
+      const bytes = req.format === 'wav' ? pcmToWav(raw, 24000) : raw;
       const mimeType = req.format === 'wav' ? 'audio/wav' : 'audio/mpeg';
 
       const usage: Usage = {

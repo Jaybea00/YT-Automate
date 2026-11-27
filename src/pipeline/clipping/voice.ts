@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { resolveForStage } from '../providers/registry';
-import type { TTSProvider } from '../providers/types';
+import type { ProviderCallContext, TTSProvider } from '../providers/types';
 import { getAudioDurationMs } from '../utils/ffmpeg';
 import type { ClipWord, VoiceLine } from './types';
 
@@ -21,11 +21,18 @@ const lineKey = (text: string, voice: string, provider: string, speed?: number) 
  * the same text, voice and speed are kept. Returns the lines with their audio, plus any warnings.
  * `speed` above 1 speaks faster (a guide is read faster than a reaction's asides).
  */
-export async function voiceLines(dir: string, lines: VoiceLine[], voiceOverride: string, speed?: number): Promise<{ lines: VoiceLine[]; warnings: string[]; voice: string }> {
+export async function voiceLines(
+  dir: string,
+  lines: VoiceLine[],
+  voiceOverride: string,
+  speed?: number,
+  /** A voice engine to use instead of the narration stage's (a guide voiced by ElevenLabs). */
+  engine?: { provider: TTSProvider; ctx: ProviderCallContext },
+): Promise<{ lines: VoiceLine[]; warnings: string[]; voice: string }> {
   if (!lines.length) return { lines, warnings: [], voice: voiceOverride };
   let resolved;
   try {
-    resolved = await resolveForStage<TTSProvider>('tts');
+    resolved = engine ?? (await resolveForStage<TTSProvider>('tts'));
   } catch (err) {
     return { lines, voice: voiceOverride, warnings: [`No voice is set up for narration, so the voiceover was skipped: ${err instanceof Error ? err.message.slice(0, 160) : err}`] };
   }
@@ -46,10 +53,12 @@ export async function voiceLines(dir: string, lines: VoiceLine[], voiceOverride:
       const result = await provider.synthesize({ text: line.text, voiceId: voice, format: 'wav', ...(speed && speed !== 1 ? { speed } : {}) }, ctx);
       await fs.writeFile(path.join(dir, file), result.bytes);
       const durationSec = (result.durationMs ?? (await getAudioDurationMs(path.join(dir, file)))) / 1000;
-      const words = result.words?.length ? result.words.map((w) => ({ word: w.word, start: w.start, end: w.end })) : evenWords(line.text, durationSec);
+      // Performance tags ("[whispers]") are spoken as acting, not words: they never reach the captions
+      const spoken = (result.words ?? []).filter((w) => !/^\[|\]$/.test(w.word));
+      const words = spoken.length ? spoken.map((w) => ({ word: w.word, start: w.start, end: w.end })) : evenWords(line.text.replace(/\[[^\]]*\]/g, ' '), durationSec);
       out.push({ ...line, audioFile: file, audioKey: key, durationSec: Number(durationSec.toFixed(2)), words });
     } catch (err) {
-      warnings.push(`Voice line "${line.text.slice(0, 40)}" could not be voiced (is the Kokoro server running?): ${err instanceof Error ? err.message.slice(0, 140) : err}`);
+      warnings.push(`Voice line "${line.text.slice(0, 40)}" could not be voiced${engine ? '' : ' (is the Kokoro server running?)'}: ${err instanceof Error ? err.message.slice(0, 140) : err}`);
       out.push({ ...line, audioFile: undefined, audioKey: undefined, durationSec: undefined, words: undefined });
     }
   }

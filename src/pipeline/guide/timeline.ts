@@ -9,6 +9,12 @@ import type { FootageInfo, GuideMotion, GuideProject, GuideShot } from './types'
 export const FPS = 30;
 export const SHORT_W = 1080;
 export const SHORT_H = 1920;
+export const WIDE_W = 1920;
+export const WIDE_H = 1080;
+/** The picture size of a guide: a vertical Short, or a wide video. */
+export const frameSize = (format?: GuideProject['format']) => (format === 'wide' ? { w: WIDE_W, h: WIDE_H } : { w: SHORT_W, h: SHORT_H });
+/** Still pictures used as shots (held, usually with a push). */
+export const isStill = (file: string) => /\.(png|jpe?g|webp)$/i.test(file);
 /** Silence after each spoken part before the next one starts. */
 export const GAP_SEC = 0.12;
 /** How long an item's card stays up. */
@@ -28,6 +34,15 @@ export const fromFrames = (frames: number) => r3(frames / FPS);
 // --------------------------------------------------------------------------
 
 export type WordColour = 'green' | 'red';
+
+/** Text with its performance tags ("[whispers]", "[dramatic pause]") taken out. */
+export const withoutTags = (text: string) => text.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
+/** The text the voice reads: colour marks gone; tags kept for an engine that acts them out, else gone. */
+export function voiceText(text: string, keepTags: boolean): string {
+  if (!keepTags) return parseMarkup(text).plain;
+  return text.replace(/[*~]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export interface MarkedWord {
   word: string;
   colour?: WordColour;
@@ -37,7 +52,8 @@ export interface MarkedWord {
 export function parseMarkup(text: string): { plain: string; words: MarkedWord[] } {
   const words: MarkedWord[] = [];
   let open: WordColour | null = null;
-  for (const raw of text.trim().split(/\s+/).filter(Boolean)) {
+  // [whispers], [sighs]: acting directions for the voice, never shown or read as words
+  for (const raw of withoutTags(text).split(/\s+/).filter(Boolean)) {
     let token = raw;
     let colour: WordColour | null = open;
     // A mark can sit after leading punctuation ("(*wow*)") or before trailing punctuation ("*this*,")
@@ -133,16 +149,32 @@ export interface Cut {
   focusY?: number;
   push?: number;
   sound?: string;
+  mute?: boolean;
+  volume?: number;
+  /** The right half of a side-by-side cut: its own stretch, as long as this one. */
+  beside?: { file: string; from: number; srcSec: number; focusX?: number; zoom?: number; focusY?: number };
+  labels?: [string, string];
 }
 
 /** A shot's framing, carried onto its cuts. */
-const framing = (s: Pick<GuideShot, 'focusX' | 'zoom' | 'focusY' | 'push' | 'sound'>) => ({
+const framing = (s: Pick<GuideShot, 'focusX' | 'zoom' | 'focusY' | 'push' | 'sound' | 'mute' | 'volume'>) => ({
   ...(s.focusX != null ? { focusX: s.focusX } : {}),
   ...(s.zoom != null && s.zoom > 1 ? { zoom: s.zoom } : {}),
   ...(s.focusY != null ? { focusY: s.focusY } : {}),
   ...(s.push ? { push: s.push } : {}),
   ...(s.sound ? { sound: s.sound } : {}),
+  ...(s.mute ? { mute: true } : {}),
+  ...(s.volume != null ? { volume: s.volume } : {}),
 });
+
+/** The right half of a side-by-side cut that starts `offset` seconds into its left shot. */
+const besideCut = (s: GuideShot, offset: number, srcSec: number): Cut['beside'] | undefined => {
+  const b = s.beside;
+  if (!b) return undefined;
+  const len = Math.max(0, b.to - b.from);
+  const from = isStill(b.file) ? b.from : b.from + Math.max(0, Math.min(offset, len - srcSec));
+  return { file: b.file, from: r3(from), srcSec: r3(Math.min(srcSec, len || srcSec)), ...(b.focusX != null ? { focusX: b.focusX } : {}), ...(b.zoom != null && b.zoom > 1 ? { zoom: b.zoom } : {}), ...(b.focusY != null ? { focusY: b.focusY } : {}) };
+};
 
 const shotLen = (s: GuideShot) => Math.max(0, s.to - s.from);
 
@@ -181,13 +213,10 @@ export function fillCuts(shots: GuideShot[], durationSec: number, cutSec: number
   const usable = shots.filter((s) => shotLen(s) > 0.05 || (s.sec && shotLen(s) > 0));
   const total = fromFrames(toFrames(durationSec));
   if (!usable.length || total <= 0) return [];
-  const cut = (s: GuideShot, from: number, srcSec: number, outSec: number): Cut => ({
-    file: s.file,
-    from: r3(from),
-    srcSec: r3(srcSec),
-    outSec,
-    ...framing(s),
-  });
+  const cut = (s: GuideShot, from: number, srcSec: number, outSec: number): Cut => {
+    const beside = besideCut(s, from - s.from, srcSec);
+    return { file: s.file, from: r3(from), srcSec: r3(srcSec), outSec, ...framing(s), ...(beside ? { beside, ...(s.labels ? { labels: s.labels } : {}) } : {}) };
+  };
 
   // Shots with a set length are one cut each; the shots between them share the rest by how much footage they have
   if (usable.some((s) => s.sec)) {
@@ -269,11 +298,10 @@ export function fillCuts(shots: GuideShot[], durationSec: number, cutSec: number
  * The 9:16 window of a recording, centred across at `focusX` (a vertical recording is used whole);
  * a zoom takes a smaller window around (focusX, focusY), kept inside the picture.
  */
-export function cropFor(info: Pick<FootageInfo, 'width' | 'height' | 'box'>, focusX = 0.5, zoom = 1, focusY = 0.5): { w: number; h: number; x: number; y: number } {
+export function cropFor(info: Pick<FootageInfo, 'width' | 'height' | 'box'>, focusX = 0.5, zoom = 1, focusY = 0.5, target = SHORT_W / SHORT_H): { w: number; h: number; x: number; y: number } {
   const even = (n: number) => Math.max(2, Math.floor(n / 2) * 2);
   // Black bars the recording was posted with stay out of the crop
   const b = info.box ?? { x: 0, y: 0, w: info.width, h: info.height };
-  const target = SHORT_W / SHORT_H;
   const wide = b.w / b.h > target;
   const z = Math.max(1, zoom);
   const w = even((wide ? b.h * target : b.w) / z);
@@ -325,8 +353,9 @@ function leadIn(opener: GuideShot, durationSec: number, endAt = opener.from): Gu
 export function planGuide(p: GuideProject, spokenSec: (part: string, text: string) => number): { segments: Segment[]; durationSec: number; warnings: string[] } {
   const warnings: string[] = [];
   const parts = spokenParts(p);
+  const gap = p.gapSec ?? GAP_SEC;
   const lengths = parts.map((x, i) =>
-    fromFrames(toFrames(spokenSec(x.part, x.text) + (i === parts.length - 1 ? 0.05 : GAP_SEC) + (x.itemIndex != null ? Math.max(0, p.items[x.itemIndex].after ?? 0) : 0))),
+    fromFrames(toFrames(spokenSec(x.part, x.text) + (i === parts.length - 1 ? 0.05 + Math.max(0, p.tailSec ?? 0) : gap) + (x.itemIndex != null ? Math.max(0, p.items[x.itemIndex].after ?? 0) : 0))),
   );
   const segments: Segment[] = [];
   let at = 0;
@@ -363,11 +392,44 @@ export function planGuide(p: GuideProject, spokenSec: (part: string, text: strin
   return { segments, durationSec: at, warnings };
 }
 
-/** When each item's card shows, on the Short's clock. */
-export function cardWindows(segments: Segment[]): Array<{ itemIndex: number; from: number; to: number }> {
+/**
+ * The chapter list for a wide video's description ("0:00 Intro", "0:31 2002 · Vice City"…): one per
+ * item with a heading (or its own chapter name), following YouTube's rules: the first at 0:00, each
+ * at least 10 seconds long, and only when there are three or more.
+ */
+export function chapterList(p: Pick<GuideProject, 'items' | 'introChapter'>, segments: Segment[]): Array<{ at: number; title: string }> {
+  const out: Array<{ at: number; title: string }> = [{ at: 0, title: p.introChapter?.trim() || 'Intro' }];
+  for (const s of segments) {
+    if (s.kind !== 'item') continue;
+    const it = p.items[s.itemIndex!];
+    if (it.chapter === false) continue;
+    const title = (typeof it.chapter === 'string' ? it.chapter : it.heading).replace(/\s*\|\s*/g, ' ').replace(/[*~]/g, '').trim();
+    if (!title) continue;
+    const last = out[out.length - 1];
+    // Under 10 seconds since the last chapter: this one takes its place (it starts the real section)
+    if (s.start - last.at < 10) {
+      if (last.at > 0) out[out.length - 1] = { at: last.at, title };
+      continue;
+    }
+    out.push({ at: s.start, title });
+  }
+  return out.length >= 3 ? out : [];
+}
+
+/** 75.4 → "1:15"; 3725 → "1:02:05". */
+export const clockTime = (sec: number) => {
+  const t = Math.floor(sec);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const ss = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+};
+
+/** When each item's card shows, on the Short's clock (items with no heading have none). */
+export function cardWindows(segments: Segment[], items?: Array<{ heading: string }>, cardSec = CARD_SEC): Array<{ itemIndex: number; from: number; to: number }> {
   return segments
-    .filter((s) => s.kind === 'item')
-    .map((s) => ({ itemIndex: s.itemIndex!, from: s.start, to: r3(s.start + Math.min(CARD_SEC, Math.max(0.5, s.durationSec - 0.2))) }));
+    .filter((s) => s.kind === 'item' && (!items || items[s.itemIndex!]?.heading.trim()))
+    .map((s) => ({ itemIndex: s.itemIndex!, from: s.start, to: r3(s.start + Math.min(cardSec, Math.max(0.5, s.durationSec - 0.2))) }));
 }
 
 /** How long each motion graphic shows unless told otherwise, and when the WASTED word lands in its sting. */
