@@ -8,14 +8,16 @@ import { ensureSoundLibrary, soundPath } from '../assembly/sfx';
 import { levelAudioInPlace } from '../assembly/level-audio';
 import { getFfmpegPath } from '../utils/ffmpeg';
 import { renderPictures } from '../clipping/reaction-render';
-import { GRADE_FILTER } from '../clipping/reaction';
 import { emojiImageDataUrl, findEmojiImage, isEmojiChar } from '../clipping/emojis';
 import { voiceLines } from '../clipping/voice';
 import { findSound } from '../clipping/sounds';
 import type { VoiceLine } from '../clipping/types';
-import { captionAss, cardDocument, titleDocument } from './look';
+import { captionAss, cardDocument, chapterDocument, labelDocument, noteDocument, titleDocument } from './look';
+import { mixBus, renderBaseTrack, type BasePicture } from './base';
 import { guideFile, probeFootage, sharedLogo } from './store';
-import { alignWords, cardWindows, cropFor, FPS, motionWindows, parseMarkup, planGuide, SHORT_H, SHORT_W, spokenParts, toFrames, WASTED_HIT_SEC, type Segment, type TimedWord } from './timeline';
+import { elevenLabsTts } from '../providers/tts/elevenlabs';
+import { chapterList, clockTime } from './timeline';
+import { alignWords, cardWindows, FPS, frameSize, voiceText, motionWindows, parseMarkup, planGuide, spokenParts, toFrames, WASTED_HIT_SEC, type Segment, type TimedWord } from './timeline';
 import { motionConfig, prepareMotionClip, renderMotion, SOCIAL_PLAYERS } from './motion';
 import type { FootageInfo, GuideProject, GuideVoice } from './types';
 
@@ -29,6 +31,9 @@ const TITLE_WITH_LOGO_Y = 260;
 /** How long a social post's big opening hook text stays up before it settles into the post's caption. */
 const SOCIAL_HOOK_SEC = 1.95;
 const CARD_Y = 140;
+/** Wide videos: how long a chapter card stays up, and a note at the top left. */
+const WIDE_CARD_SEC = 2.8;
+const NOTE_SEC = 4.5;
 
 /**
  * Voices every spoken part (hook, items, outro, loop line) with the channel's voice, keeping parts
@@ -37,8 +42,16 @@ const CARD_Y = 140;
 export async function voiceGuide(dir: string, p: GuideProject, channelVoice: string): Promise<{ voiced: GuideVoice[]; warnings: string[] }> {
   const parts = spokenParts(p);
   const before = new Map((p.voiced ?? []).map((v) => [v.part, v]));
+  const eleven = p.voiceEngine === 'elevenlabs';
+  let engine: Parameters<typeof voiceLines>[4];
+  if (eleven) {
+    const apiKey = process.env.ELEVENLABS_API_KEY?.trim();
+    if (!apiKey) throw new Error('This guide is voiced by ElevenLabs, but ELEVENLABS_API_KEY is not set in .env.local');
+    if (!p.voice) throw new Error('This guide is voiced by ElevenLabs: set "voice" to an ElevenLabs voice id');
+    engine = { provider: elevenLabsTts, ctx: { apiKey, model: p.voiceModel || 'eleven_v3', options: {} } };
+  }
   const lines: VoiceLine[] = parts.map((x) => {
-    const text = parseMarkup(x.text).plain;
+    const text = voiceText(x.text, eleven);
     const old = before.get(x.part);
     return {
       at: 0,
@@ -47,7 +60,7 @@ export async function voiceGuide(dir: string, p: GuideProject, channelVoice: str
       ...(old && old.text === text ? { audioFile: old.audioFile, audioKey: old.audioKey, durationSec: old.durationSec, words: old.words } : {}),
     };
   });
-  const result = await voiceLines(dir, lines, p.voice || channelVoice, p.speed);
+  const result = await voiceLines(dir, lines, eleven ? p.voice : p.voice || channelVoice, p.speed, engine);
   return {
     voiced: result.lines.map((l, i) => ({ part: parts[i].part, text: l.text, audioFile: l.audioFile, audioKey: l.audioKey, durationSec: l.durationSec, words: l.words })),
     warnings: result.warnings,
@@ -85,8 +98,10 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
   const warnings = [...plan.warnings];
   if (!segments.length) throw new Error('The guide has nothing to say');
 
+  const wide = p.format === 'wide';
+  const { w: W, h: H } = frameSize(p.format);
   // Footage sizes
-  const files = [...new Set(segments.flatMap((s) => s.cuts.map((c) => c.file)))];
+  const files = [...new Set(segments.flatMap((s) => s.cuts.flatMap((c) => [c.file, ...(c.beside ? [c.beside.file] : [])])))];
   const footage = new Map<string, FootageInfo>();
   for (const f of files) {
     try {
@@ -95,7 +110,7 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
       throw new Error(`Footage ${f} can't be read: ${err instanceof Error ? err.message : err}`);
     }
   }
-  for (const [f, info] of footage) if (Math.min(info.width, info.height) < 1080 && info.width > info.height) warnings.push(`${f} is ${info.width}x${info.height}: the vertical crop will look soft. Record in 1440p or 4K.`);
+  if (!wide) for (const [f, info] of footage) if (Math.min(info.width, info.height) < 1080 && info.width > info.height) warnings.push(`${f} is ${info.width}x${info.height}: the vertical crop will look soft. Record in 1440p or 4K.`);
 
   await fs.mkdir(path.join(dir, 'export'), { recursive: true });
   const work = path.join(dir, 'render-pictures');
@@ -105,7 +120,7 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
   const hook = segments.find((s) => s.kind === 'hook');
   // The title shows for titleSec (the whole hook when missing); the hook's words are captioned after it
   const titleEnd = hook ? Math.min(hook.start + hook.durationSec, p.titleSec && p.titleSec > 0 ? p.titleSec : Infinity) : 0;
-  const cards = cardWindows(segments);
+  const cards = cardWindows(segments, p.items, wide ? WIDE_CARD_SEC : undefined);
   const quiet = [...(hook && p.titleCard.trim() ? [{ from: 0, to: titleEnd }] : []), ...cards.map((c) => ({ from: c.from, to: c.to }))];
   // A social post opens on its own big hook text (no captions over it), then the captions drop below the card
   const socials = motionWindows(p, segments).filter((w) => w.motion.kind === 'social');
@@ -117,53 +132,104 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
     quiet,
     low,
     fontName: channel?.captionFont,
+    width: W,
+    height: H,
     ...(channel?.handleMark && channel.handle ? { mark: { text: `@${channel.handle}`, corner: channel.handleMarkCorner } } : {}),
   }), 'utf-8');
 
-  // Inputs: every cut (its own stretch of its recording), the voice, the sounds, then the pictures
+  // Where the cut sounds and the side-by-side labels fall
   const inputs: string[] = [];
   let next = 0;
   const chains: string[] = [];
-  const pieces: string[] = [];
   const cutSounds: Array<{ query: string; atSec: number }> = [];
+  const besides: Array<{ from: number; to: number; labels: [string, string] }> = [];
   for (const s of segments) {
     let cutAt = s.start;
     for (const c of s.cuts) {
-      const info = footage.get(c.file)!;
-      const i = next++;
-      inputs.push('-ss', fx(c.from), '-t', fx(c.srcSec + 0.2), '-i', guideFile(dir, c.file));
-      const crop = cropFor(info, c.focusX, c.zoom, c.focusY);
-      const frames = toFrames(c.outSec);
-      const stretch = c.outSec / Math.max(0.01, c.srcSec);
-      // A push: the picture creeps closer across the cut (on a near-still stretch, a freeze-frame that zooms in)
-      const push = c.push ? `,zoompan=z='1+${c.push}*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${SHORT_W}x${SHORT_H}:fps=${FPS}` : '';
-      chains.push(
-        `[${i}:v]setpts=(PTS-STARTPTS)*${stretch.toFixed(4)},fps=${FPS},crop=${crop.w}:${crop.h}:${crop.x}:${crop.y},scale=${SHORT_W}:${SHORT_H}:flags=lanczos,setsar=1,` +
-          `tpad=stop_mode=clone:stop_duration=1,trim=end_frame=${frames}${push},setpts=PTS-STARTPTS[v${i}]`,
-      );
+      const len = toFrames(c.outSec) / FPS;
       if (c.sound) cutSounds.push({ query: c.sound, atSec: cutAt });
-      cutAt += frames / FPS;
-      chains.push(info.hasAudio ? `[${i}:a]${NORM},asetpts=PTS-STARTPTS,apad,atrim=duration=${fx(frames / FPS)},asetpts=PTS-STARTPTS[a${i}]` : `anullsrc=r=48000:cl=stereo,atrim=duration=${fx(frames / FPS)}[a${i}]`);
-      pieces.push(`[v${i}][a${i}]`);
+      if (c.beside && c.labels) besides.push({ from: cutAt, to: cutAt + len, labels: c.labels });
+      cutAt += len;
     }
   }
-  chains.push(`${pieces.join('')}concat=n=${pieces.length}:v=1:a=1[cv][cg]`, `[cg]volume=${Math.max(0, Math.min(1, p.gameVolume))}[ca]`);
 
-  const voices: Array<{ input: number; atSec: number }> = [];
+  // Pictures: the title (with the logo) over the hook, a card for each item (wide: chapter cards,
+  // labels over side-by-sides, notes). They're drawn first, then burned into the footage part by part.
+  const font = channel?.captionFont;
+  const pictures: Array<BasePicture & { html: string }> = [];
+  if (hook && p.titleCard.trim()) {
+    const logoFile = p.logo ? guideFile(dir, p.logo) : sharedLogo();
+    const logo = (await fs.stat(logoFile).then((s) => s.isFile()).catch(() => false)) ? await emojiImageDataUrl(logoFile) : null;
+    if (p.logo && !logo) warnings.push(`The logo ${p.logo} isn't there; the title shows without it.`);
+    const html = titleDocument(p.titleCard, logo, font);
+    pictures.push({ file: path.join(work, 'title.png'), html, key: shortHash(html), from: 0, to: titleEnd, y: wide ? '(H-h)/2' : logo ? TITLE_WITH_LOGO_Y : TITLE_Y, fade: 0.12 });
+  }
+  if (wide) {
+    for (const c of cards) {
+      const html = chapterDocument(p.items[c.itemIndex].heading, font);
+      pictures.push({ file: path.join(work, `card_${c.itemIndex}.png`), html, key: shortHash(html), from: c.from, to: c.to, y: '(H-h)/2', fade: 0.25 });
+    }
+    const labelFiles = new Map<string, { file: string; html: string }>();
+    const label = (text: string, green: boolean) => {
+      const k = `${green ? 'g' : 'w'}:${text}`;
+      if (!labelFiles.has(k)) labelFiles.set(k, { file: path.join(work, `label_${labelFiles.size}.png`), html: labelDocument(text, font, green) });
+      return labelFiles.get(k)!;
+    };
+    for (const b of besides) {
+      const [l, r] = [label(b.labels[0], false), label(b.labels[1], true)];
+      pictures.push({ ...l, key: shortHash(l.html), from: b.from, to: b.to, y: 36, x: '(W/2)-w-28', fade: 0.15 });
+      pictures.push({ ...r, key: shortHash(r.html), from: b.from, to: b.to, y: 36, x: 'W-w-28', fade: 0.15 });
+    }
+    for (const s of segments) {
+      const note = s.kind === 'item' ? p.items[s.itemIndex!].note?.trim() : '';
+      if (!note) continue;
+      const from = s.start + (p.items[s.itemIndex!].heading.trim() ? WIDE_CARD_SEC + 0.2 : 0.4);
+      const to = Math.min(s.start + s.durationSec - 0.1, from + NOTE_SEC);
+      if (to - from < 1) continue;
+      const html = noteDocument(note, font);
+      pictures.push({ file: path.join(work, `note_${s.itemIndex}.png`), html, key: shortHash(html), from, to, y: 64, slide: true, fade: 0.2 });
+    }
+  }
+  for (const c of wide ? [] : cards) {
+    const item = p.items[c.itemIndex];
+    let emoji: { char?: string; dataUrl?: string } | null = null;
+    const e = item.emoji?.trim();
+    if (e && isEmojiChar(e.replace(/\s+/g, ''))) emoji = { char: e };
+    else if (e) {
+      const found = await findEmojiImage(e);
+      if (found) emoji = { dataUrl: await emojiImageDataUrl(found) };
+      else warnings.push(`No emoji picture named like "${e}" in the emoji library; item ${c.itemIndex + 1}'s card shows without one.`);
+    }
+    const html = cardDocument(item.heading, p.numbered ? c.itemIndex + 1 : null, emoji, font);
+    pictures.push({ file: path.join(work, `card_${c.itemIndex}.png`), html, key: shortHash(html), from: c.from, to: c.to, y: CARD_Y });
+  }
+  const drawn = [...new Map(pictures.map((x) => [x.file, x])).values()];
+  await renderPictures(drawn.map((x) => ({ file: x.file, html: x.html, crop: 'element' as const, selector: 'body > div' })), wide ? { width: W + 80, height: H } : undefined);
+
+  // The footage as one track: rendered a part at a time, each cut with its own sound at its level,
+  // in colour, with the pictures on top
+  const base = await renderBaseTrack(dir, segments, footage, { width: W, height: H, gameVolume: p.gameVolume, grade: p.grade, pictures });
+  inputs.push('-i', base);
+  chains.push(`[${next}:v]null[cv]`, `[${next}:a]anull[ca]`);
+  next++;
+
+  // The narrator, and the sound effects, each laid out on one track
+  const voiceLines: Array<{ file: string; atSec: number; volume: number }> = [];
   for (const s of segments) {
     const v = voiced.find((x) => x.part === s.part);
-    if (!v?.audioFile) continue;
-    voices.push({ input: next++, atSec: s.start });
-    inputs.push('-i', guideFile(dir, v.audioFile));
+    if (v?.audioFile) voiceLines.push({ file: guideFile(dir, v.audioFile), atSec: s.start, volume: 1 });
   }
-  if (!voices.length) warnings.push('Nothing is voiced yet: the Short has no narrator (is the Kokoro server running?).');
-  const sfx: Array<{ input: number; atSec: number; volume: number; lengthSec?: number }> = [];
+  const voices: Array<{ input: number; atSec: number }> = [];
+  if (voiceLines.length) {
+    const bus = path.join(work, 'voice-bus.wav');
+    await mixBus(voiceLines, durationSec, bus);
+    voices.push({ input: next++, atSec: 0 });
+    inputs.push('-i', bus);
+  } else warnings.push('Nothing is voiced yet: the Short has no narrator (is the Kokoro server running?).');
+  const effects: Array<{ file: string; atSec: number; volume: number }> = [];
   if (p.whooshes) {
     await ensureSoundLibrary();
-    for (const s of segments.filter((x) => x.kind === 'item')) {
-      sfx.push({ input: next++, atSec: Math.max(0, s.start - 0.12), volume: 0.4 });
-      inputs.push('-i', soundPath('whoosh'));
-    }
+    for (const s of segments.filter((x) => x.kind === 'item' && p.items[x.itemIndex!].heading.trim())) effects.push({ file: soundPath('whoosh'), atSec: Math.max(0, s.start - 0.12), volume: 0.4 });
   }
   for (const cs of cutSounds) {
     const found = await findSound(dir, cs.query).catch(() => null);
@@ -171,8 +237,7 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
       warnings.push(`No sound like "${cs.query}" in the sound library; that cut plays without it.`);
       continue;
     }
-    sfx.push({ input: next++, atSec: cs.atSec, volume: 0.9 });
-    inputs.push('-i', guideFile(dir, found.file));
+    effects.push({ file: guideFile(dir, found.file), atSec: cs.atSec, volume: 0.9 });
   }
   let music: { input: number; volume: number } | undefined;
   if (p.music) {
@@ -181,7 +246,8 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
   }
 
   // Motion graphics (gta-components): each rendered once to an overlay video, then laid over its moment
-  const windows = motionWindows(p, segments);
+  const windows = motionWindows(p, segments).filter(() => !wide);
+  if (wide && motionWindows(p, segments).length) warnings.push('The GTA motion graphics are drawn for vertical Shorts; a wide video leaves them out (use chapter cards, notes and side-by-side labels).');
   const motionLayers: Array<{ input: number; from: number; to: number }> = [];
   const greys: Array<{ from: number; to: number }> = [];
   let wastedSound: string | null | undefined;
@@ -205,66 +271,35 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
       // The world drains to black and white under the word, with the game's wasted sound on the hit
       greys.push({ from: w.from + WASTED_HIT_SEC, to: w.to });
       if (wastedSound === undefined) wastedSound = (await findSound(dir, 'gta wasted').catch(() => null))?.file ?? null;
-      if (wastedSound) {
-        sfx.push({ input: next++, atSec: w.from + WASTED_HIT_SEC, volume: 0.9 });
-        inputs.push('-i', guideFile(dir, wastedSound));
-      }
+      if (wastedSound) effects.push({ file: guideFile(dir, wastedSound), atSec: w.from + WASTED_HIT_SEC, volume: 0.9 });
     }
   }
-
-  // Pictures: the title (with the logo) over the hook, a card for each item
-  const font = channel?.captionFont;
-  const pictures: Array<{ file: string; html: string; from: number; to: number; y: number }> = [];
-  if (hook && p.titleCard.trim()) {
-    const logoFile = p.logo ? guideFile(dir, p.logo) : sharedLogo();
-    const logo = (await fs.stat(logoFile).then((s) => s.isFile()).catch(() => false)) ? await emojiImageDataUrl(logoFile) : null;
-    if (p.logo && !logo) warnings.push(`The logo ${p.logo} isn't there; the title shows without it.`);
-    pictures.push({ file: path.join(work, 'title.png'), html: titleDocument(p.titleCard, logo, font), from: 0, to: titleEnd, y: logo ? TITLE_WITH_LOGO_Y : TITLE_Y });
+  const sfx: Array<{ input: number; atSec: number; volume: number }> = [];
+  if (effects.length) {
+    const bus = path.join(work, 'sfx-bus.wav');
+    await mixBus(effects, durationSec, bus);
+    sfx.push({ input: next++, atSec: 0, volume: 1 });
+    inputs.push('-i', bus);
   }
-  for (const c of cards) {
-    const item = p.items[c.itemIndex];
-    let emoji: { char?: string; dataUrl?: string } | null = null;
-    const e = item.emoji?.trim();
-    if (e && isEmojiChar(e.replace(/\s+/g, ''))) emoji = { char: e };
-    else if (e) {
-      const found = await findEmojiImage(e);
-      if (found) emoji = { dataUrl: await emojiImageDataUrl(found) };
-      else warnings.push(`No emoji picture named like "${e}" in the emoji library; item ${c.itemIndex + 1}'s card shows without one.`);
-    }
-    pictures.push({ file: path.join(work, `card_${c.itemIndex}.png`), html: cardDocument(item.heading, p.numbered ? c.itemIndex + 1 : null, emoji, font), from: c.from, to: c.to, y: CARD_Y });
-  }
-  await renderPictures(pictures.map((x) => ({ file: x.file, html: x.html, crop: 'element' as const, selector: 'body > div' })));
-  const pictureInputs = pictures.map((x) => {
-    inputs.push('-loop', '1', '-framerate', String(FPS), '-t', fx(durationSec), '-i', x.file);
-    return next++;
-  });
 
-  // Picture: (colour), black and white under each WASTED, the motion graphics, captions, then the title and cards
+  // Picture: the footage (already in colour, with its pictures), black and white under each WASTED,
+  // the motion graphics, then the captions
   const greyFilter = greys.length ? `hue=s=0:enable='${greys.map((g) => `between(t,${fx(g.from)},${fx(g.to)})`).join('+')}',` : '';
   let label = '[mg0]';
-  chains.push(`[cv]${p.grade ? `${GRADE_FILTER},` : ''}${greyFilter}null${label}`);
+  chains.push(`[cv]${greyFilter}null${label}`);
   for (const [k, l] of motionLayers.entries()) {
     const out = `[mg${k + 1}]`;
     chains.push(`[${l.input}:v]format=rgba,setpts=PTS-STARTPTS+${fx(l.from)}/TB[mo${k}];${label}[mo${k}]overlay=0:0:eof_action=pass:enable='between(t,${fx(l.from)},${fx(l.to)})'${out}`);
     label = out;
   }
-  chains.push(`${label}ass=${assName}[lk0]`);
-  label = '[lk0]';
-  for (const [k, x] of pictures.entries()) {
-    const out = `[lk${k + 1}]`;
-    chains.push(
-      `[${pictureInputs[k]}:v]format=rgba,${x.from > 0 ? `fade=t=in:st=${fx(x.from)}:d=0.08:alpha=1,` : ''}fade=t=out:st=${fx(Math.max(x.from, x.to - 0.12))}:d=0.12:alpha=1[pic${k}];` +
-        `${label}[pic${k}]overlay=x=(W-w)/2:y=${x.y}:enable='between(t,${fx(x.from)},${fx(x.to)})'${out}`,
-    );
-    label = out;
-  }
-  chains.push(`${label}format=yuv420p[v]`);
+  chains.push(`${label}ass=${assName},format=yuv420p[v]`);
   chains.push(guideMixGraph({ durationSec, voices, sfx, music }));
 
   const graphFile = path.join(dir, 'guide.filter');
   await fs.writeFile(graphFile, chains.join(';\n'), 'utf-8');
-  const tmp = path.join(dir, 'export', 'short.rendering.mp4');
-  const out = path.join(dir, 'export', 'short.mp4');
+  const name = wide ? 'video' : 'short';
+  const tmp = path.join(dir, 'export', `${name}.rendering.mp4`);
+  const out = path.join(dir, 'export', `${name}.mp4`);
   try {
     await execFileAsync(
       getFfmpegPath(),
@@ -276,24 +311,34 @@ export async function renderGuide(dir: string, p: GuideProject, channel?: Channe
         '-c:v', 'libx264', '-preset', 'faster', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS),
         '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', tmp,
       ],
-      { cwd: dir, maxBuffer: 32 * 1024 * 1024, timeout: 30 * 60_000 },
+      { cwd: dir, maxBuffer: 32 * 1024 * 1024, timeout: Number(process.env.GUIDE_TIMEOUT_MS) || 30 * 60_000 },
     );
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr ?? '';
     throw new Error(`The render failed: ${(stderr || (err instanceof Error ? err.message : String(err))).trim().split('\n').slice(-3).join(' ').slice(0, 400)}`);
   } finally {
-    await fs.unlink(path.join(dir, assName)).catch(() => {});
-    await fs.unlink(graphFile).catch(() => {});
-    await fs.rm(work, { recursive: true, force: true }).catch(() => {});
+    // GUIDE_KEEP=1 keeps the graph, captions and pictures (to rerun the last step by hand)
+    if (process.env.GUIDE_KEEP) await fs.writeFile(path.join(dir, 'guide.args.json'), JSON.stringify(inputs), 'utf-8');
+    else {
+      await fs.unlink(path.join(dir, assName)).catch(() => {});
+      await fs.unlink(graphFile).catch(() => {});
+      await fs.rm(work, { recursive: true, force: true }).catch(() => {});
+    }
   }
   await levelAudioInPlace(tmp);
   await fs.rename(tmp, out);
 
-  // The thumbnail: the opening shot with its title
+  // The thumbnail: a ready-made one when the guide has it, else the opening shot with its title
   const thumb = path.join(dir, 'export', 'thumbnail.jpg');
-  await execFileAsync(getFfmpegPath(), ['-y', '-v', 'error', '-ss', fx(Math.min(0.6, durationSec / 2)), '-i', out, '-frames:v', '1', '-q:v', '2', thumb]).catch(() => {});
-  if (channel) await writeGuideUploadInfo(dir, p, channel);
-  return { video: 'export/short.mp4', thumbnail: 'export/thumbnail.jpg', durationSec, warnings };
+  const made = p.thumbnail ? guideFile(dir, p.thumbnail) : null;
+  if (made && (await fs.stat(made).then((s) => s.isFile()).catch(() => false))) {
+    await execFileAsync(getFfmpegPath(), ['-y', '-v', 'error', '-i', made, '-q:v', '2', thumb]);
+  } else {
+    if (made) warnings.push(`The thumbnail ${p.thumbnail} isn't there; a frame from the video is used instead.`);
+    await execFileAsync(getFfmpegPath(), ['-y', '-v', 'error', '-ss', fx(Math.min(0.6, durationSec / 2)), '-i', out, '-frames:v', '1', '-q:v', '2', thumb]).catch(() => {});
+  }
+  if (channel) await writeGuideUploadInfo(dir, p, channel, wide ? chapterList(p, segments) : []);
+  return { video: `export/${name}.mp4`, thumbnail: 'export/thumbnail.jpg', durationSec, warnings };
 }
 
 /** How loud the music bed sits once levelled (LUFS), before its volume and the ducking. */
@@ -341,10 +386,16 @@ export function guideMixGraph(o: {
   return ch.join(';');
 }
 
-/** export/upload-info.txt: the title and the description (the guide's own, else the title) with the channel's footer and hashtags. */
-export async function writeGuideUploadInfo(dir: string, p: GuideProject, channel: ChannelProfile): Promise<void> {
+/**
+ * export/upload-info.txt: the title and the description (the guide's own, else the title) with the
+ * channel's footer and hashtags; a wide video's chapter list goes after the description's first
+ * paragraph, where YouTube reads it as chapters.
+ */
+export async function writeGuideUploadInfo(dir: string, p: GuideProject, channel: ChannelProfile, chapters: Array<{ at: number; title: string }> = []): Promise<void> {
   const title = p.title.trim();
   const plainTitle = title.replace(/\s*#\S+/g, '').trim();
-  const description = [p.description.trim() || plainTitle, descriptionFooter(channel, p.tags)].filter(Boolean).join('\n\n');
+  const paragraphs = (p.description.trim() || plainTitle).split(/\n\s*\n/);
+  if (chapters.length) paragraphs.splice(1, 0, ['Chapters:', ...chapters.map((c) => `${clockTime(c.at)} ${c.title}`)].join('\n'));
+  const description = [paragraphs.join('\n\n'), descriptionFooter(channel, p.tags)].filter(Boolean).join('\n\n');
   await fs.writeFile(path.join(dir, 'export', 'upload-info.txt'), `TITLE\n${title}\n\nDESCRIPTION\n${description}\n`, 'utf-8');
 }

@@ -1,6 +1,9 @@
 import { formatAssTime, toAssColour } from '../assembly/captions';
 import { SHORT_H, SHORT_W, type TimedWord } from './timeline';
 
+const SHORT_W_DEFAULT = SHORT_W;
+const SHORT_H_DEFAULT = SHORT_H;
+
 /**
  * How a guide looks: captions a few words at a time in bold italic white with key words in green
  * (red for the bad stuff), the title over the opening shot, and a numbered card as each item starts.
@@ -65,11 +68,17 @@ export function captionAss(
     fontName?: string;
     fontSize?: number;
     mark?: { text: string; corner: 'top-left' | 'top-right' };
+    /** The picture size (a vertical Short when missing); a wide video gets smaller captions in the lower third. */
+    width?: number;
+    height?: number;
   },
 ): string {
+  const SHORT_W = opts.width ?? SHORT_W_DEFAULT;
+  const SHORT_H = opts.height ?? SHORT_H_DEFAULT;
+  const wide = SHORT_W > SHORT_H;
   const font = opts.fontName?.trim() || 'Segoe UI Black';
-  const size = opts.fontSize ?? 86;
-  const marginV = Math.round(SHORT_H - CAPTION_Y - size / 2);
+  const size = opts.fontSize ?? (wide ? 64 : 86);
+  const marginV = wide ? Math.round(SHORT_H * 0.1) : Math.round(SHORT_H - CAPTION_Y - size / 2);
   // The channel's @handle, small and steady in a top corner for the whole Short (as on the clips)
   const markText = opts.mark ? clean(opts.mark.text).trim() : '';
   const markStyle = markText
@@ -86,7 +95,7 @@ PlayResY: ${SHORT_H}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Guide, ${font}, ${size}, &H00FFFFFF, &H00FFFFFF, &H00000000, &H90000000, -1, -1, 0, 0, 100, 100, 0, 0, 1, 7, 4, 2, 150, 150, ${marginV}, 1
+Style: Guide, ${font}, ${size}, &H00FFFFFF, &H00FFFFFF, &H00000000, &H90000000, -1, -1, 0, 0, 100, 100, 0, 0, 1, ${wide ? 5 : 7}, ${wide ? 3 : 4}, 2, 150, 150, ${marginV}, 1
 Style: GuideLow, ${font}, ${size}, &H00FFFFFF, &H00FFFFFF, &H00000000, &H90000000, -1, -1, 0, 0, 100, 100, 0, 0, 1, 7, 4, 2, 150, 150, ${LOW_MARGIN_V}, 1
 ${markStyle}
 [Events]
@@ -170,5 +179,53 @@ export function cardDocument(heading: string, number: number | null, emoji: { ch
 .txt{${textLook(fontName, size)};max-width:880px}.g{color:${GREEN}}.r{color:${RED}}
 .e{font-family:${EMOJI_FONTS},sans-serif;font-size:150px;line-height:1.1;filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}
 #c img{max-width:180px;max-height:180px;filter:drop-shadow(0 8px 14px rgba(0,0,0,.5))}`,
+  );
+}
+
+// --------------------------------------------------------------------------
+// Wide videos: chapter cards, then/now labels and lower thirds
+// --------------------------------------------------------------------------
+
+const widePage = (body: string, css: string, width = 1920) =>
+  `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:transparent}body{width:${width}px;display:flex;flex-direction:column;align-items:center}${css}</style></head><body>${body}</body></html>`;
+
+/**
+ * A chapter card across the middle of a wide video: "2002 · VICE CITY" shows the part before the dot
+ * big in green over the rest, on a dark band; a heading with no dot is one line.
+ */
+export function chapterDocument(heading: string, fontName = 'Segoe UI Black'): string {
+  const [top, ...rest] = heading.split(/\s*[·|]\s*/);
+  const sub = rest.join(' · ');
+  return widePage(
+    `<div id="c">${sub ? `<div class="k">${markedHtml(shout(top))}</div><div class="t">${markedHtml(shout(sub))}</div>` : `<div class="t">${markedHtml(shout(top))}</div>`}<div class="rule"></div></div>`,
+    `#c{width:1920px;box-sizing:border-box;padding:46px 0 52px;display:flex;flex-direction:column;align-items:center;gap:4px;
+  background:linear-gradient(90deg,rgba(0,0,0,0),rgba(0,0,0,.72) 22%,rgba(0,0,0,.72) 78%,rgba(0,0,0,0))}
+.k{${textLook(fontName, 150)};color:${GREEN};letter-spacing:2px}
+.t{${textLook(fontName, heading.length > 34 ? 70 : 86)};max-width:1600px}
+.rule{width:420px;height:6px;margin-top:18px;border-radius:3px;background:${GREEN};box-shadow:0 0 18px ${GREEN}}
+.g{color:${GREEN}}.r{color:${RED}}`,
+  );
+}
+
+/** A small tag over one half of a side-by-side shot ("2002", "GTA 6"). */
+export function labelDocument(text: string, fontName = 'Segoe UI Black', green = false): string {
+  return widePage(
+    `<div id="l">${markedHtml(shout(text))}</div>`,
+    `#l{${textLook(fontName, 54)};font-style:normal;padding:10px 30px;border-radius:14px;background:rgba(0,0,0,.62);-webkit-text-stroke:0;${green ? `color:${GREEN}` : ''}}
+.g{color:${GREEN}}.r{color:${RED}}`,
+    900,
+  );
+}
+
+/** A lower third: where an easter egg is ("📍 KEY LENTO · JASON'S HOUSE"), on a dark plate with a green edge. */
+export function noteDocument(text: string, fontName = 'Segoe UI Black'): string {
+  return widePage(
+    `<div id="n">${markedHtml(text)}</div>`,
+    `body{align-items:flex-start}
+#n{font-family:'${fontName}','Segoe UI Black','Arial Black',${EMOJI_FONTS},sans-serif;font-weight:900;font-size:44px;line-height:1.1;color:#fff;
+  padding:18px 34px 18px 28px;border-left:10px solid ${GREEN};border-radius:0 14px 14px 0;background:rgba(0,0,0,.7);max-width:1100px;
+  text-shadow:0 3px 8px rgba(0,0,0,.6)}
+.g{color:${GREEN}}.r{color:${RED}}`,
+    1200,
   );
 }

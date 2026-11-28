@@ -27,6 +27,14 @@ export interface GuideShot {
   push?: number;
   /** A sound from the library as the cut starts ("dark impact"). */
   sound?: string;
+  /** Leave out this shot's own sound (a streamer talking over the game). */
+  mute?: boolean;
+  /** How loud this shot's own sound plays (0 – 1), instead of the guide's gameVolume (a podcast or a line of dialogue the viewer should hear). */
+  volume?: number;
+  /** Wide videos: play another shot beside this one, side by side (then | now); this shot is the left half. */
+  beside?: GuideShot;
+  /** With `beside`: a tag over each half ("2002", "GTA 6"). */
+  labels?: [string, string];
 }
 
 /** A motion graphic from gta-components (see motion.ts) over part of an item. */
@@ -45,9 +53,9 @@ export interface GuideMotion {
   clip?: GuideShot;
 }
 
-/** One numbered thing ("1. Throw dog poop"). */
+/** One numbered thing ("1. Throw dog poop"); in a wide video, one paragraph of the script. */
 export interface GuideItem {
-  /** The card at the top while the item starts ("THROW DOG POOP"); the number is added. */
+  /** The card at the top while the item starts ("THROW DOG POOP"); the number is added. Empty: no card and no whoosh (a paragraph that carries on a chapter). */
   heading: string;
   /** Under the heading: a typed emoji or an emoji-library name. */
   emoji?: string;
@@ -55,8 +63,12 @@ export interface GuideItem {
   say: string;
   /** The footage for this item, in order. */
   shots: GuideShot[];
-  /** Extra seconds after the line (room for a WASTED to land). */
+  /** Extra seconds after the line (room for a WASTED to land, or for the game's own audio to be heard). */
   after?: number;
+  /** Wide videos: a tag that slides in at the top left as the item starts, saying where this is ("📍 KEY LENTO · JASON'S HOUSE"). */
+  note?: string;
+  /** Wide videos: this item's name in the description's chapter list (its heading when missing; false: no chapter here). */
+  chapter?: string | false;
   motion?: GuideMotion[];
 }
 
@@ -74,6 +86,16 @@ export interface GuideVoice {
 
 export interface GuideProject {
   id: string;
+  /** 'short' (9:16, the default) or 'wide' (16:9, a long video for the main feed: still pictures and side-by-side shots work, motion graphics don't). */
+  format?: 'short' | 'wide';
+  /** Silence after each spoken part (seconds; 0.12 when missing). Long videos breathe more. */
+  gapSec?: number;
+  /** Seconds of footage and music after the last line, with no voice (room for YouTube's end screen). */
+  tailSec?: number;
+  /** Wide videos: the name of the first chapter in the description's chapter list ("Intro" when missing). */
+  introChapter?: string;
+  /** A ready-made thumbnail (file inside the guide folder) to use instead of a frame from the video. */
+  thumbnail?: string;
   createdAt: string;
   updatedAt: string;
   /** The YouTube title ("5 CRAZY THINGS In GTA 6 That You CAN'T Do In GTA 5"). */
@@ -99,8 +121,15 @@ export interface GuideProject {
   loopLine: string;
   /** Number the item cards (1. 2. 3.…). */
   numbered: boolean;
-  /** TTS voice id; empty uses the channel's voice. */
+  /** TTS voice id; empty uses the channel's voice (with ElevenLabs: an ElevenLabs voice id). */
   voice: string;
+  /**
+   * Who voices it: the channel's narration voice (Kokoro, normally; the default), or ElevenLabs
+   * (ELEVENLABS_API_KEY), which acts out [tags] in the text ("[whispers] He's right.").
+   */
+  voiceEngine?: 'channel' | 'elevenlabs';
+  /** ElevenLabs model (eleven_v3 when missing: the one that follows [tags]). */
+  voiceModel?: string;
   /** Speaking speed (1 is normal; guides read fast). */
   speed: number;
   /** Seconds per cut, on average. */

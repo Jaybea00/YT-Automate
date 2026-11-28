@@ -65,18 +65,19 @@ const COMIC_SEC = 0.5;
 type Picture = { file: string; html: string; crop: 'box' | 'full' | 'element'; selector?: string };
 
 /** Draws pictures in a browser (so emoji come out in colour) as transparent PNGs; returns each one's size. */
-export async function renderPictures(pictures: Picture[]): Promise<Array<{ width: number; height: number }>> {
+export async function renderPictures(pictures: Picture[], viewport: { width: number; height: number } = { width: SHORT_W, height: SHORT_H }): Promise<Array<{ width: number; height: number }>> {
   if (!pictures.length) return [];
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage({ viewport: { width: SHORT_W, height: SHORT_H }, deviceScaleFactor: 1 });
+    // A wide picture (a card across a 1920-wide video) needs a page wide enough to hold it
+    const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
     const sizes: Array<{ width: number; height: number }> = [];
     for (const p of pictures) {
       await page.setContent(p.html, { waitUntil: 'load' });
       await page.evaluate(() => document.fonts.ready);
       if (p.crop === 'full') {
-        await page.screenshot({ path: p.file, omitBackground: true, clip: { x: 0, y: 0, width: SHORT_W, height: SHORT_H } });
-        sizes.push({ width: SHORT_W, height: SHORT_H });
+        await page.screenshot({ path: p.file, omitBackground: true, clip: { x: 0, y: 0, width: viewport.width, height: viewport.height } });
+        sizes.push({ width: viewport.width, height: viewport.height });
         continue;
       }
       const box = await page.locator(p.selector ?? 'body > *').first().boundingBox();
